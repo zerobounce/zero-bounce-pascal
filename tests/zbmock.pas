@@ -76,6 +76,8 @@ implementation
         ExpectResponse(StatusCode, body, []);
     end;
 
+    // FIXME: previous implementation (everything commented) was not providing the ExpectedResponseBody
+    // therefore this might not be the way to implement it
     Procedure TMockClient.DoMethod(Const AMethod, AURL : String; Stream : TStream; Const AllowedResponseCodes : Array of Integer);
     var
         header: string;
