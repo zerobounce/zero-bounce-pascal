@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <Name Value="ZeroBounce"/>
+    <Type Value="RunAndDesignTime"/>
+    <CompilerOptions>
+      <Version Value="11"/>
+      <SearchPaths>
+        <OtherUnitFiles Value="src"/>
+        <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
+      </SearchPaths>
+      <Parsing>
+        <SyntaxOptions>
+          <SyntaxMode Value="fpc"/>
+        </SyntaxOptions>
+      </Parsing>
+    </CompilerOptions>
+    <Description Value="Free Pascal wrapper for the ZeroBounce API (version 2)."/>
+    <Version Minor="1" Release="2"/>
+    <Files>
+      <Item>
+        <Filename Value="src/zbgeneric.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbGeneric"/>
+      </Item>
+      <Item>
+        <Filename Value="src/zbutility.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbUtility"/>
+      </Item>
+    </Files>
+    <RequiredPkgs>
+      <Item>
+        <PackageName Value="FCL"/>
+      </Item>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)"/>
+    </UsageOptions>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+  </Package>
+</CONFIG>
