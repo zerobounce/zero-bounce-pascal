@@ -1,4 +1,4 @@
-unit TestCredits;
+unit TestGeneric;
 
 {$mode objfpc}{$H+}
 
@@ -11,19 +11,18 @@ uses
 
 type
 
-    TTestCredits= class(TTestCase)
-    published
-             procedure TestHookUp;
-    end;
+        TTestGeneric= class(TTestCase)
+        published
+                procedure TestCredits;
+        end;
 
 implementation
 
-procedure TTestCredits.TestHookUp;
+procedure TTestGeneric.TestCredits;
 var
    CreditsAmount: integer;
 begin
-     ZbSetApiKey('mock api key');
-     //TMockClient.ExpectResponse(200, '{"Credits":"50000"}');
+     TMockClient.ExpectResponse(200, '{"Credits":"50000"}');
      CreditsAmount := ZBGetCredits;
      WriteLn('Credits: ', CreditsAmount);
      AssertEquals('Credits with invalid key', CreditsAmount, -1);
@@ -32,6 +31,6 @@ end;
 
 
 initialization
-   RegisterTest(TTestCredits);
+        RegisterTest(TTestGeneric);
 end.
 

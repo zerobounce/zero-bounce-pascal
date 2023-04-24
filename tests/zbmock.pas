@@ -6,8 +6,6 @@ interface
 
 uses
         Classes, SysUtils, httpdefs, httproute, fphttpclient, webutil;
-
-            
 type
 
     TMockClient = Class(TFPHTTPClient)
