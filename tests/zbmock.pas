@@ -81,34 +81,31 @@ implementation
     Procedure TMockClient.DoMethod(Const AMethod, AURL : String; Stream : TStream; Const AllowedResponseCodes : Array of Integer);
     var
         header: string;
-        PairToSet: array of AnsiString;
-        //SomeString: AnsiString;
-
+        PairToSet: array of String;
+        character: char;
     begin
-        //FLastMockedMethod := AMethod;
-        //FLastMockedUrl := AURL;
-        //
-        //FResponseStatusCode := FExpectedStatusCode;
-        //FResponseHeaders.Clear;
-        //if Length(FExpectedHeaders) > 0 then
-        //begin
-        //    for header in FExpectedHeaders.split(char(10)) do
-        //    begin
-        //        PairToSet := header.split(':');
-        //        WriteLn('Left: ', PairToSet[0].trim(), ' | Right: ', PairToSet[1].trim());
-        //        FResponseHeaders.AddPair(PairToSet[0].trim(), PairToSet[1].trim());
-        //    end;
-        //end;
-        //
-        //Terminate;
-        //
-        //Stream.WriteAnsiString(FExpectedResponseBody);
-        inherited Domethod(AMethod, AURL, Stream, AllowedResponseCodes);
-        WriteLn('Stream: >><<');
-        WriteLn(Stream.ReadAnsiString);
-        WriteLn('>><<');
-        //Stream.Seek(0);
-    end;
+        FLastMockedMethod := AMethod;
+        FLastMockedUrl := AURL;
+
+        FResponseStatusCode := FExpectedStatusCode;
+        FResponseHeaders.Clear;
+        if Length(FExpectedHeaders) > 0 then
+        begin
+            for header in FExpectedHeaders.split(char(10)) do
+            begin
+                PairToSet := header.split(':');
+                WriteLn('Left: ', PairToSet[0].trim(), ' | Right: ', PairToSet[1].trim());
+                FResponseHeaders.AddPair(PairToSet[0].trim(), PairToSet[1].trim());
+            end;
+        end;
+
+        for character in FExpectedResponseBody.ToCharArray do
+        begin
+             Stream.WriteByte(Byte(character));
+		end;
+		Stream.Seek(0, soFromEnd);
+        Terminate;
+	end;
 
 end.
 
