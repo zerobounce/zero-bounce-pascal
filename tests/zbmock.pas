@@ -5,7 +5,8 @@ unit ZbMock;
 interface
 
 uses
-        Classes, SysUtils, httpdefs, httproute, fphttpclient, webutil;
+        Classes, SysUtils, httpdefs, httproute, fphttpclient, webutil,
+        ZbUtility;
 type
 
     TMockClient = Class(TFPHTTPClient)
@@ -59,6 +60,7 @@ implementation
     var
         index_: integer;
     begin
+        ZBSetHttpClient(TMockClient);
         FExpectedStatusCode := StatusCode;
         FExpectedResponseBody := body;
         FExpectedHeaders := '';
