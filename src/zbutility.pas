@@ -5,10 +5,18 @@ unit ZbUtility;
 interface
 
 uses
-    fphttpclient;
+    SysUtils, fphttpclient;
 
 type
     HTTPClientClass = Class of TFPHTTPClient;
+    ZbException = Class(Exception)
+    public
+          StatusCode: Integer;
+          Payload: String;
+          constructor Create(AMessage, APayload: String; AStatusCode: integer);
+          procedure MarkHttpError;
+          procedure MarkJsonError;
+    end;
 
 const
     BASE_URI = 'https://api.zerobounce.net/v2';
@@ -35,6 +43,24 @@ var
     procedure ZBSetApiKey ( ApiKey : string );
     procedure Register;
 implementation
+
+    constructor ZbException.Create(AMessage, APayload: String; AStatusCode: integer);
+    begin
+         inherited Create(AMessage);
+         Payload := APayload;
+         StatusCode := AStatusCode;
+    end;
+
+
+    procedure ZbException.MarkHttpError;
+    begin
+         Self.Message := 'Http Error: ' + Self.Message;
+	end;
+
+    procedure ZbException.MarkJsonError;
+    begin
+         Self.Message := 'Json Error: ' + Self.Message;
+	end;
 
     procedure ZBSetApiKey ( ApiKey : string );
     begin
