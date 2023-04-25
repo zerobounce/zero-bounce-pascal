@@ -52,8 +52,9 @@ var
         StatusCode: 0; Payload: ''; Headers: nil; UrlCalled: ''
     );
 
-    function ZBGetRequest(url: String): TZbRequestResponse;
     procedure ZBSetApiKey ( ApiKey : string );
+    function ZBGetRequest(url: String): TZbRequestResponse;
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
     procedure ZBMockResponse(StatusCode: integer; Payload: String);
     procedure ZBMockResponse(StatusCode: integer; Payload: String; Headers: TStrings);
     procedure Register;
@@ -106,6 +107,43 @@ implementation
             Client := TFPHTTPClient.Create(nil);
             try
                 response.Payload := Client.Get(url);
+                response.StatusCode := Client.ResponseStatusCode;
+                response.Headers := Client.ResponseHeaders;
+            finally
+                Client.Free;
+            end;
+        end;
+
+        // check for failure
+        if response.StatusCode > 299 then
+        begin
+            error := ZbException.FromResponse('Request failed', response);
+            error.MarkHttpError;
+            raise error;
+        end;
+
+        Result := response;
+    end;
+
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
+    var
+        response: TZbRequestResponse;
+        Client: TFPHTTPClient;
+        error: ZbException;
+    begin
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            response := ZbResponseMock;
+		end
+		else
+        begin
+            Client := TFPHTTPClient.Create(nil);
+
+            Client.AddHeader('Content-Type', 'application/json; charset=UTF-8');
+            Client.AddHeader('Accept', 'application/json');
+            Client.RequestBody := TRawByteStringStream.Create(JsonParam);
+            try
+                response.Payload := Client.Post(url);
                 response.StatusCode := Client.ResponseStatusCode;
                 response.Headers := Client.ResponseHeaders;
             finally
