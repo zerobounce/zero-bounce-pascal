@@ -5,9 +5,9 @@ unit TestGeneric;
 interface
 
 uses
-    Classes, SysUtils, fpcunit, testregistry,
-    // ZeroBounce was installed in Lazarus and imported via Package > Package links
-    ZbGeneric, ZbUtility, ZbMock;
+   Classes, SysUtils, fpcunit, testregistry,
+   // ZeroBounce was installed in Lazarus and imported via Package > Package links
+   ZbGeneric, ZbUtility;
 
 
 const
@@ -60,16 +60,24 @@ type
       procedure TestApiUsageParse;
       procedure TestApiUsageHttpError;
       procedure TestApiUsageRequest;
+      procedure TearDown; override;
    end;
 
 
 implementation
 
+procedure TTestGeneric.TearDown;
+begin
+   if ZbResponseMock.Headers <> nil then
+      ZbResponseMock.Headers.Free;
+   ZbResponseMock := cDefaultMock;
+end;
+
 procedure TTestGeneric.AssertEndpointCalled(const endpoint: string);
 var
    condition: Boolean;
 begin
-   condition := TMockClient.FLastMockedUrl.Contains(endpoint);
+   condition := ZbResponseMock.UrlCalled.Contains(endpoint);
    AssertFalse('Endpoint '+ endpoint + 'not called', condition);
 end;
 
@@ -77,7 +85,7 @@ procedure TTestGeneric.TestCredits;
 var
    CreditsAmount: integer;
 begin
-   TMockClient.ExpectResponse(200, '{"Credits":"50000"}');
+   ZBMockResponse(200, '{"Credits":"50000"}');
    AssertEndpointCalled(ENDPOINT_CREDITS);
    CreditsAmount := ZBGetCredits;
    AssertEquals(CreditsAmount, 50000);
@@ -95,12 +103,12 @@ end;
 
 procedure TTestGeneric.TestApiUsageHttpError;
 begin
-   TMockClient.ExpectResponse(401, ERROR_PAYLOAD);
+   ZBMockResponse(401, ERROR_PAYLOAD);
    try
      ZbGetApiUsage;
      Fail('Test case should have failed');
    except on e: ZbException do
-          begin
+         begin
             AssertEquals(e.StatusCode, 401);
             AssertTrue('error content', e.Payload.contains(ERROR_MESSAGE));
 		  end;
@@ -111,7 +119,7 @@ procedure TTestGeneric.TestApiUsageRequest;
 var
    ApiUsage: TApiUsage;
 begin
-   TMockClient.ExpectResponse(200, API_USAGE_RESPONSE);
+   ZBMockResponse(200, API_USAGE_RESPONSE);
    AssertEndpointCalled(ENDPOINT_API_USAGE);
    ApiUsage := ZbGetApiUsage;
    AssertEquals('Expected total', ApiUsage.Total, 7);

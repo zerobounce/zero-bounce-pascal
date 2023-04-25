@@ -111,29 +111,22 @@ implementation
     function ZbGetCredits : Integer;
     var
         UrlToAccess: string;
-        ResponsePayload: string;
-        StatusCode: integer;
+        response: TZbRequestResponse;
         JObject: TJSONObject;
-        Client: TFPHTTPClient;
         error: ZbException;
     begin
         InitSSLInterface;
 
         UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
-        Client := HTTPClient.Create(nil);
-        try
-            ResponsePayload := Client.Get(UrlToAccess);
-            StatusCode := Client.ResponseStatusCode;
-        finally
-            Client.Free;
-        end;
+        response := ZBGetRequest(UrlToAccess);
 
+        // attempt json parsing
         try
-			JObject := TJSONObject(GetJSON(ResponsePayload));
+			JObject := TJSONObject(GetJSON(response.Payload));
             Result := JObject.Find('Credits').AsInteger;
         except on e: Exception do
             begin
-               error := ZbException.Create(e.Message, ResponsePayload, StatusCode);
+               error := ZbException.FromResponse(e.Message, response);
                error.MarkJsonError;
                raise error;
 			end;
@@ -144,51 +137,38 @@ implementation
     var
         ApiUsage: TApiUsage;
         DateAuxString: String;
-        UrlToAccess: string;
-        ResponsePayload: string;
-        StatusCode: integer;
-        Client: TFPHTTPClient;
+        UrlToAccess: String;
+        response: TZbRequestResponse;
         error: ZbException;
     begin
         InitSSLInterface;
         UrlToAccess := Concat(BASE_URI, ENDPOINT_API_USAGE, '?api_key=', ZbApiKey);
-
         DateAuxString := Format(
             '%d-%d-%d',
-            [YearOf(StartDate),
-            MonthOf(StartDate),
-            DayOf(StartDate)]
+            [
+                YearOf(StartDate),
+                MonthOf(StartDate),
+                DayOf(StartDate)
+            ]
         );
         UrlToAccess := Concat(UrlToAccess, '&start_date=', DateAuxString);
-
         DateAuxString := Format(
             '%d-%d-%d',
-            [YearOf(EndDate),
-            MonthOf(EndDate),
-            DayOf(EndDate)]
+            [
+                YearOf(EndDate),
+                MonthOf(EndDate),
+                DayOf(EndDate)
+            ]
         );
         UrlToAccess := Concat(UrlToAccess, '&end_date=', DateAuxString);
 
-        Client := HTTPClient.Create(nil);
-	    try
-	        ResponsePayload := Client.Get(UrlToAccess);
-	        StatusCode := Client.ResponseStatusCode;
-
-            if StatusCode > 299 then
-            begin
-                error := ZbException.Create(Client.ResponseStatusText, ResponsePayload, StatusCode);
-                error.MarkHttpError;
-                raise error;
-            end;
-	    finally
-	        Client.Free;
-	    end;
+        response := ZBGetRequest(UrlToAccess);
 
         try
-            ApiUsage := ZbApiUsageFromJson(ResponsePayload);
+            ApiUsage := ZbApiUsageFromJson(response.Payload);
 		except on e: Exception do
             begin
-               error := ZbException.Create(e.Message, ResponsePayload, StatusCode);
+               error := ZbException.FromResponse(e.Message, response);
                error.MarkJsonError;
                raise error;
             end;
