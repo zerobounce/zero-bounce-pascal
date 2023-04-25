@@ -30,6 +30,7 @@ lib/
 # Application bundle for Mac OS
 *.app/
 
-# Executables and run-time builds
+# Executables, debugging and run-time builds
 tests/unit_tests
-
+debugging
+debugging.*
