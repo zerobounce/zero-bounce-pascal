@@ -15,12 +15,14 @@ type
         Email: String;
         Ip: String;
     end;
+              
+function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 
 function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
 function ZbValidateEmail(Email: String): TZbValidationResult;
-function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
 function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
+
 procedure Register;
 
 implementation
@@ -43,7 +45,7 @@ implementation
             else
                 BatchContent += ',';
             BatchContent += format(
-                '{"email_address": "%s", "ip_addres": "%s"}',
+                '{"email_address": "%s", "ip_address": "%s"}',
                 [EmailAndIp.Email, EmailAndIp.Ip]
             );
         end;

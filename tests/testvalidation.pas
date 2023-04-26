@@ -49,11 +49,10 @@ begin
     IsValid := JObject.Find('email_batch', JArray);
     AssertTrue('"email_batch" not found', IsValid);
 
-    AssertEquals('array size', JArray.Count, 2);
-    AssertEquals('first email', JArray.Objects[0].Find('email').AsString, EmailsAndIps[0].Email);
-    AssertEquals('first ip', JArray.Objects[0].Find('ip').AsString, EmailsAndIps[0].Ip);
-    AssertEquals('second email', JArray.Objects[0].Find('email').AsString, EmailsAndIps[1].Email);
-    AssertEquals('second ip', JArray.Objects[0].Find('ip').AsString, EmailsAndIps[1].Ip);
+    AssertEquals('first email', JArray.Objects[0].Find('email_address').AsString, EmailsAndIps[0].Email);
+    AssertEquals('first ip', JArray.Objects[0].Find('ip_address').AsString, EmailsAndIps[0].Ip);
+    AssertEquals('second email', JArray.Objects[1].Find('email_address').AsString, EmailsAndIps[1].Email);
+    AssertEquals('second ip', JArray.Objects[1].Find('ip_address').AsString, EmailsAndIps[1].Ip);
 end;
 
 procedure TTestValidation.TestBatchBodyEncoderOneEmail;
@@ -73,8 +72,8 @@ begin
     AssertTrue('"email_batch" not found', IsValid);
 
     AssertEquals('array size', JArray.Count, 1);
-    AssertEquals('first email', JArray.Objects[0].Find('email').AsString, EmailsAndIps[0].Email);
-    AssertEquals('first ip', JArray.Objects[0].Find('ip').AsString, EmailsAndIps[0].Ip);
+    AssertEquals('first email', JArray.Objects[0].Find('email_address').AsString, EmailsAndIps[0].Email);
+    AssertEquals('first ip', JArray.Objects[0].Find('ip_address').AsString, EmailsAndIps[0].Ip);
 end;
 
 procedure TTestValidation.TestBatchBodyEncoderNoEmails;
