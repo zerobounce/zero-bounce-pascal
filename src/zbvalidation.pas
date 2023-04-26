@@ -15,7 +15,8 @@ type
         Email: String;
         Ip: String;
     end;
-              
+
+procedure Register;
 function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 
 function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
@@ -23,7 +24,6 @@ function ZbValidateEmail(Email: String): TZbValidationResult;
 function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
 function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
 
-procedure Register;
 
 implementation
 
@@ -60,7 +60,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS);
+        UrlToAccess := Concat(BASE_URI, ENDPOINT_VALIDATE);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
         UrlToAccess := Concat(UrlToAccess, '&email=', Email);
         UrlToAccess := Concat(UrlToAccess, '&ip_address=', IpAddress);
@@ -84,17 +84,40 @@ implementation
 
     function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
     var
-        UrlToAccess: string;
+        UrlToAccess: String;
+        JsonBody: String;
         response: TZbRequestResponse;
         JObject: TJSONObject;
         error: ZbException;
     begin
+        UrlToAccess := Concat(BASE_URI, ENDPOINT_BATCH_VALIDATE);
+        JsonBody := ZbBatchRequestBodyFromEmails(Emails);
+        response := ZBPostRequest(UrlToAccess, JsonBody);
+
+        try:
+            Result := ZbBatchValidationFromJson(response.Payload);
+        except on e: Exception do
+            begin
+                error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+        end;
     end;
 
     function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
+    var
+        EmailsAndIps: array of TZbEmailAndIp;
+        Email: String;
+        DebugInt: Integer;
     begin
-    end;
+        EmailsAndIps := SizeOf(Emails) / SizeOf(String);
+        SetLength(TZbEmailAndIp, SizeOf(Emails) / SizeOf(String));
+        for Email in Emails do
+            EmailsAndIps.Email := Email;
 
+        Result := ZbBatchValidateEmails(EmailsAndIps);
+    end;
 
 end.
 

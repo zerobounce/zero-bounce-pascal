@@ -231,7 +231,7 @@ implementation
         Result.EmailBatchLength := JArray.Count;
         if Result.EmailBatchLength > 0 then
         begin
-            setLength(Result.EmailBatch, Result.EmailBatchLength);
+            SetLength(Result.EmailBatch, Result.EmailBatchLength);
             for IIndex := 0 to Result.EmailBatchLength - 1 do
                 Result.EmailBatch[IIndex] := ZbValidationFromJson(JArray.Objects[IIndex]);
         end;
@@ -246,7 +246,7 @@ implementation
         Result.ErrorsLength := JArray.Count;
         if Result.ErrorsLength > 0 then
         begin
-            setLength(Result.Errors, Result.ErrorsLength);
+            SetLength(Result.Errors, Result.ErrorsLength);
             for IIndex := 0 to Result.ErrorsLength - 1 do
                 Result.Errors[IIndex] := ZbBatchErrorFromJson(JArray.Objects[IIndex]);
         end;
