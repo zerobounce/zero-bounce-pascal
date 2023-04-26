@@ -111,6 +111,7 @@ implementation
         Length: Int64;
         Index: Integer;
     begin
+        EmailsAndIps := [];
         Length := SizeOf(Emails) div SizeOf(String);
         SetLength(EmailsAndIps, Length);
         for Index := 0 to Length - 1 do

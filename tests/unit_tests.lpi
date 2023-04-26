@@ -44,16 +44,6 @@
         <UnitName Value="TestGeneric"/>
       </Unit>
       <Unit>
-        <Filename Value="../src/zbvalidation.pas"/>
-        <IsPartOfProject Value="True"/>
-        <UnitName Value="ZbValidation"/>
-      </Unit>
-      <Unit>
-        <Filename Value="../src/zbstructures.pas"/>
-        <IsPartOfProject Value="True"/>
-        <UnitName Value="ZbStructures"/>
-      </Unit>
-      <Unit>
         <Filename Value="testvalidation.pas"/>
         <IsPartOfProject Value="True"/>
         <UnitName Value="TestValidation"/>
@@ -77,7 +67,6 @@
     </Target>
     <SearchPaths>
       <IncludeFiles Value="$(ProjOutDir)"/>
-      <OtherUnitFiles Value="../src"/>
       <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
     </SearchPaths>
     <Linking>
