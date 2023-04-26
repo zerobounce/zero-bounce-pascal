@@ -5,8 +5,8 @@ unit TestValidation;
 interface
 
 uses
-    Classes, SysUtils, fpcunit, testutils, testregistry, fpjson, jsonparser,
-    ZbValidation, ZbUtility;
+    Classes, SysUtils, DateUtils, fpcunit, testregistry, fpjson, jsonparser,
+    MockValues, ZbStructures, ZbValidation, ZbUtility;
 
 type
 
@@ -14,11 +14,15 @@ type
     protected
         procedure TearDown; override;
     published
-        procedure TestEmailValidation;
+        procedure TestEmailValidationEndpoint;
+        procedure TestEmailValidationOk;
+        procedure TestEmailValidationError;
         procedure TestBatchBodyEncoder;
         procedure TestBatchBodyEncoderOneEmail;
         procedure TestBatchBodyEncoderNoEmails;
-        procedure TestBatchEmailValidationErrorPayload;
+        procedure TestBatchEmailValidationEndpoint;
+        procedure TestBatchEmailValidationErrorResponse;
+        procedure TestBatchEmailValidationErrorInPayload;
         procedure TestBatchEmailValidationOkPayload;
     end;
 
@@ -44,11 +48,50 @@ begin
 end;
 
 
-procedure TTestValidation.TestEmailValidation;
+procedure TTestValidation.TestEmailValidationEndpoint;
 begin
-    // TODO:
+    ZBMockResponse(200, BATCH_VALIDATE_OK);
+    ZbBatchValidateEmails(EmailsAndIps2);
+    AssertTrue(
+        'Endpoint ' + ENDPOINT_VALIDATE + ' not called',
+        ZbResponseMock.UrlCalled.Contains(ENDPOINT_VALIDATE)
+    );
 end;
 
+
+procedure TTestValidation.TestEmailValidationOk;
+var
+   validation: TZbValidationResult;
+begin
+    ZBMockResponse(200, VALDATION_RESPONSE_VALID);
+    validation := ZbValidateEmail('valid@example.com');
+
+    AssertEquals('address', validation.Address, 'valid@example.com');
+    AssertEquals('did_you_mean', validation.DidYouMean, '');
+    AssertEquals('free_email', validation.FreeEmail, FALSE);
+
+    AssertEquals(
+        'processed_at',
+        validation.ProcessedAt,
+        EncodeDateTime(2023, 04, 25, 13, 08, 24, 269)
+    );
+end;
+
+procedure TTestValidation.TestEmailValidationError;
+begin
+    ZBMockResponse(400, ERROR_PAYLOAD);
+
+    try
+        ZbValidateEmail('valid@example.com');
+        Fail('test should have raised exception');
+    except
+        on e: ZbException do
+        begin
+            AssertEquals('status code', e.StatusCode, 400);
+            AssertTrue('error message', e.Message.Contains(ERROR_MESSAGE));
+        end;
+    end;
+end;
 
 procedure TTestValidation.TestBatchBodyEncoder;
 var
@@ -103,14 +146,56 @@ begin
 end;
 
 
-procedure TestBatchEmailValidationErrorPayload;
+procedure TTestValidation.TestBatchEmailValidationEndpoint;
 begin
-    // TODO:
+    ZBMockResponse(200, BATCH_VALIDATE_OK);
+    ZbBatchValidateEmails(EmailsAndIps2);
+    AssertTrue(
+        'Endpoint '+ ENDPOINT_BATCH_VALIDATE + ' not called',
+        ZbResponseMock.UrlCalled.Contains(ENDPOINT_BATCH_VALIDATE)
+    );
 end;
 
-procedure TestBatchEmailValidationOkPayload;
+
+procedure TTestValidation.TestBatchEmailValidationErrorResponse;
 begin
-    // TODO:
+    ZBMockResponse(400, ERROR_PAYLOAD);
+
+    try
+        ZbBatchValidateEmails(['valid@example.com']);
+        Fail('test should have raised exception');
+    except
+        on e: ZbException do
+        begin
+            AssertEquals('status code', e.StatusCode, 400);
+            AssertTrue('error message', e.Message.Contains(ERROR_MESSAGE));
+        end;
+    end;
+end;
+
+procedure TTestValidation.TestBatchEmailValidationErrorInPayload;
+var
+    validation: TZBBatchValidation;
+begin
+    ZBMockResponse(200, BATCH_VALIDATE_ERROR);
+    validation := ZbBatchValidateEmails(EmailsAndIps2);
+
+    AssertEquals('email_batch length', validation.EmailBatchLength, 0);
+    AssertEquals('errors length', validation.ErrorsLength, 1);
+    AssertEquals('email_address in error', validation.Errors[0].EmailAddress, 'all');
+end;
+
+procedure TTestValidation.TestBatchEmailValidationOkPayload;
+var
+    validation: TZBBatchValidation;
+begin
+    ZBMockResponse(200, BATCH_VALIDATE_OK);
+    validation := ZbBatchValidateEmails(EmailsAndIps2);
+
+    AssertEquals('email_batch length', validation.EmailBatchLength, 2);
+    AssertEquals('errors length', validation.ErrorsLength, 0);
+    AssertEquals('status of first validation', validation.EmailBatch[0].Status, 'valid');
+    AssertEquals('status of first validation', validation.EmailBatch[1].Status, 'invalid');
 end;
 
 

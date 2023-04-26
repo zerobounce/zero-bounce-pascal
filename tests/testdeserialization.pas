@@ -76,20 +76,20 @@ procedure TTestDeserialization.TestBatchValidationParseOkContent;
 var
     BatchResult: TZBBatchValidation;
 begin
-    BatchResult := ZbBatchValidationFromJson(BATCH_VALIDATE_ERROR);
-    AssertEquals('email_batch length', BatchResult.EmailBatchLength, 0);
-    AssertEquals('errors length', BatchResult.ErrorsLength, 1);
-    AssertEquals('email_address in error', BatchResult.Errors[0].EmailAddress, 'all');
+    BatchResult := ZbBatchValidationFromJson(BATCH_VALIDATE_OK);
+    AssertEquals('email_batch length', BatchResult.EmailBatchLength, 2);
+    AssertEquals('errors length', BatchResult.ErrorsLength, 0);
+    AssertEquals('status of first validation', BatchResult.EmailBatch[0].Status, 'valid');
 end;
 
 procedure TTestDeserialization.TestBatchValidationParseErrorContent;
 var
     BatchResult: TZBBatchValidation;
 begin
-    BatchResult := ZbBatchValidationFromJson(BATCH_VALIDATE_OK);
-    AssertEquals('email_batch length', BatchResult.EmailBatchLength, 2);
-    AssertEquals('errors length', BatchResult.ErrorsLength, 0);
-    AssertEquals('status of first validation', BatchResult.EmailBatch[0].Status, 'valid');
+    BatchResult := ZbBatchValidationFromJson(BATCH_VALIDATE_ERROR);
+    AssertEquals('email_batch length', BatchResult.EmailBatchLength, 0);
+    AssertEquals('errors length', BatchResult.ErrorsLength, 1);
+    AssertEquals('email_address in error', BatchResult.Errors[0].EmailAddress, 'all');
 end;
 
 initialization

@@ -32,11 +32,11 @@ begin
 end;
 
 procedure TTestGeneric.AssertEndpointCalled(const endpoint: string);
-var
-   condition: Boolean;
 begin
-   condition := ZbResponseMock.UrlCalled.Contains(endpoint);
-   AssertFalse('Endpoint '+ endpoint + 'not called', condition);
+   AssertTrue(
+      'Endpoint '+ endpoint + ' not called',
+      ZbResponseMock.UrlCalled.Contains(endpoint)
+   );
 end;
 
 procedure TTestGeneric.TestCredits;
@@ -44,8 +44,8 @@ var
    CreditsAmount: integer;
 begin
    ZBMockResponse(200, '{"Credits":"50000"}');
-   AssertEndpointCalled(ENDPOINT_CREDITS);
    CreditsAmount := ZBGetCredits;
+   AssertEndpointCalled(ENDPOINT_CREDITS);
    AssertEquals(CreditsAmount, 50000);
 end;
 
@@ -69,8 +69,8 @@ var
    ApiUsage: TApiUsage;
 begin
    ZBMockResponse(200, API_USAGE_RESPONSE);
-   AssertEndpointCalled(ENDPOINT_API_USAGE);
    ApiUsage := ZbGetApiUsage;
+   AssertEndpointCalled(ENDPOINT_API_USAGE);
    AssertEquals('Expected total', ApiUsage.Total, 7);
    AssertEquals('Expected unknown', ApiUsage.StatusUnknown, 0);
 end;
