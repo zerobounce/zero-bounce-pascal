@@ -37,6 +37,7 @@ implementation
         BatchContent: String;
         FirstElement: Boolean;
     begin
+        BatchContent := '';
         FirstElement := True;
         for EmailAndIp in Emails do
         begin
@@ -87,14 +88,13 @@ implementation
         UrlToAccess: String;
         JsonBody: String;
         response: TZbRequestResponse;
-        JObject: TJSONObject;
         error: ZbException;
     begin
         UrlToAccess := Concat(BASE_URI, ENDPOINT_BATCH_VALIDATE);
         JsonBody := ZbBatchRequestBodyFromEmails(Emails);
         response := ZBPostRequest(UrlToAccess, JsonBody);
 
-        try:
+        try
             Result := ZbBatchValidationFromJson(response.Payload);
         except on e: Exception do
             begin
@@ -108,13 +108,13 @@ implementation
     function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
     var
         EmailsAndIps: array of TZbEmailAndIp;
-        Email: String;
-        DebugInt: Integer;
+        Length: Int64;
+        Index: Integer;
     begin
-        EmailsAndIps := SizeOf(Emails) / SizeOf(String);
-        SetLength(TZbEmailAndIp, SizeOf(Emails) / SizeOf(String));
-        for Email in Emails do
-            EmailsAndIps.Email := Email;
+        Length := SizeOf(Emails) div SizeOf(String);
+        SetLength(EmailsAndIps, Length);
+        for Index := 0 to Length - 1 do
+            EmailsAndIps[Index].Email := Emails[Index];
 
         Result := ZbBatchValidateEmails(EmailsAndIps);
     end;
