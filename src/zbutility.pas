@@ -100,6 +100,7 @@ implementation
         if ZbResponseMock.StatusCode <> 0 then
         begin
             response := ZbResponseMock;
+            ZbResponseMock.UrlCalled := url;
 		end
 		else
         begin
@@ -121,6 +122,7 @@ implementation
             raise error;
         end;
 
+        result.UrlCalled := url;
         Result := response;
     end;
 
