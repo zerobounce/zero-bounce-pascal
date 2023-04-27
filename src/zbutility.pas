@@ -25,6 +25,7 @@ type
     end;
 
 const
+    JSON_CONTENT_TYPE = 'application/json';
     BASE_URI = 'https://api.zerobounce.net/v2';
     BULK_URI = 'https://bulkapi.zerobounce.net/v2';
     ENDPOINT_CREDITS = '/getcredits';
@@ -52,8 +53,8 @@ var
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
     // performs a POST request with a multi-part form body
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse;
-    procedure ZBMockResponse(StatusCode: integer; Payload: String);
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);
+    procedure ZBMockResponse(StatusCode: integer; Payload: String);
     procedure Register;
 implementation
 
@@ -213,16 +214,16 @@ implementation
             end;
     end;
 
-    procedure ZBMockResponse(StatusCode: integer; Payload: String);
+    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);
     begin
         ZbResponseMock.StatusCode := StatusCode;
         ZbResponseMock.Payload := Payload;
+        ZbResponseMock.ContentType := ContentType;
     end;
 
-    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);
+    procedure ZBMockResponse(StatusCode: integer; Payload: String);
     begin
-        ZBMockResponse(StatusCode, Payload);
-        ZbResponseMock.ContentType := ContentType;
+        ZBMockResponse(StatusCode, Payload, JSON_CONTENT_TYPE);
     end;
 
     procedure Register;

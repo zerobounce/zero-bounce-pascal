@@ -126,7 +126,7 @@ implementation
     begin
         Result := '';
         JData := JObject.Find(JsonKey);
-        if not JData.IsNull then
+        if (JData <> nil) and (not JData.IsNull) then
             Result := JData.AsString;
     end;
 

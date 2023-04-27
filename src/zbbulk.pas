@@ -24,9 +24,6 @@ type
         RemoveDuplicate: Boolean;
     end;
 
-const
-    JSON_CONTENT_TYPE = 'application/json';
-
 function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
 
 function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
