@@ -205,7 +205,7 @@ procedure TTestBulk.TestFileSubmitError;
 begin
     ZBMockResponse(400, ERROR_PAYLOAD);
     try
-        BulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
+        ZbBulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
         Fail('function should have raised exception');
     except
         on e: ZbException do
@@ -220,7 +220,7 @@ procedure TTestBulk.TestFileStatusCheckError;
 begin
     ZBMockResponse(400, ERROR_PAYLOAD);
     try
-        BulkValidationFileStatusCheck(MOCK_FILE_ID);
+        ZbBulkValidationFileStatusCheck(MOCK_FILE_ID);
         Fail('function should have raised exception');
     except
         on e: ZbException do
@@ -235,7 +235,7 @@ procedure TTestBulk.TestResultFetchError;
 begin
     ZBMockResponse(400, ERROR_PAYLOAD);
     try
-        BulkValidationResultFetch(MOCK_FILE_ID);
+        ZbBulkValidationResultFetch(MOCK_FILE_ID);
         Fail('function should have raised exception');
     except
         on e: ZbException do
@@ -250,7 +250,7 @@ procedure TTestBulk.TestResultDeleteError;
 begin
     ZBMockResponse(400, ERROR_PAYLOAD);
     try
-        BulkValidationResultDelete(MOCK_FILE_ID);
+        ZbBulkValidationResultDelete(MOCK_FILE_ID);
         Fail('function should have raised exception');
     except
         on e: ZbException do
@@ -266,7 +266,7 @@ var
     response: TZBFileFeedback;
 begin
     ZBMockResponse(200, BULK_SUBMIT_OK);
-    response := BulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
+    response := ZbBulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
 
     AssertEquals('success', response.Success, True);
     AssertTrue('message does not have content', Length(response.Message) > 0);
@@ -279,7 +279,7 @@ var
     response: TZBFileStatus;
 begin
     ZBMockResponse(200, BULK_STATUS_OK);
-    response := BulkValidationFileStatusCheck(MOCK_FILE_ID);
+    response := ZbBulkValidationFileStatusCheck(MOCK_FILE_ID);
 
     AssertEquals('complete_percentage', response.CompletePercentage, 100.0);
     AssertEquals('success', response.Success, True);
@@ -303,7 +303,7 @@ var
     response: TZBBulkResponse;
 begin
     ZBMockResponse(200, BULK_RESULT_DELETED);
-    response := BulkValidationResultFetch(MOCK_FILE_ID);
+    response := ZbBulkValidationResultFetch(MOCK_FILE_ID);
 
     AssertFalse(response.HasContent);
     AssertEquals('success', response.Feedback.Success, False);
@@ -317,7 +317,7 @@ var
     response: TZBBulkResponse;
 begin
     ZBMockResponse(200, RESULT_CONTENT_MOCK, OCTET_STREAM_TYPE);
-    response := BulkValidationResultFetch(MOCK_FILE_ID);
+    response := ZbBulkValidationResultFetch(MOCK_FILE_ID);
 
     AssertTrue(response.HasContent);
     AssertEquals(response.Content, RESULT_CONTENT_MOCK);
@@ -328,7 +328,7 @@ var
     response: TZBFileFeedback;
 begin
     ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
-    response := BulkValidationResultDelete(MOCK_FILE_ID);
+    response := ZbBulkValidationResultDelete(MOCK_FILE_ID);
 
     AssertEquals('success', response.Success, False);
     AssertTrue('message does not have content', Length(response.Message) > 0);
@@ -341,7 +341,7 @@ var
     response: TZBFileFeedback;
 begin
     ZBMockResponse(200, BULK_DELETE_OK);
-    response := BulkValidationResultDelete(MOCK_FILE_ID);
+    response := ZbBulkValidationResultDelete(MOCK_FILE_ID);
 
     AssertEquals('success', response.Success, True);
     AssertTrue('message does not have content', Length(response.Message) > 0);
@@ -352,7 +352,7 @@ end;
 procedure TTestBulk.TestBulkValidationFileSubmitEndpoint;
 begin
     ZBMockResponse(200, BULK_SUBMIT_OK);
-    BulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
+    ZbBulkValidationFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
     AssertEndpointCalled(ENDPOINT_FILE_SEND);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('BulkValidationFileSubmit not using BULK_URI');
@@ -361,7 +361,7 @@ end;
 procedure TTestBulk.TestBulkValidationFileStatusCheckEndpoint;
 begin
     ZBMockResponse(200, BULK_STATUS_OK);
-    BulkValidationFileStatusCheck(MOCK_FILE_ID);
+    ZbBulkValidationFileStatusCheck(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_FILE_STATUS);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('BulkValidationFileStatusCheck not using BULK_URI');
@@ -370,7 +370,7 @@ end;
 procedure TTestBulk.TestBulkValidationResultFetchEndpoint;
 begin
     ZBMockResponse(200, BULK_RESULT_DELETED);
-    BulkValidationResultFetch(MOCK_FILE_ID);
+    ZbBulkValidationResultFetch(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_FILE_RESULT);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('BulkValidationResultFetch not using BULK_URI');
@@ -379,7 +379,7 @@ end;
 procedure TTestBulk.TestBulkValidationResultDeleteEndpoint;
 begin
     ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
-    BulkValidationResultDelete(MOCK_FILE_ID);
+    ZbBulkValidationResultDelete(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_FILE_DELETE);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('BulkValidationResultDelete not using BULK_URI');
@@ -388,7 +388,7 @@ end;
 procedure TTestBulk.TestAiScoringFileSubmitEndpoint;
 begin
     ZBMockResponse(200, BULK_SUBMIT_OK);
-    AiScoringFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
+    ZbAiScoringFileSubmit(MOCK_FILE_CONTENT, SUBMIT_PARAM);
     AssertEndpointCalled(ENDPOINT_SCORING_SEND);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('AiScoringFileSubmit not using BULK_URI');
@@ -397,7 +397,7 @@ end;
 procedure TTestBulk.TestAiScoringFileStatusCheckEndpoint;
 begin
     ZBMockResponse(200, BULK_STATUS_OK);
-    AiScoringFileStatusCheck(MOCK_FILE_ID);
+    ZbAiScoringFileStatusCheck(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_SCORING_STATUS);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('AiScoringFileStatusCheck not using BULK_URI');
@@ -406,7 +406,7 @@ end;
 procedure TTestBulk.TestAiScoringResultFetchEndpoint;
 begin
     ZBMockResponse(200, BULK_RESULT_DELETED);
-    AiScoringResultFetch(MOCK_FILE_ID);
+    ZbAiScoringResultFetch(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_SCORING_RESULT);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('AiScoringResultFetch not using BULK_URI');
@@ -415,7 +415,7 @@ end;
 procedure TTestBulk.TestAiScoringResultDeleteEndpoint;
 begin
     ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
-    AiScoringResultDelete(MOCK_FILE_ID);
+    ZbAiScoringResultDelete(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_SCORING_DELETE);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
         Fail('AiScoringResultDelete not using BULK_URI');

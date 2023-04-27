@@ -26,15 +26,15 @@ type
 
 function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
 
-function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
-function BulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
-function BulkValidationResultFetch(FileId: String): TZBBulkResponse;
-function BulkValidationResultDelete(FileId: String): TZBFileFeedback;
+function ZbBulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function ZbBulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
+function ZbBulkValidationResultFetch(FileId: String): TZBBulkResponse;
+function ZbBulkValidationResultDelete(FileId: String): TZBFileFeedback;
 
-function AiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
-function AiScoringFileStatusCheck(FileId: String): TZBFileStatus;
-function AiScoringResultFetch(FileId: String): TZBBulkResponse;
-function AiScoringResultDelete(FileId: String): TZBFileFeedback;
+function ZbAiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function ZbAiScoringFileStatusCheck(FileId: String): TZBFileStatus;
+function ZbAiScoringResultFetch(FileId: String): TZBBulkResponse;
+function ZbAiScoringResultDelete(FileId: String): TZBFileFeedback;
 
 procedure Register;
 
@@ -179,43 +179,43 @@ begin
 end;
 
 // BULK EMAIL VALIDATION
-function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function ZbBulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 begin
     Result := GenericFileSubmit(ENDPOINT_FILE_SEND, FileContent, FileParams);
 end;
 
-function BulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
+function ZbBulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
 begin
     Result := GenericFileStatusCheck(ENDPOINT_FILE_STATUS, FileId);
 end;
 
-function BulkValidationResultFetch(FileId: String): TZBBulkResponse;
+function ZbBulkValidationResultFetch(FileId: String): TZBBulkResponse;
 begin
     Result := GenericResultFetch(ENDPOINT_FILE_RESULT, FileId);
 end;
 
-function BulkValidationResultDelete(FileId: String): TZBFileFeedback;
+function ZbBulkValidationResultDelete(FileId: String): TZBFileFeedback;
 begin
     Result := GenericResultDelete(ENDPOINT_FILE_DELETE, FileId);
 end;
 
 // AI SCORING
-function AiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function ZbAiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 begin
     Result := GenericFileSubmit(ENDPOINT_SCORING_SEND, FileContent, FileParams);
 end;
 
-function AiScoringFileStatusCheck(FileId: String): TZBFileStatus;
+function ZbAiScoringFileStatusCheck(FileId: String): TZBFileStatus;
 begin
     Result := GenericFileStatusCheck(ENDPOINT_SCORING_STATUS, FileId);
 end;
 
-function AiScoringResultFetch(FileId: String): TZBBulkResponse;
+function ZbAiScoringResultFetch(FileId: String): TZBBulkResponse;
 begin
     Result := GenericResultFetch(ENDPOINT_SCORING_RESULT, FileId);
 end;
 
-function AiScoringResultDelete(FileId: String): TZBFileFeedback;
+function ZbAiScoringResultDelete(FileId: String): TZBFileFeedback;
 begin
     Result := GenericResultDelete(ENDPOINT_SCORING_DELETE, FileId);
 end;
