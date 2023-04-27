@@ -8,8 +8,26 @@ uses
     Classes, SysUtils,
     ZbStructures, ZbUtility;
 
+
+type
+    // Provide information about the CSV file being uploaded
+    // and/or other request-specific parameters
+    //
+    // COLUMN INDEXES START FROM 1
+    TZbBulkParams = record
+        EmailAddressColumn: Integer;
+        FirstNameColumn: Integer;
+        LastNameColumn: Integer;
+        GenderColumn: Integer;
+        IpAddressColumn: Integer;
+        HasHeaderRow: Boolean;
+        RemoveDuplicate: Boolean;
+    end;
+
 const
     JSON_CONTENT_TYPE = 'application/json';
+
+function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
 
 function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 function BulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
@@ -24,6 +42,34 @@ function AiScoringResultDelete(FileId: String): TZBFileFeedback;
 procedure Register;
 
 implementation
+
+    function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
+
+        function StrBool(Value: Boolean): String;
+        begin
+            if Value then Result := 'true' else Result := 'false';
+        end;
+
+    begin
+        Result := TStringList.Create;
+        Result.AddPair('api_key', ZbApiKey);
+        if SubmitParams.EmailAddressColumn = 0 then
+            Result.AddPair('email_address_column', '1') // index cannot be 0
+        else
+            Result.AddPair('email_address_column', IntToStr(SubmitParams.EmailAddressColumn));
+
+        if SubmitParams.FirstNameColumn > 0 then
+            Result.AddPair('first_name_column', IntToStr(SubmitParams.FirstNameColumn));
+        if SubmitParams.LastNameColumn > 0 then
+            Result.AddPair('last_name_column', IntToStr(SubmitParams.LastNameColumn));
+        if SubmitParams.GenderColumn > 0 then
+            Result.AddPair('gender_column', IntToStr(SubmitParams.GenderColumn));
+        if SubmitParams.IpAddressColumn > 0 then
+            Result.AddPair('ip_address_column', IntToStr(SubmitParams.IpAddressColumn));
+
+        Result.AddPair('has_header_row', StrBool(SubmitParams.HasHeaderRow));
+        Result.AddPair('remove_duplicate', StrBool(SubmitParams.RemoveDuplicate));
+    end;
 
 
 function GenericFileSubmit(endpoint, FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
