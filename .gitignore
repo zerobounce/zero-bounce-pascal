@@ -34,3 +34,7 @@ lib/
 tests/unit_tests
 debugging
 debugging.*
+
+# Executables from example folder
+examples/*
+!examples/*.*
