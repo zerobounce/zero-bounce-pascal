@@ -37,4 +37,6 @@ debugging.*
 
 # Executables from example folder
 examples/*
-!examples/*.*
+!examples/*.lpi
+!examples/*.lpr
+!examples/*.pas

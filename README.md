@@ -34,3 +34,5 @@ Now you can run it (Run > Run).
 - [ ] explain how to run tests
 - [ ] explain how to build library
 - [ ] explain how to install library
+- [ ] tell about ZbException being returned by every method, in case of anything
+-
