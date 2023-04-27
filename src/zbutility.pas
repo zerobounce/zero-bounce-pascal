@@ -5,7 +5,7 @@ unit ZbUtility;
 interface
 
 uses
-    Classes, SysUtils, fphttpclient;
+    Classes, SysUtils, openssl, opensslsockets, fphttpclient;
 
 type
     TZbRequestResponse = record
@@ -97,6 +97,8 @@ implementation
 		end
 		else
         begin
+            InitSSLInterface;
+
             Result.UrlCalled := url;
             Client := TFPHTTPClient.Create(nil);
             try
@@ -129,6 +131,8 @@ implementation
         end
         else
         begin
+            InitSSLInterface;
+
             Result.UrlCalled := url;
             Client := TFPHTTPClient.Create(nil);
 
@@ -169,6 +173,8 @@ implementation
         end
         else
         begin
+            InitSSLInterface;
+
             Result.UrlCalled := url;
             FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
