@@ -16,7 +16,7 @@
       </Parsing>
     </CompilerOptions>
     <Description Value="Free Pascal wrapper for the ZeroBounce API (version 2)."/>
-    <Version Minor="3"/>
+    <Version Minor="5" Release="1"/>
     <Files>
       <Item>
         <Filename Value="src/zbgeneric.pas"/>
@@ -37,6 +37,11 @@
         <Filename Value="src/zbstructures.pas"/>
         <HasRegisterProc Value="True"/>
         <UnitName Value="ZbStructures"/>
+      </Item>
+      <Item>
+        <Filename Value="src/zbbulk.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbBulk"/>
       </Item>
     </Files>
     <RequiredPkgs>

@@ -1,0 +1,184 @@
+unit ZbBulk;
+
+{$mode ObjFPC}{$H+}
+
+interface
+
+uses
+    Classes, SysUtils,
+    ZbStructures, ZbUtility;
+
+const
+    JSON_CONTENT_TYPE = 'application/json';
+
+function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function BulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
+function BulkValidationResultFetch(FileId: String): TZBBulkResponse;
+function BulkValidationResultDelete(FileId: String): TZBFileFeedback;
+
+function AiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+function AiScoringFileStatusCheck(FileId: String): TZBFileStatus;
+function AiScoringResultFetch(FileId: String): TZBBulkResponse;
+function AiScoringResultDelete(FileId: String): TZBFileFeedback;
+
+procedure Register;
+
+implementation
+
+
+function GenericFileSubmit(endpoint, FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+var
+    UrlToAccess: string;
+    response: TZbRequestResponse;
+    error: ZbException;
+    FormData: TStrings;
+begin
+    UrlToAccess := Concat(BULK_URI, endpoint);
+    FormData := ZbFromDataFromFileSubmitRecord(FileParams);
+    try
+        response := ZBPostRequest(UrlToAccess, FormData, FileContent);
+    finally
+        FormData.Free;
+    end;
+
+    // check for failure
+    if response.StatusCode > 299 then
+    begin
+        error := ZbException.FromResponse('Request failed', response);
+        error.MarkHttpError;
+        raise error;
+    end;
+
+    // attempt json parsing
+    try
+        Result := ZbFileFeedbackFromJson(response.Payload);
+    except
+        on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
+end;
+
+function GenericFileStatusCheck(endpoint, FileId: String): TZBFileStatus;
+var
+    UrlToAccess: string;
+    response: TZbRequestResponse;
+    error: ZbException;
+begin
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    response := ZBGetRequest(UrlToAccess);
+
+    // attempt json parsing
+    try
+        Result := ZbFileStatusFromJson(response.Payload);
+    except on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
+end;
+
+function GenericResultFetch(endpoint, FileId: String): TZBBulkResponse;
+var
+    UrlToAccess: string;
+    response: TZbRequestResponse;
+    error: ZbException;
+begin
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    response := ZBGetRequest(UrlToAccess);
+
+    if response.ContentType = '' then
+    begin
+        error := ZbException.FromResponse('No headers found in response', response);
+        error.MarkHttpError;
+        raise error;
+    end;
+
+    if response.ContentType.Contains(JSON_CONTENT_TYPE) then
+    begin
+        Result.HasContent := False;
+        Result.Feedback := ZbFileFeedbackFromJson(response.Payload);
+    end
+    else
+    begin
+        Result.HasContent := True;
+        Result.Content := response.Payload;
+    end;
+end;
+
+function GenericResultDelete(endpoint, FileId: String): TZBFileFeedback;
+var
+    UrlToAccess: string;
+    response: TZbRequestResponse;
+    error: ZbException;
+begin
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    response := ZBGetRequest(UrlToAccess);
+
+    // attempt json parsing
+    try
+        Result := ZbFileFeedbackFromJson(response.Payload);
+    except on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
+end;
+
+// BULK EMAIL VALIDATION
+function BulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+begin
+    Result := GenericFileSubmit(ENDPOINT_FILE_SEND, FileContent, FileParams);
+end;
+
+function BulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
+begin
+    Result := GenericFileStatusCheck(ENDPOINT_FILE_STATUS, FileId);
+end;
+
+function BulkValidationResultFetch(FileId: String): TZBBulkResponse;
+begin
+    Result := GenericResultFetch(ENDPOINT_FILE_RESULT, FileId);
+end;
+
+function BulkValidationResultDelete(FileId: String): TZBFileFeedback;
+begin
+    Result := GenericResultDelete(ENDPOINT_FILE_DELETE, FileId);
+end;
+
+// AI SCORING
+function AiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
+begin
+    Result := GenericFileSubmit(ENDPOINT_SCORING_SEND, FileContent, FileParams);
+end;
+
+function AiScoringFileStatusCheck(FileId: String): TZBFileStatus;
+begin
+    Result := GenericFileStatusCheck(ENDPOINT_SCORING_STATUS, FileId);
+end;
+
+function AiScoringResultFetch(FileId: String): TZBBulkResponse;
+begin
+    Result := GenericResultFetch(ENDPOINT_SCORING_RESULT, FileId);
+end;
+
+function AiScoringResultDelete(FileId: String): TZBFileFeedback;
+begin
+    Result := GenericResultDelete(ENDPOINT_SCORING_DELETE, FileId);
+end;
+
+procedure Register;
+begin
+end;
+
+end.

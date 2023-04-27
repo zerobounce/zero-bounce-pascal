@@ -5,7 +5,8 @@ unit ZbStructures;
 interface
 
 uses
-    SysUtils, DateUtils, fpjson, jsonparser;
+    Classes, SysUtils, StrUtils, DateUtils, fpjson, jsonparser,
+    ZbUtility;
 
 type
     TApiUsage = Record
@@ -72,13 +73,52 @@ type
         EmailAddress: String;
     end;
 
-    TZBBatchValidation = record
+    TZbBatchValidation = record
         EmailBatchLength: Integer;
         EmailBatch: array of TZbValidationResult;
         ErrorsLength: Integer;
         Errors: array of TZbBatchError;
     end;
 
+    // Provide information about the CSV file being uploaded
+    // and/or other request-specific parameters
+    //
+    // COLUMN INDEXES START FROM 1
+    TZbBulkParams = record
+        EmailAddressColumn: Integer;
+        FirstNameColumn: Integer;
+        LastNameColumn: Integer;
+        GenderColumn: Integer;
+        IpAddressColumn: Integer;
+        HasHeaderRow: Boolean;
+        RemoveDuplicate: Boolean;
+    end;
+
+    TZbFileFeedback = record
+        Success: Boolean;
+        Message: String;
+        FileName: String;
+        FileId: String;
+    end;
+
+    TZbFileStatus = record
+        Success: Boolean;
+        FileId: String;
+        FileName: String;
+        FileStatus: String;
+        ErrorReason: String;
+        ReturnUrl: String;
+        UploadDate: TDateTime;
+        CompletePercentage: Double;
+    end;
+
+    TZbBulkResponse = record
+        HasContent: Boolean;
+        Feedback: TZbFileFeedback;
+        Content: String;
+    end;
+
+function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
 
 function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
 function ZbValidationFromJson(JObject: TJSONObject): TZbValidationResult;
@@ -86,6 +126,8 @@ function ZbValidationFromJson(JsonContent: string): TZbValidationResult;
 function ZbBatchErrorFromJson(JObject: TJSONObject): TZbBatchError;
 function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError;
 function ZbBatchValidationFromJson(JsonContent: string): TZBBatchValidation;
+function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
+function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
 procedure Register;
 
 implementation
@@ -102,6 +144,34 @@ implementation
         JData := JObject.Find(JsonKey);
         if not JData.IsNull then
             Result := JData.AsString;
+    end;
+
+    function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
+
+        function StrBool(Value: Boolean): String;
+        begin
+            if Value then Result := 'true' else Result := 'false';
+        end;
+
+    begin
+        Result := TStringList.Create;
+        Result.AddPair('api_key', ZbApiKey);
+        if SubmitParams.EmailAddressColumn = 0 then
+            Result.AddPair('email_address_column', '1') // index cannot be 0
+        else
+            Result.AddPair('email_address_column', IntToStr(SubmitParams.EmailAddressColumn));
+
+        if SubmitParams.FirstNameColumn > 0 then
+            Result.AddPair('first_name_column', IntToStr(SubmitParams.FirstNameColumn));
+        if SubmitParams.LastNameColumn > 0 then
+            Result.AddPair('last_name_column', IntToStr(SubmitParams.LastNameColumn));
+        if SubmitParams.GenderColumn > 0 then
+            Result.AddPair('gender_column', IntToStr(SubmitParams.GenderColumn));
+        if SubmitParams.IpAddressColumn > 0 then
+            Result.AddPair('ip_address_column', IntToStr(SubmitParams.IpAddressColumn));
+
+        Result.AddPair('has_header_row', StrBool(SubmitParams.HasHeaderRow));
+        Result.AddPair('remove_duplicate', StrBool(SubmitParams.RemoveDuplicate));
     end;
 
     function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
@@ -154,8 +224,6 @@ implementation
         Result.StartDate := ExtractDate('start_date');
         Result.EndDate := ExtractDate('end_date');
     end;
-
-
 
     function ZbValidationFromJson(JsonContent: string): TZbValidationResult;
     begin
@@ -251,5 +319,43 @@ implementation
                 Result.Errors[IIndex] := ZbBatchErrorFromJson(JArray.Objects[IIndex]);
         end;
     end;
+
+    function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
+    var
+        JObject: TJSONObject;
+    begin
+        JObject := TJSONObject(GetJSON(JsonContent));
+
+        Result.Success := JObject.Find('success').AsBoolean;
+        Result.Message := JObject.Find('message').AsString;
+        Result.FileName := StringOrNull(JObject, 'file_name');
+        Result.FileId := StringOrNull(JObject, 'file_id');
+    end;
+
+    function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
+    var
+        JObject: TJSONObject;
+        PercentageAuxArray: array of String;
+    begin
+        JObject := TJSONObject(GetJSON(JsonContent));
+
+        Result.Success := JObject.Find('success').AsBoolean;
+        Result.FileId := JObject.Find('file_id').AsString;
+        Result.FileName := JObject.Find('file_name').AsString;
+        Result.FileStatus := JObject.Find('file_status').AsString;
+        Result.ErrorReason := StringOrNull(JObject, 'error_reason');
+        Result.ReturnUrl := StringOrNull(JObject, 'return_url');
+        Result.UploadDate := ISO8601ToDate(JObject.Find('upload_date').AsString);
+
+        // Percentage comes as a string; will parse it to float
+        PercentageAuxArray := SplitString(
+            JObject.Find('complete_percentage').AsString, '%'
+        );
+        if Length(PercentageAuxArray) > 0 then
+            Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
+        else
+            Result.CompletePercentage := -1;
+    end;
+
 end.
 
