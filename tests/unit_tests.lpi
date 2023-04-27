@@ -58,6 +58,16 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="MockValues"/>
       </Unit>
+      <Unit>
+        <Filename Value="testbulk.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestBulk"/>
+      </Unit>
+      <Unit>
+        <Filename Value="basetest.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="BaseTest"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

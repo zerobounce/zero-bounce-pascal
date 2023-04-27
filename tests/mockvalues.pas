@@ -45,111 +45,144 @@ const
    ERROR_PAYLOAD: string = '{"error": "Mock error message"}';
 
    VALDATION_RESPONSE_VALID: string = '{' +
-	    '    "address": "valid@example.com",' +
-	    '    "status": "valid",' +
-	    '    "sub_status": "",' +
-	    '    "free_email": false,' +
-	    '    "did_you_mean": null,' +
-	    '    "account": null,' +
-	    '    "domain": null,' +
-	    '    "domain_age_days": "9692",' +
-	    '    "smtp_provider": "example",' +
-	    '    "mx_found": "true",' +
-	    '    "mx_record": "mx.example.com",' +
-	    '    "firstname": "zero",' +
-	    '    "lastname": "bounce",' +
-	    '    "gender": "male",' +
-	    '    "country": null,' +
-	    '    "region": null,' +
-	    '    "city": null,' +
-	    '    "zipcode": null,' +
-	    '    "processed_at": "2023-04-25 13:08:24.269"' +
-	    '}';
+        '    "address": "valid@example.com",' +
+        '    "status": "valid",' +
+        '    "sub_status": "",' +
+        '    "free_email": false,' +
+        '    "did_you_mean": null,' +
+        '    "account": null,' +
+        '    "domain": null,' +
+        '    "domain_age_days": "9692",' +
+        '    "smtp_provider": "example",' +
+        '    "mx_found": "true",' +
+        '    "mx_record": "mx.example.com",' +
+        '    "firstname": "zero",' +
+        '    "lastname": "bounce",' +
+        '    "gender": "male",' +
+        '    "country": null,' +
+        '    "region": null,' +
+        '    "city": null,' +
+        '    "zipcode": null,' +
+        '    "processed_at": "2023-04-25 13:08:24.269"' +
+        '}';
 
    VALDATION_RESPONSE_INVALID: string ='{' +
-	    '    "address": "invalid@example.com",' +
-	    '    "status": "invalid",' +
-	    '    "sub_status": "mailbox_not_found",' +
-	    '    "free_email": false,' +
-	    '    "did_you_mean": null,' +
-	    '    "account": null,' +
-	    '    "domain": null,' +
-	    '    "domain_age_days": "9692",' +
-	    '    "smtp_provider": "example",' +
-	    '    "mx_found": "true",' +
-	    '    "mx_record": "mx.example.com",' +
-	    '    "firstname": "zero",' +
-	    '    "lastname": "bounce",' +
-	    '    "gender": "male",' +
-	    '    "country": null,' +
-	    '    "region": null,' +
-	    '    "city": null,' +
-	    '    "zipcode": null,' +
-	    '    "processed_at": "2023-12-25 13:08:24.001"' +
-	    '}';
+        '    "address": "invalid@example.com",' +
+        '    "status": "invalid",' +
+        '    "sub_status": "mailbox_not_found",' +
+        '    "free_email": false,' +
+        '    "did_you_mean": null,' +
+        '    "account": null,' +
+        '    "domain": null,' +
+        '    "domain_age_days": "9692",' +
+        '    "smtp_provider": "example",' +
+        '    "mx_found": "true",' +
+        '    "mx_record": "mx.example.com",' +
+        '    "firstname": "zero",' +
+        '    "lastname": "bounce",' +
+        '    "gender": "male",' +
+        '    "country": null,' +
+        '    "region": null,' +
+        '    "city": null,' +
+        '    "zipcode": null,' +
+        '    "processed_at": "2023-12-25 13:08:24.001"' +
+        '}';
 
    BATCH_VALIDATE_OK: string = '{' +
-	    '    "email_batch": [' +
+        '    "email_batch": [' +
         '{' +
-	    '    "address": "valid@example.com",' +
-	    '    "status": "valid",' +
-	    '    "sub_status": "",' +
-	    '    "free_email": false,' +
-	    '    "did_you_mean": null,' +
-	    '    "account": null,' +
-	    '    "domain": null,' +
-	    '    "domain_age_days": "9692",' +
-	    '    "smtp_provider": "example",' +
-	    '    "mx_found": "true",' +
-	    '    "mx_record": "mx.example.com",' +
-	    '    "firstname": "zero",' +
-	    '    "lastname": "bounce",' +
-	    '    "gender": "male",' +
-	    '    "country": null,' +
-	    '    "region": null,' +
-	    '    "city": null,' +
-	    '    "zipcode": null,' +
-	    '    "processed_at": "2023-04-25 13:08:24.269"' +
-	    '}, ' +
+        '    "address": "valid@example.com",' +
+        '    "status": "valid",' +
+        '    "sub_status": "",' +
+        '    "free_email": false,' +
+        '    "did_you_mean": null,' +
+        '    "account": null,' +
+        '    "domain": null,' +
+        '    "domain_age_days": "9692",' +
+        '    "smtp_provider": "example",' +
+        '    "mx_found": "true",' +
+        '    "mx_record": "mx.example.com",' +
+        '    "firstname": "zero",' +
+        '    "lastname": "bounce",' +
+        '    "gender": "male",' +
+        '    "country": null,' +
+        '    "region": null,' +
+        '    "city": null,' +
+        '    "zipcode": null,' +
+        '    "processed_at": "2023-04-25 13:08:24.269"' +
+        '}, ' +
         '{' +
-	    '    "address": "invalid@example.com",' +
-	    '    "status": "invalid",' +
-	    '    "sub_status": "mailbox_not_found",' +
-	    '    "free_email": false,' +
-	    '    "did_you_mean": null,' +
-	    '    "account": null,' +
-	    '    "domain": null,' +
-	    '    "domain_age_days": "9692",' +
-	    '    "smtp_provider": "example",' +
-	    '    "mx_found": "true",' +
-	    '    "mx_record": "mx.example.com",' +
-	    '    "firstname": "zero",' +
-	    '    "lastname": "bounce",' +
-	    '    "gender": "male",' +
-	    '    "country": null,' +
-	    '    "region": null,' +
-	    '    "city": null,' +
-	    '    "zipcode": null,' +
-	    '    "processed_at": "2023-12-25 13:08:24.001"' +
-	    '}' +
-	    '    ],' +
-	    '    "errors": []' +
-	    '}';
+        '    "address": "invalid@example.com",' +
+        '    "status": "invalid",' +
+        '    "sub_status": "mailbox_not_found",' +
+        '    "free_email": false,' +
+        '    "did_you_mean": null,' +
+        '    "account": null,' +
+        '    "domain": null,' +
+        '    "domain_age_days": "9692",' +
+        '    "smtp_provider": "example",' +
+        '    "mx_found": "true",' +
+        '    "mx_record": "mx.example.com",' +
+        '    "firstname": "zero",' +
+        '    "lastname": "bounce",' +
+        '    "gender": "male",' +
+        '    "country": null,' +
+        '    "region": null,' +
+        '    "city": null,' +
+        '    "zipcode": null,' +
+        '    "processed_at": "2023-12-25 13:08:24.001"' +
+        '}' +
+        '    ],' +
+        '    "errors": []' +
+        '}';
 
    BATCH_VALIDATE_ERROR_SAMPLE: string = '{' +
-	    '    "email_address": "all",' +
-	    '    "error": "Invalid API Key or your account ran out of credits"' +
-	    '}';
+        '    "email_address": "all",' +
+        '    "error": "Invalid API Key or your account ran out of credits"' +
+        '}';
 
    BATCH_VALIDATE_ERROR: string = '{' +
-	    '    "email_batch": [],' +
-	    '    "errors": [' +
+        '    "email_batch": [],' +
+        '    "errors": [' +
         '        {' +
-	    '            "email_address": "all",' +
-	    '            "error": "Invalid API Key or your account ran out of credits"' +
-	    '        }' +
-	    '    ]' +
-	    '}';
+        '            "email_address": "all",' +
+        '            "error": "Invalid API Key or your account ran out of credits"' +
+        '        }' +
+        '    ]' +
+        '}';
+
+
+        BULK_SUBMIT_OK = '{' +
+        '    "success": true,' +
+        '    "message": "File Accepted",' +
+        '    "file_name": "emails2.txt",' +
+        '    "file_id": "e90e9b1d-8dc7-40eb-a7d9-999d52086a56"' +
+        '}';
+
+
+        BULK_STATUS_OK = '{' +
+        '    "success": true,' +
+        '    "file_id": "e90e9b1d-8dc7-40eb-a7d9-999d52086a56",' +
+        '    "file_name": "emails2.txt",' +
+        '    "upload_date": "2023-04-26T17:52:23Z",' +
+        '    "file_status": "Processing",' +
+        '    "complete_percentage": "100%",' +
+        '    "error_reason": null,' +
+        '    "return_url": "https://mock.value.com/"' +
+        '}';
+
+        BULK_RESULT_DELETED = '{ "success": false, "message": "File deleted." }';
+
+
+        BULK_DELETE_OK = '{' +
+        '    "success": true,' +
+        '    "message": "File Deleted",' +
+        '    "file_name": "emails2.txt",' +
+        '    "file_id": "e90e9b1d-8dc7-40eb-a7d9-999d52086a56"' +
+        '}';
+
+        BULK_DELETE_NOT_FOUND = '{ "success": false, "message": "File cannot be found."}';
+
 
 implementation
 

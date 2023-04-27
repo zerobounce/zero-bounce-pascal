@@ -7,14 +7,11 @@ interface
 uses
    Classes, SysUtils, fpcunit, testregistry,
    // ZeroBounce was installed in Lazarus and imported via Package > Package links
-   MockValues, ZbGeneric, ZbStructures, ZbUtility;
+   BaseTest, MockValues, ZbGeneric, ZbStructures, ZbUtility;
 
 type
 
-   TTestGeneric= class(TTestCase)
-   protected
-      procedure AssertEndpointCalled(const endpoint: string);
-      procedure TearDown; override;
+   TTestGeneric= class(TBaseTestCase)
    published
       procedure TestCredits;
       procedure TestApiUsageHttpError;
@@ -24,20 +21,6 @@ type
 
 implementation
 
-procedure TTestGeneric.TearDown;
-begin
-   if ZbResponseMock.Headers <> nil then
-      ZbResponseMock.Headers.Free;
-   ZbResponseMock := cDefaultMock;
-end;
-
-procedure TTestGeneric.AssertEndpointCalled(const endpoint: string);
-begin
-   AssertTrue(
-      'Endpoint '+ endpoint + ' not called',
-      ZbResponseMock.UrlCalled.Contains(endpoint)
-   );
-end;
 
 procedure TTestGeneric.TestCredits;
 var

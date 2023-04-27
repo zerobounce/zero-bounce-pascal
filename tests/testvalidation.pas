@@ -6,13 +6,11 @@ interface
 
 uses
     Classes, SysUtils, DateUtils, fpcunit, testregistry, fpjson, jsonparser,
-    MockValues, ZbStructures, ZbValidation, ZbUtility;
+    BaseTest, MockValues, ZbStructures, ZbValidation, ZbUtility;
 
 type
 
-    TTestValidation= class(TTestCase)
-    protected
-        procedure TearDown; override;
+    TTestValidation= class(TBaseTestCase)
     published
         procedure TestEmailValidationEndpoint;
         procedure TestEmailValidationOk;
@@ -40,22 +38,11 @@ const
 
 implementation
 
-procedure TTestValidation.TearDown;
-begin
-    if ZbResponseMock.Headers <> nil then
-        ZbResponseMock.Headers.Free;
-    ZbResponseMock := cDefaultMock;
-end;
-
-
 procedure TTestValidation.TestEmailValidationEndpoint;
 begin
     ZBMockResponse(200, BATCH_VALIDATE_OK);
     ZbBatchValidateEmails(EmailsAndIps2);
-    AssertTrue(
-        'Endpoint ' + ENDPOINT_VALIDATE + ' not called',
-        ZbResponseMock.UrlCalled.Contains(ENDPOINT_VALIDATE)
-    );
+    AssertEndpointCalled(ENDPOINT_VALIDATE);
 end;
 
 
@@ -150,10 +137,7 @@ procedure TTestValidation.TestBatchEmailValidationEndpoint;
 begin
     ZBMockResponse(200, BATCH_VALIDATE_OK);
     ZbBatchValidateEmails(EmailsAndIps2);
-    AssertTrue(
-        'Endpoint '+ ENDPOINT_BATCH_VALIDATE + ' not called',
-        ZbResponseMock.UrlCalled.Contains(ENDPOINT_BATCH_VALIDATE)
-    );
+    AssertEndpointCalled(ENDPOINT_BATCH_VALIDATE);
 end;
 
 

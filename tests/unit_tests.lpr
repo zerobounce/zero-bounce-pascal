@@ -3,7 +3,8 @@ program unit_tests;
 {$mode objfpc}{$H+}
 
 uses
-  Interfaces, Forms, GuiTestRunner, TestGeneric, TestValidation, TestDeserialization;
+  Interfaces, Forms, GuiTestRunner, TestGeneric, TestValidation,
+  TestDeserialization, TestBulk;
 
 {$R *.res}
 
