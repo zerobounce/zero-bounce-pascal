@@ -81,7 +81,7 @@ begin
     try
         response := ZBPostRequest(UrlToAccess, FormData, FileContent);
     finally
-        FormData.Free;
+      FormData.Free;
     end;
 
     // check for failure

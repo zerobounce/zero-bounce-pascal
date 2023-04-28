@@ -164,7 +164,7 @@ implementation
         Client: TFPHTTPClient;
         error: ZbException;
         FileStream: TStream;
-        ResponseStream: TStream;
+        ResponseStream: TStringStream;
     begin
         if ZbResponseMock.StatusCode <> 0 then
         begin
@@ -199,13 +199,13 @@ implementation
                     end;
                 end;
 
-                Result.Payload := ResponseStream.ReadAnsiString();
+                ResponseStream.Seek(0, soBeginning);
+                Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
                 Client.Free;
                 FileStream.Free;
-                FormData.Free;
                 if ResponseStream <> nil then
                     ResponseStream.Free;
             end;
