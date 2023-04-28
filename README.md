@@ -1,38 +1,27 @@
 # Zero bounce API - pascal SDK
 
+This library is a wrapper for the ZeroBounce API v2.
+
+For more information about the API, visit https://www.zerobounce.net/docs/.
+
+In order to run this library, the zero-bounce API which requires an API key. Check [this guide](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) to see how to grab yours.
+
 
 ## Local environment
 
 In order to run this project, one must install [Lazarus IDE](https://www.lazarus-ide.org/).
 
-## Editing the package
-
 Open Lazarus IDK, File > Open, brose for `zerobounce.lpk` (found at repository root), click "Open package".
 
-You have now opened the SDK in package mode. Now you can:
-- compile it
-- open individual files from the package (double-clicking opens files in Lazarus IDE)
-- extend the package (by adding other files to it)
-- manage requirements
-- increment version and manage package details
-
-## Unit tests
-Open `tests/unit_tests.lpi` in Lazarus IDE as a project.
-
-In order to run the unit tests, compile and install the zero bounce library:
+In order to run unit tests or example snippets, first the zero-bounce package into lazarus:
 - open library in package mode
-- Compile; Use > Install
-- (re)open unit tests
+- Compile
+- 'Project inspector' window > Use > Install
+
+After installing, opening either tests  (`tests/unit_tests.lpi`) or example snippets (any `*.lpi` file from `examples/` folder) should work running.
+
+To run zero bounce with any other project:
+- open desired project
 - Project > Project inspector > Add > New requirement
 - pick "ZeroBounce" from the list
-- it should now appear in "Required Packages"
-
-Now you can run it (Run > Run).
-
-## To do:
-- [ ] explain how to run project
-- [ ] explain how to run tests
-- [ ] explain how to build library
-- [ ] explain how to install library
-- [ ] tell about ZbException being returned by every method, in case of anything
--
+- it should now appear in "Required Packages" and work
