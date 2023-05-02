@@ -5,7 +5,7 @@ unit TestValidation;
 interface
 
 uses
-    Classes, SysUtils, DateUtils, fpcunit, testregistry, fpjson, jsonparser,
+    Classes, SysUtils, DateUtils, fpcunit, testregistry, fpjson,
     BaseTest, MockValues, ZbStructures, ZbValidation, ZbUtility;
 
 type
@@ -82,54 +82,89 @@ end;
 
 procedure TTestValidation.TestBatchBodyEncoder;
 var
-    JObject: TJSONObject;
+    JsonObj: TZbJSon;
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
     ZBSetApiKey(MOCK_API_KEY);
 
-    JObject := TJSONObject(GetJSON(ZbBatchRequestBodyFromEmails(EmailsAndIps2)));
-    AssertEquals('api_key', JObject.Find('api_key').AsString, MOCK_API_KEY);
-    IsValid := JObject.Find('email_batch', JArray);
-    AssertTrue('"email_batch" not found', IsValid);
+    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps2));
+    try
+        AssertEquals('api_key', JsonObj.GetString('api_key'), MOCK_API_KEY);
+        IsValid := JsonObj.GetArray('email_batch', JArray);
+        AssertTrue('"email_batch" not found', IsValid);
 
-    AssertEquals('first email', JArray.Objects[0].Find('email_address').AsString, EmailsAndIps2[0].Email);
-    AssertEquals('first ip', JArray.Objects[0].Find('ip_address').AsString, EmailsAndIps2[0].Ip);
-    AssertEquals('second email', JArray.Objects[1].Find('email_address').AsString, EmailsAndIps2[1].Email);
-    AssertEquals('second ip', JArray.Objects[1].Find('ip_address').AsString, EmailsAndIps2[1].Ip);
+        AssertEquals(
+            'first email',
+            TZbJson.Create(JArray.Objects[0]).GetString('email_address'),
+            EmailsAndIps2[0].Email
+        );
+        AssertEquals(
+            'first ip',
+            TZbJson.Create(JArray.Objects[0]).GetString('ip_address'),
+            EmailsAndIps2[0].Ip
+        );
+        AssertEquals(
+            'second email',
+            TZbJson.Create(JArray.Objects[1]).GetString('email_address'),
+            EmailsAndIps2[1].Email
+        );
+        AssertEquals(
+            'second ip',
+            TZbJson.Create(JArray.Objects[1]).GetString('ip_address'),
+            EmailsAndIps2[1].Ip
+        );
+    finally
+        JsonObj.Free;
+    end;
+
 end;
 
 procedure TTestValidation.TestBatchBodyEncoderOneEmail;
 var
-    JObject: TJSONObject;
+    JsonObj: TZbJSon;
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
     ZBSetApiKey(MOCK_API_KEY);
+    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps1));
+    try
+        AssertEquals('api_key', JsonObj.GetString('api_key'), MOCK_API_KEY);
+        IsValid := JsonObj.GetArray('email_batch', JArray);
+        AssertTrue('"email_batch" not found', IsValid);
 
-    JObject := TJSONObject(GetJSON(ZbBatchRequestBodyFromEmails(EmailsAndIps1)));
-    AssertEquals('api_key', JObject.Find('api_key').AsString, MOCK_API_KEY);
-    IsValid := JObject.Find('email_batch', JArray);
-    AssertTrue('"email_batch" not found', IsValid);
-
-    AssertEquals('array size', JArray.Count, 1);
-    AssertEquals('first email', JArray.Objects[0].Find('email_address').AsString, EmailsAndIps1[0].Email);
-    AssertEquals('first ip', JArray.Objects[0].Find('ip_address').AsString, EmailsAndIps1[0].Ip);
+        AssertEquals('array size', JArray.Count, 1);
+        AssertEquals(
+            'first email',
+            TZbJson.Create(JArray.Objects[0]).GetString('email_address'),
+            EmailsAndIps1[0].Email
+        );
+        AssertEquals(
+            'first ip',
+            TZbJson.Create(JArray.Objects[0]).GetString('ip_address'),
+            EmailsAndIps1[0].Ip
+        );
+    finally
+        JsonObj.Free;
+    end;
 end;
 
 procedure TTestValidation.TestBatchBodyEncoderNoEmails;
 var
-    JObject: TJSONObject;
+    JsonObj: TZbJSon;
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
     ZBSetApiKey(MOCK_API_KEY);
-
-    JObject := TJSONObject(GetJSON(ZbBatchRequestBodyFromEmails(EmailsAndIps0)));
-    AssertEquals('api_key', JObject.Find('api_key').AsString, MOCK_API_KEY);
-    IsValid := JObject.Find('email_batch', JArray);
-    AssertTrue('"email_batch" not found', IsValid);
-    AssertEquals('array size', JArray.Count, 0);
+    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps0));
+    try
+        AssertEquals('api_key', JsonObj.GetString('api_key'), MOCK_API_KEY);
+        IsValid := JsonObj.GetArray('email_batch', JArray);
+        AssertTrue('"email_batch" not found', IsValid);
+        AssertEquals('array size', JArray.Count, 0);
+    finally
+        JsonObj.Free;
+    end;
 end;
 
 

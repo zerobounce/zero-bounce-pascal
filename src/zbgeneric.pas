@@ -5,7 +5,7 @@ unit ZbGeneric;
 interface
 
 uses
-    SysUtils, DateUtils, openssl, opensslsockets, fpjson, jsonparser,
+    SysUtils, DateUtils,
 
     ZbStructures, ZbUtility;
 
@@ -21,16 +21,21 @@ implementation
     var
         UrlToAccess: string;
         response: TZbRequestResponse;
-        JObject: TJSONObject;
+        JsonObj: TZbJSon;
         error: ZbException;
     begin
+        Result := -1;
         UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
         try
-			JObject := TJSONObject(GetJSON(response.Payload));
-            Result := JObject.Find('Credits').AsInteger;
+            JsonObj := TZbJSon.Create(JSonCont);
+            try
+                Result := JsonObj.GetInteger('Credits');
+            finally
+                JsonObj.Free;
+            end;
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);

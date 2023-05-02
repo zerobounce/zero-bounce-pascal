@@ -27,6 +27,9 @@ backup/
 *.bak
 lib/
 
+# Delphi files
+**/__history/
+
 # Application bundle for Mac OS
 *.app/
 
