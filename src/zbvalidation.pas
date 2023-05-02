@@ -1,6 +1,6 @@
 unit ZbValidation;
 
-{$mode ObjFPC}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 
@@ -19,10 +19,10 @@ type
 procedure Register;
 function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 
-function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
-function ZbValidateEmail(Email: String): TZbValidationResult;
-function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
-function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
+function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult; overload;
+function ZbValidateEmail(Email: String): TZbValidationResult; overload;
+function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation; overload;
+function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation; overload;
 
 
 implementation

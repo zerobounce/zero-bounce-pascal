@@ -1,6 +1,6 @@
 unit ZbGeneric;
 
-{$mode objfpc}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 

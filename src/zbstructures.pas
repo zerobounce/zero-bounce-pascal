@@ -1,6 +1,6 @@
 unit ZbStructures;
 
-{$mode ObjFPC}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 

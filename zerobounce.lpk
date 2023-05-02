@@ -6,6 +6,7 @@
     <CompilerOptions>
       <Version Value="11"/>
       <SearchPaths>
+        <IncludeFiles Value="src"/>
         <OtherUnitFiles Value="src"/>
         <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
       </SearchPaths>
@@ -16,7 +17,7 @@
       </Parsing>
     </CompilerOptions>
     <Description Value="Free Pascal wrapper for the ZeroBounce API (version 2)."/>
-    <Version Minor="6"/>
+    <Version Minor="7"/>
     <Files>
       <Item>
         <Filename Value="src/zbgeneric.pas"/>
@@ -42,6 +43,10 @@
         <Filename Value="src/zbbulk.pas"/>
         <HasRegisterProc Value="True"/>
         <UnitName Value="ZbBulk"/>
+      </Item>
+      <Item>
+        <Filename Value="src/zboptions.inc"/>
+        <Type Value="Include"/>
       </Item>
     </Files>
     <RequiredPkgs>
