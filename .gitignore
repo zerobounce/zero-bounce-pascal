@@ -42,7 +42,12 @@ debugging
 debugging.*
 
 # Executables from example folder
-examples/*
-!examples/*.lpi
-!examples/*.lpr
-!examples/*.pas
+examples/fpc/*
+!examples/fpc/*.lpi
+!examples/fpc/*.lpr
+!examples/fpc/*.pas
+
+examples/delphi/*
+!examples/delphi/*.dpr
+!examples/delphi/*.dproj
+!examples/delphi/*.pas
