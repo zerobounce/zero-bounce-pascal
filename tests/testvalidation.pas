@@ -96,22 +96,22 @@ begin
 
     AssertEquals(
         'first email',
-        TZbJson.Create(JArray.Objects[0]).GetString('email_address'),
+        TZbJson.CreateWrap(JArray.Objects[0]).GetString('email_address'),
         EmailsAndIps2[0].Email
     );
     AssertEquals(
         'first ip',
-        TZbJson.Create(JArray.Objects[0]).GetString('ip_address'),
+        TZbJson.CreateWrap(JArray.Objects[0]).GetString('ip_address'),
         EmailsAndIps2[0].Ip
     );
     AssertEquals(
         'second email',
-        TZbJson.Create(JArray.Objects[1]).GetString('email_address'),
+        TZbJson.CreateWrap(JArray.Objects[1]).GetString('email_address'),
         EmailsAndIps2[1].Email
     );
     AssertEquals(
         'second ip',
-        TZbJson.Create(JArray.Objects[1]).GetString('ip_address'),
+        TZbJson.CreateWrap(JArray.Objects[1]).GetString('ip_address'),
         EmailsAndIps2[1].Ip
     );
 
@@ -133,12 +133,12 @@ begin
     AssertEquals('array size', JArray.Count, 1);
     AssertEquals(
         'first email',
-        TZbJson.Create(JArray.Objects[0]).GetString('email_address'),
+        TZbJson.CreateWrap(JArray.Objects[0]).GetString('email_address'),
         EmailsAndIps1[0].Email
     );
     AssertEquals(
         'first ip',
-        TZbJson.Create(JArray.Objects[0]).GetString('ip_address'),
+        TZbJson.CreateWrap(JArray.Objects[0]).GetString('ip_address'),
         EmailsAndIps1[0].Ip
     );
 

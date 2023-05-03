@@ -23,7 +23,7 @@ type
         class function Parse(JsonContent: String): TJSONObject;
 
         constructor Create(JObject: TJSONObject); {$IFNDEF FPC}override;{$ENDIF}
-        constructor Create(JsonContent: String); {$IFNDEF FPC}override;{$ENDIF}
+        constructor CreateWrap(JsonContent: String); {$IFNDEF FPC}override;{$ENDIF}
         function GetValue(Key: String): TZbJSONValue;
         destructor Destroy; override;
         function GetString(Key: String): String;
@@ -151,7 +151,7 @@ implementation
         FCreated := True;
     end;
 
-    constructor TZbJson.Create(JObject: TJSONObject);
+    constructor TZbJson.CreateWrap(JObject: TJSONObject);
     begin
         inherited Create;
         FJSONObject := JObject;
@@ -365,7 +365,7 @@ implementation
             SetLength(Result.EmailBatch, Result.EmailBatchLength);
             for IIndex := 0 to Result.EmailBatchLength - 1 do
                 Result.EmailBatch[IIndex] := ZbValidationFromJson(
-                    TZbJson.Create(JArray.Objects[IIndex])
+                    TZbJson.CreateWrap(JArray.Objects[IIndex])
                 );
         end;
 
@@ -382,7 +382,7 @@ implementation
             SetLength(Result.Errors, Result.ErrorsLength);
             for IIndex := 0 to Result.ErrorsLength - 1 do
                 Result.Errors[IIndex] := ZbBatchErrorFromJson(
-                    TZbJson.Create(JArray.Objects[IIndex])
+                    TZbJson.CreateWrap(JArray.Objects[IIndex])
                 );
         end;
         JArray.Free;
