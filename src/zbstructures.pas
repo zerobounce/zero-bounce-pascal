@@ -329,8 +329,8 @@ implementation
             // %Y-%m-%d
             ASplitAux := SplitString(ASplitMain[0], '-');
             Year := StrToInt(ASplitAux[0]);
-            Month := StrToInt(ASplitAux[0]);
-            Day := StrToInt(ASplitAux[0]);
+            Month := StrToInt(ASplitAux[1]);
+            Day := StrToInt(ASplitAux[1]);
 
             // %H:%M:%S.%3f
             ASplitAux := SplitString(ASplitMain[1], '.');
