@@ -29,6 +29,9 @@ lib/
 
 # Delphi files
 **/__history/
+**/__recovery/
+**/Win32
+packages/*.local
 
 # Application bundle for Mac OS
 *.app/

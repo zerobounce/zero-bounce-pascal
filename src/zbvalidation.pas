@@ -43,8 +43,9 @@ implementation
             if FirstElement then
                 FirstElement := False
             else
-                BatchContent += ',';
-            BatchContent += format(
+                BatchContent := BatchContent + ',';
+
+            BatchContent := BatchContent + format(
                 '{"email_address": "%s", "ip_address": "%s"}',
                 [EmailAndIp.Email, EmailAndIp.Ip]
             );

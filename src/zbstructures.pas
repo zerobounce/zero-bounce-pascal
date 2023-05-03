@@ -387,6 +387,7 @@ implementation
         JArray: TJSONArray;
         IIndex: Integer;
         Found: Boolean;
+        AListItem: TJSONObject;
     begin
         JsonObj := TZbJson.Create(JsonContent);
 
@@ -401,8 +402,13 @@ implementation
         begin
             SetLength(Result.EmailBatch, Result.EmailBatchLength);
             for IIndex := 0 to Result.EmailBatchLength - 1 do
+                {$IFDEF FPC}
+                AListItem := JArray.Objects[IIndex];
+                {$ELSE}
+                AListItem := JArray[IIndex] as TJSONObject;
+                {$ENDIF}
                 Result.EmailBatch[IIndex] := ZbValidationFromJson(
-                    TZbJson.CreateWrap(JArray.Objects[IIndex])
+                    TZbJson.CreateWrap(AListItem)
                 );
         end;
 
@@ -418,8 +424,13 @@ implementation
         begin
             SetLength(Result.Errors, Result.ErrorsLength);
             for IIndex := 0 to Result.ErrorsLength - 1 do
+                {$IFDEF FPC}
+                AListItem := JArray.Objects[IIndex];
+                {$ELSE}
+                AListItem := JArray[IIndex] as TJSONObject;
+                {$ENDIF}
                 Result.Errors[IIndex] := ZbBatchErrorFromJson(
-                    TZbJson.CreateWrap(JArray.Objects[IIndex])
+                    TZbJson.CreateWrap(AListItem)
                 );
         end;
         JArray.Free;
@@ -440,7 +451,7 @@ implementation
     function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
     var
         JsonObj: TZbJSon;
-        PercentageAuxArray: array of String;
+        PercentageAuxArray: TStringDynArray;
     begin
         JsonObj := TZbJSon.Create(JsonContent);
 

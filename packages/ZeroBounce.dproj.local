@@ -1,12 +1,12 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <BorlandProject>
-  <Transactions>
-    <Transaction>2023/05/02 12:54:50.118,=rtl.dcp</Transaction>
-    <Transaction>2023/05/02 12:55:57.094,C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\packages\ZeroBounce.dproj=C:\Users\andre\OneDrive\Documents\Embarcadero\Studio\Projects\Package1.dproj</Transaction>
-    <Transaction>2023/05/02 12:56:46.232,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbbulk.pas</Transaction>
-    <Transaction>2023/05/02 12:56:46.357,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbgeneric.pas</Transaction>
-    <Transaction>2023/05/02 12:56:46.437,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbstructures.pas</Transaction>
-    <Transaction>2023/05/02 12:56:46.514,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbutility.pas</Transaction>
-    <Transaction>2023/05/02 12:56:46.578,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbvalidation.pas</Transaction>
+	<Transactions>
+    <Transaction>2023/05/02 12:54:50.000.118,=rtl.dcp</Transaction>
+    <Transaction>2023/05/02 12:55:57.000.094,C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\packages\ZeroBounce.dproj=C:\Users\andre\OneDrive\Documents\Embarcadero\Studio\Projects\Package1.dproj</Transaction>
+    <Transaction>2023/05/02 12:56:46.000.232,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbbulk.pas</Transaction>
+    <Transaction>2023/05/02 12:56:46.000.357,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbgeneric.pas</Transaction>
+    <Transaction>2023/05/02 12:56:46.000.437,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbstructures.pas</Transaction>
+    <Transaction>2023/05/02 12:56:46.000.514,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbutility.pas</Transaction>
+    <Transaction>2023/05/02 12:56:46.000.578,=C:\Users\andre\OneDrive\Documents\GitHub\zero-bounce-pascal\src\zbvalidation.pas</Transaction>
   </Transactions>
 </BorlandProject>

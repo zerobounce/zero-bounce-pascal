@@ -10,8 +10,8 @@ uses
     ZbStructures, ZbUtility;
 
 function ZbGetCredits : Integer;
-function ZbGetApiUsage : TApiUsage;
-function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage;
+function ZbGetApiUsage : TApiUsage; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; {$IFNDEF FPC} overload; {$ENDIF}
 procedure Register;
 
 implementation
