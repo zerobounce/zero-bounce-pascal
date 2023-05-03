@@ -335,9 +335,9 @@ implementation
             // %H:%M:%S.%3f
             ASplitAux := SplitString(ASplitMain[1], '.');
             if Length(ASplitAux) = 1 then
-                Milis := 0;
+                Milis := 0
             else
-                Milis := ASplitAux[1];
+                Milis := StrToInt(ASplitAux[1]);
             ASplitAux := SplitString(ASplitAux[0], ':');
             Hour := StrToInt(ASplitAux[0]);
             Minute := StrToInt(ASplitAux[1]);
