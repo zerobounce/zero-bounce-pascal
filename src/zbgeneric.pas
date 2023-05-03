@@ -30,12 +30,7 @@ implementation
 
         // attempt json parsing
         try
-            JsonObj := TZbJSon.Create(JSonCont);
-            try
-                Result := JsonObj.GetInteger('Credits');
-            finally
-                JsonObj.Free;
-            end;
+            Result := TZbJSon.Create(response.Payload).GetInteger('Credits');
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);
