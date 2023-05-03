@@ -328,9 +328,9 @@ implementation
 
             // %Y-%m-%d
             ASplitAux := SplitString(ASplitMain[0], '-');
-            Year := StrToInt(ASplitAux[0])
-            Month := StrToInt(ASplitAux[0])
-            Day := StrToInt(ASplitAux[0])
+            Year := StrToInt(ASplitAux[0]);
+            Month := StrToInt(ASplitAux[0]);
+            Day := StrToInt(ASplitAux[0]);
 
             // %H:%M:%S.%3f
             ASplitAux := SplitString(ASplitMain[1], '.');
@@ -339,9 +339,9 @@ implementation
             else
                 Milis := ASplitAux[1];
             ASplitAux := SplitString(ASplitAux[0], ':');
-            Hour := StrToInt(ASplitAux[0])
-            Minute := StrToInt(ASplitAux[1])
-            Second := StrToInt(ASplitAux[2])
+            Hour := StrToInt(ASplitAux[0]);
+            Minute := StrToInt(ASplitAux[1]);
+            Second := StrToInt(ASplitAux[2]);
             {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, Hour, Minute, Second, Milis);
         end;
