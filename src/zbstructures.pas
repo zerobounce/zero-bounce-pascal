@@ -26,7 +26,6 @@ type
         constructor Create(JsonContent: String);
         constructor CreateWrap(JObject: TJSONObject);
         function GetValue(Key: String): TZbJSONValue;
-        destructor Destroy; override;
         function GetString(Key: String): String;
         function GetInteger(Key: String): Integer;
         function GetBoolean(Key: String): Boolean;
@@ -159,11 +158,6 @@ implementation
         FCreated := False;
     end;
 
-    destructor TZbJson.Destroy;
-    begin
-        if FCreated and (FJSONObject <> nil) then FJSONObject.Free;
-    end;
-
     class function TZbJson.Parse(JsonContent: String): TJSONObject;
     begin
         {$IFDEF FPC}
@@ -188,11 +182,13 @@ implementation
     begin
         Result := '';
         JValue := GetValue(Key);
+        if JValue = nil then exit;
+
         {$IFDEF FPC}
-        if (JValue = nil) or (JValue.IsNull) then exit;
+        if JValue.IsNull then exit;
         Result := JValue.AsString;
         {$ELSE}
-        if (JValue = nil) or (JValue.Null) then exit;
+        if JValue.Null then exit;
         Result := JValue.AsType<String>;
         {$ENDIF}
     end;
@@ -203,6 +199,8 @@ implementation
     begin
         Result := 0;
         JValue := GetValue(Key);
+        if JValue = nil then exit;
+
         {$IFDEF FPC}
         if JValue.IsNull then exit;
         Result := JValue.AsInteger;
@@ -218,6 +216,8 @@ implementation
     begin
         Result := False;
         JValue := GetValue(Key);
+        if JValue = nil then exit;
+
         {$IFDEF FPC}
         if JValue.IsNull then exit;
         Result := JValue.AsBoolean;
@@ -240,7 +240,7 @@ implementation
     var
         JsonObj: TZbJson;
 
-        function ExtractDate(JsonKey: String): TDate;
+        function ExtractDate(DateString: String): TDate;
         var
             Day, Month, Year: Integer;
             {$IFNDEF FPC}
@@ -248,12 +248,12 @@ implementation
             {$ENDIF}
         begin
             {$IFDEF FPC}
-            SScanf(JsonObj.GetString(JsonKey), '%d/%d/%d', [@Month, @Day, @Year]);
+            SScanf(DateString, '%d/%d/%d', [@Month, @Day, @Year]);
             {$ELSE}
-            ASplit := SplitString(JsonObj.GetString(JsonKey), '/');
-            Year := StrToInt(ASplit[0]);
-            Month := StrToInt(ASplit[1]);
-            Day := StrToInt(ASplit[2]);
+            ASplit := SplitString(DateString, '/');
+            Month := StrToInt(ASplit[0]);
+            Day := StrToInt(ASplit[1]);
+            Year := StrToInt(ASplit[2]);
             {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, 0, 0, 0, 0);
         end;
@@ -294,8 +294,8 @@ implementation
         Result.SubStatusBlocked :=                    JsonObj.GetInteger('sub_status_blocked');
         Result.SubStatusAllowed :=                    JsonObj.GetInteger('sub_status_allowed');
 
-        Result.StartDate := ExtractDate('start_date');
-        Result.EndDate := ExtractDate('end_date');
+        Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
+        Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
 
     end;
 
@@ -306,7 +306,7 @@ implementation
 
     function ZbValidationFromJson(JsonObj: TZbJSon): TZbValidationResult;
 
-        function ExtractDateTime(JsonKey: String): TDateTime;
+        function ExtractDateTime(DateString: String): TDateTime;
         var
             Day, Month, Year, Hour, Minute, Second: Integer;
             Milis: Word;
@@ -318,13 +318,13 @@ implementation
             // %Y-%m-%d %H:%M:%S.%3f
             {$IFDEF FPC}
             SScanf(
-                JsonObj.GetString(JsonKey),
+                DateString,
                 '%d-%d-%d %d:%d:%d.%d',
                 [@Year, @Month, @Day, @Hour, @Minute, @Second, @Milis]
             );
             {$ELSE}
             // no sscanf in Delphi
-            ASplitMain := SplitString(JsonObj.GetString(JsonKey), ' ');
+            ASplitMain := SplitString(DateString, ' ');
 
             // %Y-%m-%d
             ASplitAux := SplitString(ASplitMain[0], '-');
@@ -366,7 +366,7 @@ implementation
         Result.City :=          JsonObj.GetString('city');
         Result.Zipcode :=       JsonObj.GetString('zipcode');
 
-        Result.ProcessedAt := ExtractDateTime('processed_at');
+        Result.ProcessedAt := ExtractDateTime(JsonObj.GetString('processed_at'));
     end;
 
 

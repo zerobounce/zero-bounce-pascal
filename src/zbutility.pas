@@ -129,7 +129,7 @@ implementation
             try
               Response := Client.Get(url);
               Result.Payload := Response.ContentAsString();
-              Result.StatusCode := Result.StatusCode;
+              Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
             finally
               Client.Free;
@@ -190,7 +190,7 @@ implementation
               Response := Client.Post(url, BodyStream);
 
               Result.Payload := Response.ContentAsString();
-              Result.StatusCode := Result.StatusCode;
+              Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
             finally
               Client.Free;
@@ -232,7 +232,6 @@ implementation
         begin
           Result := TMultiPartFormData.Create(False);
 
-          WriteLn('Separator: ', FormData.NameValueSeparator);
           SIterator := TStringsEnumerator.Create(FormData);
           while (SIterator.MoveNext) do
           begin
@@ -283,7 +282,6 @@ implementation
             finally
                 Client.Free;
                 FileStream.Free;
-                FormData.Free;
                 if ResponseStream <> nil then
                     ResponseStream.Free;
             end;
@@ -296,13 +294,12 @@ implementation
               Response := Client.Post(url, MPForm);
 
               Result.Payload := Response.ContentAsString();
-              Result.StatusCode := Result.StatusCode;
+              Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
             finally
               MPForm.Free;
               Client.Free;
               FileStream.Free;
-              FormData.Free
             end;
             {$ENDIF}
         end;

@@ -23,7 +23,6 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        Result := -1;
         UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
         response := ZBGetRequest(UrlToAccess);
 
