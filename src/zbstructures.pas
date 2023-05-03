@@ -15,15 +15,15 @@ uses
 
 type
     TZbJSONValue = {$IFDEF FPC}TJSONData{$ELSE}TJSONValue{$ENDIF};
-    TZbJson = class(TObject)
+    TZbJson = class
     protected
         FCreated: Boolean;
         FJSONObject: TJSONObject;
     public
         class function Parse(JsonContent: String): TJSONObject;
 
-        constructor Create(JObject: TJSONObject); {$IFNDEF FPC}override;{$ENDIF}
-        constructor CreateWrap(JsonContent: String); {$IFNDEF FPC}override;{$ENDIF}
+        constructor Create(JsonContent: String);
+        constructor CreateWrap(JObject: TJSONObject);
         function GetValue(Key: String): TZbJSONValue;
         destructor Destroy; override;
         function GetString(Key: String): String;
