@@ -215,6 +215,7 @@ implementation
     var
         {$IFDEF FPC}
         Client: TFPHTTPClient;
+        ResponseStream: TStream;
         {$ELSE}
         Client: THTTPClient;
         MPForm: TMultiPartFormData;
@@ -222,12 +223,10 @@ implementation
         {$ENDIF}
         error: ZbException;
         FileStream: TStream;
-        ResponseStream: TStream;
 
         {$IFNDEF FPC}
         function FormDataFromTString(): TMultiPartFormData;
         var
-          Index: Integer;
           SIterator: TStringsEnumerator;
           ASplit: TStringDynArray;
         begin

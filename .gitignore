@@ -31,7 +31,7 @@ lib/
 **/__history/
 **/__recovery/
 **/Win32
-packages/*.local
+packages/*.*.local
 
 # Application bundle for Mac OS
 *.app/

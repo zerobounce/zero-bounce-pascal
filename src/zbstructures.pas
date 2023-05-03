@@ -402,6 +402,7 @@ implementation
         begin
             SetLength(Result.EmailBatch, Result.EmailBatchLength);
             for IIndex := 0 to Result.EmailBatchLength - 1 do
+            begin
                 {$IFDEF FPC}
                 AListItem := JArray.Objects[IIndex];
                 {$ELSE}
@@ -410,6 +411,7 @@ implementation
                 Result.EmailBatch[IIndex] := ZbValidationFromJson(
                     TZbJson.CreateWrap(AListItem)
                 );
+            end;
         end;
 
         // parse errors
@@ -424,6 +426,7 @@ implementation
         begin
             SetLength(Result.Errors, Result.ErrorsLength);
             for IIndex := 0 to Result.ErrorsLength - 1 do
+            begin
                 {$IFDEF FPC}
                 AListItem := JArray.Objects[IIndex];
                 {$ELSE}
@@ -432,6 +435,7 @@ implementation
                 Result.Errors[IIndex] := ZbBatchErrorFromJson(
                     TZbJson.CreateWrap(AListItem)
                 );
+            end;
         end;
         JArray.Free;
     end;

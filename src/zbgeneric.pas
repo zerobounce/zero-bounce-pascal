@@ -21,7 +21,6 @@ implementation
     var
         UrlToAccess: string;
         response: TZbRequestResponse;
-        JsonObj: TZbJSon;
         error: ZbException;
     begin
         Result := -1;
