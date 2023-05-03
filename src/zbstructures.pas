@@ -10,6 +10,7 @@ uses
     fpjson, jsonparser,
     {$ELSE}
     System.JSON,
+    System.Types,
     {$ENDIF}
     ZbUtility;
 
@@ -242,8 +243,18 @@ implementation
         function ExtractDate(JsonKey: String): TDate;
         var
             Day, Month, Year: Integer;
+            {$IFNDEF FPC}
+            ASplit: TStringDynArray;
+            {$ENDIF}
         begin
+            {$IFDEF FPC}
             SScanf(JsonObj.GetString(JsonKey), '%d/%d/%d', [@Month, @Day, @Year]);
+            {$ELSE}
+            ASplit := SplitString(JsonObj.GetString(JsonKey), '/');
+            Year := StrToInt(ASplit[0]);
+            Month := StrToInt(ASplit[1]);
+            Day := StrToInt(ASplit[2]);
+            {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, 0, 0, 0, 0);
         end;
 
@@ -299,13 +310,39 @@ implementation
         var
             Day, Month, Year, Hour, Minute, Second: Integer;
             Milis: Word;
+            {$IFNDEF FPC}
+            ASplitMain: TStringDynArray;
+            ASplitAux: TStringDynArray;
+            {$ENDIF}
         begin
             // %Y-%m-%d %H:%M:%S.%3f
+            {$IFDEF FPC}
             SScanf(
                 JsonObj.GetString(JsonKey),
                 '%d-%d-%d %d:%d:%d.%d',
                 [@Year, @Month, @Day, @Hour, @Minute, @Second, @Milis]
             );
+            {$ELSE}
+            // no sscanf in Delphi
+            ASplitMain := SplitString(JsonObj.GetString(JsonKey), ' ');
+
+            // %Y-%m-%d
+            ASplitAux := SplitString(ASplitMain[0], '-');
+            Year := StrToInt(ASplitAux[0])
+            Month := StrToInt(ASplitAux[0])
+            Day := StrToInt(ASplitAux[0])
+
+            // %H:%M:%S.%3f
+            ASplitAux := SplitString(ASplitMain[1], '.');
+            if Length(ASplitAux) = 1 then
+                Milis := 0;
+            else
+                Milis := ASplitAux[1];
+            ASplitAux := SplitString(ASplitAux[0], ':');
+            Hour := StrToInt(ASplitAux[0])
+            Minute := StrToInt(ASplitAux[1])
+            Second := StrToInt(ASplitAux[2])
+            {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, Hour, Minute, Second, Milis);
         end;
     begin
