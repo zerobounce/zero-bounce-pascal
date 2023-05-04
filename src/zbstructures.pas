@@ -5,12 +5,11 @@ unit ZbStructures;
 interface
 
 uses
-    Classes, SysUtils, StrUtils, DateUtils,
+    Classes, SysUtils, StrUtils, DateUtils, Types,
     {$IFDEF FPC}
     fpjson, jsonparser,
     {$ELSE}
     System.JSON,
-    System.Types,
     {$ENDIF}
     ZbUtility;
 
