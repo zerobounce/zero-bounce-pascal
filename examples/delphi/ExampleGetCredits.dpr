@@ -10,7 +10,6 @@ uses
   zbstructures in '..\..\src\zbstructures.pas',
   zbutility in '..\..\src\zbutility.pas';
 
-// ZBSetApiKey method
 
 var
    Amount: Integer;
