@@ -19,6 +19,9 @@ type
         // redeclaring private fields
         FResponseStatusCode: Integer;
         FResponseHeaders: TStrings;
+    Protected
+        Property ResponseStatusCode : Integer Read FResponseStatusCode;
+        Property ResponseHeaders : TStrings Read FResponseHeaders;
     Public
         // mocking fields and methods
         FLastMockedMethod: String; static;
@@ -30,9 +33,6 @@ type
         // overloads related to redeclared fields
         constructor Create(AOwner: TComponent); override;
         destructor Destroy; override;
-
-        Property ResponseStatusCode : Integer Read FResponseStatusCode;
-        Property ResponseHeaders : TStrings Read FResponseHeaders;
 
         // overloaded method that prevents request and provides mocking
         Procedure DoMethod(Const AMethod,AURL : String; Stream : TStream; Const AllowedResponseCodes : Array of Integer); override;
