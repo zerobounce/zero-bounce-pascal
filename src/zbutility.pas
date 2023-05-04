@@ -5,11 +5,10 @@ unit ZbUtility;
 interface
 
 uses
-    Classes, SysUtils, StrUtils,
+    Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
     openssl, opensslsockets, fphttpclient
     {$ELSE}
-    System.Types,
     System.Net.HttpClient,
     System.Net.Mime
     {$ENDIF}
