@@ -205,7 +205,6 @@ implementation
             finally
                 Client.Free;
                 FileStream.Free;
-                FormData.Free;
                 if ResponseStream <> nil then
                     ResponseStream.Free;
             end;
