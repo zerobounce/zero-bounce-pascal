@@ -20,7 +20,6 @@ type
     public
         StatusCode: Integer;
         Payload: String;
-        constructor Create(AMessage, APayload: String; AStatusCode: integer);
         constructor FromResponse(AMessage: String; response: TZbRequestResponse);
         procedure MarkHttpError;
         procedure MarkJsonError;
@@ -52,28 +51,24 @@ var
         StatusCode: 0; Payload: ''; Headers: nil; UrlCalled: ''
     );
 
-    function ZBGetRequest(url: String): TZbRequestResponse;
     procedure ZBSetApiKey ( ApiKey : string );
+    function ZBGetRequest(url: String): TZbRequestResponse;
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
     procedure ZBMockResponse(StatusCode: integer; Payload: String);
     procedure ZBMockResponse(StatusCode: integer; Payload: String; Headers: TStrings);
     procedure Register;
 implementation
 
-    constructor ZbException.Create(AMessage, APayload: String; AStatusCode: integer);
+    constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
     var
         NewMessage: String;
     begin
-
-        Payload := APayload;
-        StatusCode := AStatusCode;
-        NewMessage := Concat(AMessage, sLineBreak, 'Status code: ', format('%d', [StatusCode]));
+        Payload := response.Payload;
+        StatusCode := response.StatusCode;
+        NewMessage := Concat(AMessage, sLineBreak, 'Url:', sLineBreak, Payload);
+        NewMessage := Concat(NewMessage, sLineBreak, 'Status code: ', format('%d', [StatusCode]));
         NewMessage := Concat(NewMessage, sLineBreak, 'Payload:', sLineBreak, Payload);
-        inherited Create(NewMessage);
-    end;
-
-    constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
-    begin
-        Create(AMessage, response.Payload, response.STatusCode);
+        Create(NewMessage);
     end;
 
     procedure ZbException.MarkHttpError;
@@ -122,7 +117,46 @@ implementation
             raise error;
         end;
 
-        result.UrlCalled := url;
+        response.UrlCalled := url;
+        Result := response;
+    end;
+
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
+    var
+        response: TZbRequestResponse;
+        Client: TFPHTTPClient;
+        error: ZbException;
+    begin
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            response := ZbResponseMock;
+            ZbResponseMock.UrlCalled := url;
+		end
+		else
+        begin
+            Client := TFPHTTPClient.Create(nil);
+
+            Client.AddHeader('Content-Type', 'application/json; charset=UTF-8');
+            Client.AddHeader('Accept', 'application/json');
+            Client.RequestBody := TRawByteStringStream.Create(JsonParam);
+            try
+                response.Payload := Client.Post(url);
+                response.StatusCode := Client.ResponseStatusCode;
+                response.Headers := Client.ResponseHeaders;
+            finally
+                Client.Free;
+            end;
+        end;
+
+        // check for failure
+        if response.StatusCode > 299 then
+        begin
+            error := ZbException.FromResponse('Request failed', response);
+            error.MarkHttpError;
+            raise error;
+        end;
+
+        response.UrlCalled := url;
         Result := response;
     end;
 
