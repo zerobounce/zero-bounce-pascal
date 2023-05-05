@@ -1,36 +1,35 @@
 # Zero bounce API - pascal SDK
 
+This library is a wrapper for the ZeroBounce API v2.
 
-## Local environment
+For more information about the API, visit https://www.zerobounce.net/docs/.
 
-In order to run this project, one must install [Lazarus IDE](https://www.lazarus-ide.org/).
+In order to run this library, the zero-bounce API which requires an API key. Check [this guide](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) to see how to grab yours.
 
-## Editing the package
 
-Open Lazarus IDK, File > Open, brose for `zerobounce.lpk` (found at repository root), click "Open package".
+## Usage
 
-You have now opened the SDK in package mode. Now you can:
-- compile it
-- open individual files from the package (double-clicking opens files in Lazarus IDE)
-- extend the package (by adding other files to it)
-- manage requirements
-- increment version and manage package details
+### Examples
 
-## Unit tests
-Open `tests/unit_tests.lpi` in Lazarus IDE as a project.
+You can check the `examples/` folder to see how can this package be implemented in your project. Projects from `examples/fpc/` can be opened with Lazarus IDE and those from `examples/delphi/` can be opened with Delphi IDE.
 
-In order to run the unit tests, compile and install the zero bounce library:
-- open library in package mode
-- Compile; Use > Install
-- (re)open unit tests
+### Free Pascal - Lazarus
+
+In order to run this project locally, install [Lazarus IDE](https://www.lazarus-ide.org/).
+
+Open Lazarus IDE, File > Open, browse for `zerobounce.lpk` (found at repository root), click "Open package". Locate 'Project inspector' window and then:
+- Compile
+- Use > Install
+
+You have now installed the ZeroBounce package in your Lazarus IDE. Now you can run the unit tests (`tests/unit_tests.lpi`), run the example projects (any `*.lpi` file from `examples/fpc/` folder) or use the package in your own project.
+
+To run zero bounce with any other project:
+- open desired project
 - Project > Project inspector > Add > New requirement
 - pick "ZeroBounce" from the list
-- it should now appear in "Required Packages"
+- it should now appear in "Required Packages" and work
 
-Now you can run it (Run > Run).
+### Delphi
 
-## To do:
-- [ ] explain how to run project
-- [ ] explain how to run tests
-- [ ] explain how to build library
-- [ ] explain how to install library
+In order to run this project locally, install [Delphi IDE](https://www.embarcadero.com/products/delphi/starter/free-download).
+

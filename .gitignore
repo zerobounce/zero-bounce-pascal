@@ -34,3 +34,9 @@ lib/
 tests/unit_tests
 debugging
 debugging.*
+
+# Executables from example folder
+examples/*
+!examples/*.lpi
+!examples/*.lpr
+!examples/*.pas

@@ -16,7 +16,7 @@
       </Parsing>
     </CompilerOptions>
     <Description Value="Free Pascal wrapper for the ZeroBounce API (version 2)."/>
-    <Version Minor="6"/>
+    <Version Minor="6" Release="1"/>
     <Files>
       <Item>
         <Filename Value="src/zbgeneric.pas"/>

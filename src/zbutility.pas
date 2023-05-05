@@ -178,7 +178,7 @@ implementation
             Result.UrlCalled := url;
             FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
-            ResponseStream := TStringStream.Create(FileContent);
+            ResponseStream := TStringStream.Create;
 
             try
                 try
