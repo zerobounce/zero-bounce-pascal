@@ -5,17 +5,25 @@ unit ZbUtility;
 interface
 
 uses
-    SysUtils, fphttpclient;
+    Classes, SysUtils, fphttpclient;
 
 type
+    TZbRequestResponse = record
+    StatusCode: integer;
+    Payload: String;
+    Headers: TStrings;
+    UrlCalled: String;
+	end;
+
     HTTPClientClass = Class of TFPHTTPClient;
     ZbException = Class(Exception)
     public
-          StatusCode: Integer;
-          Payload: String;
-          constructor Create(AMessage, APayload: String; AStatusCode: integer);
-          procedure MarkHttpError;
-          procedure MarkJsonError;
+        StatusCode: Integer;
+        Payload: String;
+        constructor Create(AMessage, APayload: String; AStatusCode: integer);
+        constructor FromResponse(AMessage: String; response: TZbRequestResponse);
+        procedure MarkHttpError;
+        procedure MarkJsonError;
     end;
 
 const
@@ -34,27 +42,43 @@ const
     ENDPOINT_SCORING_STATUS = '/scoring/filestatus';
     ENDPOINT_SCORING_RESULT = '/scoring/getfile';
     ENDPOINT_SCORING_DELETE = '/scoring/deletefile';
+    cDefaultMock: TZbRequestResponse = (
+        StatusCode: 0; Payload: ''; Headers: nil; UrlCalled: ''
+    );
 
 var
     ZbApiKey: string = '';
-    HTTPClient: HTTPClientClass = TFPHTTPClient;
+    ZbResponseMock: TZbRequestResponse = (
+        StatusCode: 0; Payload: ''; Headers: nil; UrlCalled: ''
+    );
 
-    procedure ZBSetHttpClient (TClientClass: HTTPClientClass);
+    function ZBGetRequest(url: String): TZbRequestResponse;
     procedure ZBSetApiKey ( ApiKey : string );
+    procedure ZBMockResponse(StatusCode: integer; Payload: String);
+    procedure ZBMockResponse(StatusCode: integer; Payload: String; Headers: TStrings);
     procedure Register;
 implementation
 
     constructor ZbException.Create(AMessage, APayload: String; AStatusCode: integer);
+    var
+        NewMessage: String;
     begin
-         inherited Create(AMessage);
-         Payload := APayload;
-         StatusCode := AStatusCode;
+
+        Payload := APayload;
+        StatusCode := AStatusCode;
+        NewMessage := Concat(AMessage, sLineBreak, 'Status code: ', format('%d', [StatusCode]));
+        NewMessage := Concat(NewMessage, sLineBreak, 'Payload:', sLineBreak, Payload);
+        inherited Create(NewMessage);
     end;
 
+    constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
+    begin
+        Create(AMessage, response.Payload, response.STatusCode);
+    end;
 
     procedure ZbException.MarkHttpError;
     begin
-         Self.Message := 'Http Error: ' + Self.Message;
+        Self.Message := 'Http Error: ' + Self.Message;
 	end;
 
     procedure ZbException.MarkJsonError;
@@ -67,9 +91,53 @@ implementation
         ZbApiKey := ApiKey;
     end;
 
-    procedure ZBSetHttpClient (TClientClass: HTTPClientClass);
+    function ZBGetRequest(url: String): TZbRequestResponse;
+    var
+        response: TZbRequestResponse;
+        Client: TFPHTTPClient;
+        error: ZbException;
     begin
-        HTTPClient := TClientClass;
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            response := ZbResponseMock;
+            ZbResponseMock.UrlCalled := url;
+		end
+		else
+        begin
+            Client := TFPHTTPClient.Create(nil);
+            try
+                response.Payload := Client.Get(url);
+                response.StatusCode := Client.ResponseStatusCode;
+                response.Headers := Client.ResponseHeaders;
+            finally
+                Client.Free;
+            end;
+        end;
+
+        // check for failure
+        if response.StatusCode > 299 then
+        begin
+            error := ZbException.FromResponse('Request failed', response);
+            error.MarkHttpError;
+            raise error;
+        end;
+
+        result.UrlCalled := url;
+        Result := response;
+    end;
+
+    procedure ZBMockResponse(StatusCode: integer; Payload: String);
+    begin
+        ZbResponseMock.StatusCode := StatusCode;
+        ZbResponseMock.Payload := Payload;
+    end;
+
+    procedure ZBMockResponse(StatusCode: integer; Payload: String; Headers: TStrings);
+    begin
+        ZBMockResponse(StatusCode, Payload);
+        if ZbResponseMock.Headers <> nil then
+           ZbResponseMock.Headers.Free;
+        ZbResponseMock.Headers := Headers;
     end;
 
     procedure Register;
