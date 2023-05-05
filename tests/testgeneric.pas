@@ -49,6 +49,8 @@ const
    '}';
    ERROR_MESSAGE: string = 'Mock error message';
    ERROR_PAYLOAD: string = '{"error": "Mock error message"}';
+   ACTIVITY_DATA_FOUND: string = '{"found": true, "active_in_days": "180"};';
+   ACTIVITY_DATA_NOT_FOUND: string = '{"found": false, "active_in_days": null};';
 
 type
 
@@ -60,6 +62,9 @@ type
       procedure TestApiUsageParse;
       procedure TestApiUsageHttpError;
       procedure TestApiUsageRequest;
+      procedure TestActivityDataEndpoint;
+      procedure TestActivityDataNotFound;
+      procedure TestActivityDataFound;
       procedure TearDown; override;
    end;
 
@@ -124,6 +129,32 @@ begin
    AssertEndpointCalled(ENDPOINT_API_USAGE);
    AssertEquals('Expected total', ApiUsage.Total, 7);
    AssertEquals('Expected unknown', ApiUsage.StatusUnknown, 0);
+end;
+
+procedure TTestGeneric.TestActivityDataEndpoint;
+begin
+   ZBMockResponse(200, ACTIVITY_DATA_FOUND);
+   ZbActivityData('valid@example.com');
+   AssertEndpointCalled(ENDPOINT_ACTIVITY_DATA);
+end;
+
+procedure TTestGeneric.TestActivityDataFound;
+var
+   ActivityAmount: Integer;
+begin
+   ZBMockResponse(200, ACTIVITY_DATA_FOUND);
+   ActivityAmount := ZbActivityData('valid@example.com');
+   AssertEquals('activity data', ActivityAmount, 180);
+end;
+
+
+procedure TTestGeneric.TestActivityDataNotFound;
+var
+   ActivityAmount: Integer;
+begin
+   ZBMockResponse(200, ACTIVITY_DATA_NOT_FOUND);
+   ActivityAmount := ZbActivityData('valid@example.com');
+   AssertEquals('activity data', ActivityAmount, -1);
 end;
 
 initialization
