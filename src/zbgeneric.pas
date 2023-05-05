@@ -9,9 +9,12 @@ uses
 
     ZbStructures, ZbUtility;
 
+
+
 function ZbGetCredits : Integer;
 function ZbGetApiUsage : TApiUsage;
 function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage;
+function ZbActivityData(Email: String): Integer;
 procedure Register;
 
 implementation
@@ -90,6 +93,37 @@ implementation
     begin
         Result := ZbGetApiUsage(RecodeYear(Today, 2000), Today);
 	end;
+
+    // Returns -1 if no activity data was found for the email
+    function ZbActivityData(Email: String): Integer;
+    var
+        UrlToAccess: String;
+        JActiveInDays: TJSONData;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        Result := -1;
+        InitSSLInterface;
+
+        UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&email=', Email);
+        response := ZBGetRequest(UrlToAccess);
+
+        // attempt json parsing
+        try
+            JActiveInDays := TJSONObject(GetJSON(response.Payload)).Find('active_in_days');
+            if not JActiveInDays.IsNull then
+                Result := StrToInt(JActiveInDays.AsString);
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+			end;
+		end;
+    end;
+
 
     procedure Register;
     begin
