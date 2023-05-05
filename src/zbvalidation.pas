@@ -108,13 +108,11 @@ implementation
     function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
     var
         EmailsAndIps: array of TZbEmailAndIp;
-        Length: Int64;
         Index: Integer;
     begin
         EmailsAndIps := [];
-        Length := SizeOf(Emails) div SizeOf(String);
-        SetLength(EmailsAndIps, Length);
-        for Index := 0 to Length - 1 do
+        SetLength(EmailsAndIps, Length(Emails));
+        for Index := 0 to Length(Emails) - 1 do
             EmailsAndIps[Index].Email := Emails[Index];
 
         Result := ZbBatchValidateEmails(EmailsAndIps);

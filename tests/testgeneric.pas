@@ -7,7 +7,7 @@ interface
 uses
    Classes, SysUtils, fpcunit, testregistry,
    // ZeroBounce was installed in Lazarus and imported via Package > Package links
-   MockValues, ZbGeneric, ZbStructures, ZbUtility;
+   BaseTest, MockValues, ZbGeneric, ZbStructures, ZbUtility;
 
 type
 

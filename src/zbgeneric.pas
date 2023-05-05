@@ -27,8 +27,6 @@ implementation
         JObject: TJSONObject;
         error: ZbException;
     begin
-        InitSSLInterface;
-
         UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
         response := ZBGetRequest(UrlToAccess);
 
@@ -41,8 +39,8 @@ implementation
                error := ZbException.FromResponse(e.Message, response);
                error.MarkJsonError;
                raise error;
-			end;
-		end;
+            end;
+        end;
 	end;
 
     function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage;
@@ -53,7 +51,6 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        InitSSLInterface;
         UrlToAccess := Concat(BASE_URI, ENDPOINT_API_USAGE, '?api_key=', ZbApiKey);
         DateAuxString := Format(
             '%d-%d-%d',

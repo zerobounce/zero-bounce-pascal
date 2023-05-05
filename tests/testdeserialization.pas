@@ -18,6 +18,9 @@ type
         procedure TestBatchErrorParse;
         procedure TestBatchValidationParseOkContent;
         procedure TestBatchValidationParseErrorContent;
+        procedure TestFileFeedbackParse;
+        procedure TestFileFeedbackParsePartial;
+        procedure TestFileStatusParse;
     end;
 
 implementation
@@ -91,6 +94,52 @@ begin
     AssertEquals('errors length', BatchResult.ErrorsLength, 1);
     AssertEquals('email_address in error', BatchResult.Errors[0].EmailAddress, 'all');
 end;
+
+
+procedure TTestDeserialization.TestFileFeedbackParse;
+var
+    parsed: TZbFileFeedback;
+begin
+    parsed := ZbFileFeedbackFromJson(BULK_SUBMIT_OK);
+    AssertEquals('success', parsed.Success, True);
+    AssertTrue('message does not have content', Length(parsed.Message) > 0);
+    AssertTrue('file_name does not have content', Length(parsed.FileName) > 0);
+    AssertTrue('file_id does not have content', Length(parsed.FileId) > 0);
+end;
+
+procedure TTestDeserialization.TestFileFeedbackParsePartial;
+var
+    parsed: TZbFileFeedback;
+begin
+    parsed := ZbFileFeedbackFromJson(BULK_RESULT_DELETED);
+    AssertEquals('success', parsed.Success, False);
+    AssertTrue('message does not have content', Length(parsed.Message) > 0);
+    AssertTrue('file_name should not have content', Length(parsed.FileName) = 0);
+    AssertTrue('file_id should not have content', Length(parsed.FileId) = 0);
+end;
+
+procedure TTestDeserialization.TestFileStatusParse;
+var
+    parsed: TZbFileStatus;
+begin
+    parsed := ZbFileStatusFromJson(BULK_STATUS_OK);
+    AssertEquals('complete_percentage', parsed.CompletePercentage, 100.0);
+    AssertEquals('success', parsed.Success, True);
+
+    AssertTrue('file_id does not have content', Length(parsed.FileId) > 0);
+    AssertTrue('file_name does not have content', Length(parsed.FileName) > 0);
+    AssertTrue('file_status does not have content', Length(parsed.FileStatus) > 0);
+    AssertTrue('return_url does not have content', Length(parsed.ReturnUrl) > 0);
+
+    AssertTrue('error_reason should not have content', Length(parsed.ErrorReason) = 0);
+
+    AssertEquals(
+        'upload_date',
+        parsed.UploadDate,
+        EncodeDateTime(2023, 4, 26, 17, 52, 23, 0)
+    );
+end;
+
 
 initialization
     RegisterTest(TTestDeserialization);
