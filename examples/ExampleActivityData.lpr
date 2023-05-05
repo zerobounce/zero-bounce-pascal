@@ -1,6 +1,7 @@
 program ExampleActivityData;
 
 uses
+    SysUtils,
     ZbGeneric, // ZbActivityData method
     ZbUtility; // ZBSetApiKey method
 
@@ -11,12 +12,19 @@ const
 var
    Amount: Integer;
 begin
-    ZBSetApiKey('YOUR__API__KEY');
+    try
+        ZBSetApiKey('YOUR__API__KEY');
 
-    Amount := ZbActivityData(VALID_EMAIL);
-    WriteLn('Activity data of the valid email: ', Amount);
+        Amount := ZbActivityData(VALID_EMAIL);
+        WriteLn('Activity data of the valid email: ', Amount);
 
-    Amount := ZbActivityData(INVALID_EMAIL);
-    WriteLn('Activity data of the invalid email: ', Amount);
+        Amount := ZbActivityData(INVALID_EMAIL);
+        WriteLn('Activity data of the invalid email: ', Amount);
+    except on e: Exception do
+        begin
+            WriteLn('Exception occured:');
+            WriteLn(e.Message);
+        end;
+    end;
 end.
 

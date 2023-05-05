@@ -100,7 +100,6 @@ implementation
         error: ZbException;
     begin
         Result := -1;
-        InitSSLInterface;
 
         UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
