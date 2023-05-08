@@ -57,11 +57,11 @@ var
     procedure ZBSetApiKey ( ApiKey : string );
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
-    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; {$IFNDEF FPC} overload; {$ENDIF}
     // performs a POST request with a multi-part form body
-    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
-    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
-    procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
+    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; {$IFNDEF FPC} overload; {$ENDIF}
+    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); {$IFNDEF FPC} overload; {$ENDIF}
+    procedure ZBMockResponse(StatusCode: integer; Payload: String); {$IFNDEF FPC} overload; {$ENDIF}
     procedure Register;
 implementation
 
@@ -275,7 +275,8 @@ implementation
                     end;
                 end;
 
-                Result.Payload := ResponseStream.ReadAnsiString();
+                ResponseStream.Seek(0, soBeginning);
+                Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally

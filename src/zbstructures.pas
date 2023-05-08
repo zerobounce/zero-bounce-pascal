@@ -127,10 +127,10 @@ type
     end;
 
 function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
-function ZbValidationFromJson(JsonObj: TZbJson): TZbValidationResult; overload;
-function ZbValidationFromJson(JsonContent: string): TZbValidationResult; overload;
-function ZbBatchErrorFromJson(JsonObj: TZbJson): TZbBatchError; overload;
-function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError; overload;
+function ZbValidationFromJson(JsonObj: TZbJson): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbValidationFromJson(JsonContent: string): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbBatchErrorFromJson(JsonObj: TZbJson): TZbBatchError; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError; {$IFNDEF FPC} overload; {$ENDIF}
 function ZbBatchValidationFromJson(JsonContent: string): TZBBatchValidation;
 function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
@@ -474,8 +474,6 @@ implementation
             Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
         else
             Result.CompletePercentage := -1;
-
     end;
-
 end.
 

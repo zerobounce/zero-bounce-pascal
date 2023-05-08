@@ -11,7 +11,6 @@ uses
 type
 
     TTestDeserialization = class(TTestCase)
-
     published
         procedure TestApiUsageParse;
         procedure TestValidationParseValidContent;

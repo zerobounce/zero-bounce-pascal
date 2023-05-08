@@ -6,7 +6,6 @@ interface
 
 uses
     SysUtils, DateUtils,
-
     ZbStructures, ZbUtility;
 
 function ZbGetCredits : Integer;
@@ -85,6 +84,37 @@ implementation
     begin
         Result := ZbGetApiUsage(RecodeYear(Today, 2000), Today);
 	end;
+
+    // Returns -1 if no activity data was found for the email
+    function ZbActivityData(Email: String): Integer;
+    var
+        UrlToAccess: String;
+        ActiveInDaysString: String;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&email=', Email);
+        response := ZBGetRequest(UrlToAccess);
+
+        // attempt json parsing
+        try
+            ActiveInDaysString := TZbJSon.Create(response.Payload).GetString('active_in_days');
+            if ActiveInDaysString <> '' then
+                Result := StrToInt(JActiveInDays.AsString)
+            else
+                Result := -1;
+
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+			end;
+		end;
+    end;
+
 
     procedure Register;
     begin

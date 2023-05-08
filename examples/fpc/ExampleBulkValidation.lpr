@@ -6,6 +6,8 @@ uses
     ZbStructures, // TZBFileFeedback, TZBFileStatus, TZBBulkResponse records
     ZbUtility; // ZBSetApiKey method
 
+
+procedure PerformBulkValidation;
 const
     CSV_FILE_CONTENT = '' +
         'valid@example.com,99.110.204.1' + LineEnding +
@@ -22,7 +24,7 @@ var
     ProcessingResult: TZBBulkResponse;
     WaitAmount: Integer;
 begin
-    ZbSetApiKey('YOUR__API__KEY');
+    ZbSetApiKey('3789ce3b2ccd4d95adb5903d02ded1a3');
 
     SubmitParam.EmailAddressColumn := 1;
     SubmitParam.IpAddressColumn := 2;
@@ -59,5 +61,15 @@ begin
     WriteLn('Deleting result file from server..');
     FileFeedback := ZbBulkValidationResultDelete(FileId);
     WriteLn(FileFeedback.Message);
-end.
+end;
 
+begin
+    try
+        PerformBulkValidation;
+    except on e: Exception do
+        begin
+            WriteLn('Exception occured:');
+            WriteLn(e.Message);
+        end;
+    end;
+end.
