@@ -21,6 +21,9 @@
         <Projects Include="ExampleAiScoring.dproj">
             <Dependencies/>
         </Projects>
+        <Projects Include="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj">
+            <Dependencies/>
+        </Projects>
     </ItemGroup>
     <ProjectExtensions>
         <Borland.Personality>Default.Personality.12</Borland.Personality>
@@ -83,14 +86,23 @@
     <Target Name="ExampleAiScoring:Make">
         <MSBuild Projects="ExampleAiScoring.dproj" Targets="Make"/>
     </Target>
+    <Target Name="ExampleActivityData">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj"/>
+    </Target>
+    <Target Name="ExampleActivityData:Clean">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleActivityData:Make">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Make"/>
+    </Target>
     <Target Name="Build">
-        <CallTarget Targets="ExampleGetCredits;ExampleGetApiUsage;ExampleValidation;ExampleBatchValidation;ExampleBulkValidation;ExampleAiScoring"/>
+        <CallTarget Targets="ExampleGetCredits;ExampleGetApiUsage;ExampleValidation;ExampleBatchValidation;ExampleBulkValidation;ExampleAiScoring;ExampleActivityData"/>
     </Target>
     <Target Name="Clean">
-        <CallTarget Targets="ExampleGetCredits:Clean;ExampleGetApiUsage:Clean;ExampleValidation:Clean;ExampleBatchValidation:Clean;ExampleBulkValidation:Clean;ExampleAiScoring:Clean"/>
+        <CallTarget Targets="ExampleGetCredits:Clean;ExampleGetApiUsage:Clean;ExampleValidation:Clean;ExampleBatchValidation:Clean;ExampleBulkValidation:Clean;ExampleAiScoring:Clean;ExampleActivityData:Clean"/>
     </Target>
     <Target Name="Make">
-        <CallTarget Targets="ExampleGetCredits:Make;ExampleGetApiUsage:Make;ExampleValidation:Make;ExampleBatchValidation:Make;ExampleBulkValidation:Make;ExampleAiScoring:Make"/>
+        <CallTarget Targets="ExampleGetCredits:Make;ExampleGetApiUsage:Make;ExampleValidation:Make;ExampleBatchValidation:Make;ExampleBulkValidation:Make;ExampleAiScoring:Make;ExampleActivityData:Make"/>
     </Target>
     <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
 </Project>

@@ -11,6 +11,7 @@ uses
   ZbUtility;
 
 
+procedure PerformAiScoringCheck;
 const
     CSV_FILE_CONTENT = '' +
         'valid@example.com,99.110.204.1' + sLineBreak +
@@ -64,8 +65,19 @@ begin
     WriteLn('Deleting result file from server..');
     FileFeedback := ZbAiScoringResultDelete(FileId);
     WriteLn(FileFeedback.Message);
+end;
 
-    ReadLn;
+
+begin
+  try
+    PerformAiScoringCheck;
+  except on e: Exception do
+        begin
+            WriteLn('Exception occured:');
+            WriteLn(e.Message);
+        end;
+  end;
+  ReadLn;
 end.
 
 

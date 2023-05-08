@@ -20,13 +20,19 @@ begin
     param[1].Email := 'donotmail@example.com';
     param[1].Ip := '';
 
-    ZBSetApiKey('YOUR__API__KEY');
+    try
+        ZBSetApiKey('YOUR__API__KEY');
 
-    response := ZbBatchValidateEmails(param);
-    for Validation in response.EmailBatch do
-    begin
-        WriteLn('Email ', Validation.Address, ' has status ', Validation.Status);
+        response := ZbBatchValidateEmails(param);
+        for Validation in response.EmailBatch do
+        begin
+            WriteLn('Email ', Validation.Address, ' has status ', Validation.Status);
+        end;
+    except on e: Exception do
+        begin
+            WriteLn('Exception occured:');
+            WriteLn(e.Message);
+        end;
     end;
-    ReadLn;
 end.
 
