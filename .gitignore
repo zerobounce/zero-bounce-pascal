@@ -58,3 +58,4 @@ examples/delphi/*
 !examples/delphi/*.dpr
 !examples/delphi/*.dproj
 !examples/delphi/*.pas
+!examples/delphi/*.groupproj

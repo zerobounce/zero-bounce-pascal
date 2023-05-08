@@ -45,7 +45,7 @@ In order to run example snippets or your own project using the zero-bounce packa
 - right click on the project ("ZeroBounce.bpl") > Compile
 - right click on the project > Install
 
-After installing, the example projects (any `*.dpr` files from `examples/dephi/` folder) should run successfully. If that still doesn't happen, follow the steps below.
+After installing, the example projects (`./examples/delphi/Examples.groupproj`) should run successfully. If that still doesn't happen, follow the steps below.
 
 To run the ZeroBounce SDK with any other Dephi project:
 - open desired project
