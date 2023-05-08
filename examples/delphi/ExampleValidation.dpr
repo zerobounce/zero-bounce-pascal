@@ -6,9 +6,9 @@ program ExampleValidation;
 
 uses
   System.SysUtils,
-  zbvalidation in '..\..\src\zbvalidation.pas',
-  zbstructures in '..\..\src\zbstructures.pas',
-  zbutility in '..\..\src\zbutility.pas';
+  ZbValidation,
+  ZbStructures,
+  ZbUtility;
 
 var
     response: TZbValidationResult;

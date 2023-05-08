@@ -6,9 +6,8 @@ program ExampleGetCredits;
 
 uses
   System.SysUtils,
-  zbgeneric in '..\..\src\zbgeneric.pas',
-  zbstructures in '..\..\src\zbstructures.pas',
-  zbutility in '..\..\src\zbutility.pas';
+  ZbGeneric,
+  ZbUtility;
 
 
 var

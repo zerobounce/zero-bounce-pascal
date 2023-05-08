@@ -7,9 +7,9 @@ program ExampleGetApiUsage;
 uses
   System.SysUtils,
   DateUtils,
-  zbgeneric in '..\..\src\zbgeneric.pas',
-  zbstructures in '..\..\src\zbstructures.pas',
-  zbutility in '..\..\src\zbutility.pas';
+  ZbGeneric,
+  ZbStructures,
+  ZbUtility;
 
 
 var

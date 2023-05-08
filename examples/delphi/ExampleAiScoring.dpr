@@ -6,9 +6,9 @@ program ExampleAiScoring;
 
 uses
   System.SysUtils,
-  zbbulk in '..\..\src\zbbulk.pas',
-  zbstructures in '..\..\src\zbstructures.pas',
-  zbutility in '..\..\src\zbutility.pas';
+  ZbBulk,
+  ZbStructures,
+  ZbUtility;
 
 
 const

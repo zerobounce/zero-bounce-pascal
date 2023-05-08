@@ -6,9 +6,9 @@ program ExampleBatchValidation;
 
 uses
   System.SysUtils,
-  zbvalidation in '..\..\src\zbvalidation.pas',
-  zbstructures in '..\..\src\zbstructures.pas',
-  zbutility in '..\..\src\zbutility.pas';
+  ZbValidation,
+  ZbStructures,
+  ZbUtility;
 
 var
     param: array[0..1] of TZbEmailAndIp;
