@@ -9,8 +9,10 @@ uses
     ZbStructures, ZbUtility;
 
 function ZbGetCredits : Integer;
-function ZbGetApiUsage : TApiUsage; {$IFNDEF FPC} overload; {$ENDIF}
-function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbGetApiUsage : TApiUsage; overload;
+function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; overload;
+function ZbActivityData(Email: String): Integer;
+
 procedure Register;
 
 implementation
@@ -102,7 +104,7 @@ implementation
         try
             ActiveInDaysString := TZbJSon.Create(response.Payload).GetString('active_in_days');
             if ActiveInDaysString <> '' then
-                Result := StrToInt(JActiveInDays.AsString)
+                Result := StrToInt(ActiveInDaysString)
             else
                 Result := -1;
 

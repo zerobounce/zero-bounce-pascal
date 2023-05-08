@@ -8,8 +8,11 @@ In order to run this library, the zero-bounce API which requires an API key. Che
 
 ## Project's units
 
-- ZbUtility - contains utilitary methods
+The methods implemented in this library can raise `ZbException`.
+
+- ZbUtility - contains utility methods
     - ZbSetApiKey - set the API key to be used within the all SDK's methods
+    - ZbException - exception containing data about the response context
 - ZbGenerics - contains general purpose methods
     - ZbGetCredits (returns integer) - fetch account's credits
     - ZbGetApiUsage (returns `TApiUsage`) - fetch account's (overall or specific) API usage
@@ -57,7 +60,7 @@ To run the ZeroBounce SDK with any other Dephi project:
 ### Free Pascal
 In order to run this project, one must install [Lazarus IDE](https://www.lazarus-ide.org/).
 
-Open Lazarus IDE, File > Open, browse for `./zerobounce.lpk` (relative to repository root), click "Open package".
+Open Lazarus IDE, File > Open, browse for `./packages/zerobounce.lpk` (relative to repository root), click "Open package".
 
 In order to run unit tests, example snippets or your own project with the zero-bounce package, first install it into lazarus:
 - open package (described above)

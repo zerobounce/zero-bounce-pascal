@@ -18,10 +18,10 @@ type
 procedure Register;
 function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 
-function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
-function ZbValidateEmail(Email: String): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
-function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation; {$IFNDEF FPC} overload; {$ENDIF}
-function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult; overload;
+function ZbValidateEmail(Email: String): TZbValidationResult; overload;
+function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation; overload;
+function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation; overload;
 
 
 implementation

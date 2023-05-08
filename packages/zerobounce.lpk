@@ -6,8 +6,8 @@
     <CompilerOptions>
       <Version Value="11"/>
       <SearchPaths>
-        <IncludeFiles Value="src"/>
-        <OtherUnitFiles Value="src"/>
+        <IncludeFiles Value="src;../src"/>
+        <OtherUnitFiles Value="src;../src"/>
         <UnitOutputDirectory Value="lib/$(TargetCPU)-$(TargetOS)"/>
       </SearchPaths>
       <Parsing>
@@ -17,35 +17,35 @@
       </Parsing>
     </CompilerOptions>
     <Description Value="Free Pascal wrapper for the ZeroBounce API (version 2)."/>
-    <Version Minor="8"/>
+    <Version Major="1"/>
     <Files>
       <Item>
-        <Filename Value="src/zbgeneric.pas"/>
-        <HasRegisterProc Value="True"/>
-        <UnitName Value="ZbGeneric"/>
-      </Item>
-      <Item>
-        <Filename Value="src/zbutility.pas"/>
-        <HasRegisterProc Value="True"/>
-        <UnitName Value="ZbUtility"/>
-      </Item>
-      <Item>
-        <Filename Value="src/zbvalidation.pas"/>
-        <HasRegisterProc Value="True"/>
-        <UnitName Value="ZbValidation"/>
-      </Item>
-      <Item>
-        <Filename Value="src/zbstructures.pas"/>
-        <HasRegisterProc Value="True"/>
-        <UnitName Value="ZbStructures"/>
-      </Item>
-      <Item>
-        <Filename Value="src/zbbulk.pas"/>
+        <Filename Value="../src/zbbulk.pas"/>
         <HasRegisterProc Value="True"/>
         <UnitName Value="ZbBulk"/>
       </Item>
       <Item>
-        <Filename Value="src/zboptions.inc"/>
+        <Filename Value="../src/zbgeneric.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbGeneric"/>
+      </Item>
+      <Item>
+        <Filename Value="../src/zbstructures.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbStructures"/>
+      </Item>
+      <Item>
+        <Filename Value="../src/zbutility.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbUtility"/>
+      </Item>
+      <Item>
+        <Filename Value="../src/zbvalidation.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbValidation"/>
+      </Item>
+      <Item>
+        <Filename Value="../src/zboptions.inc"/>
         <Type Value="Include"/>
       </Item>
     </Files>

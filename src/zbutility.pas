@@ -57,11 +57,11 @@ var
     procedure ZBSetApiKey ( ApiKey : string );
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
-    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; {$IFNDEF FPC} overload; {$ENDIF}
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
     // performs a POST request with a multi-part form body
-    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; {$IFNDEF FPC} overload; {$ENDIF}
-    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); {$IFNDEF FPC} overload; {$ENDIF}
-    procedure ZBMockResponse(StatusCode: integer; Payload: String); {$IFNDEF FPC} overload; {$ENDIF}
+    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
+    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
+    procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
     procedure Register;
 implementation
 
@@ -214,7 +214,7 @@ implementation
     var
         {$IFDEF FPC}
         Client: TFPHTTPClient;
-        ResponseStream: TStream;
+        ResponseStream: TStringStream;
         {$ELSE}
         Client: THTTPClient;
         MPForm: TMultiPartFormData;
