@@ -27,6 +27,19 @@ backup/
 *.bak
 lib/
 
+# Delphi files
+**/Win32
+__history/
+__recovery/
+*.~*
+
+*.local
+*.identcache
+*.projdata
+*.tvsconfig
+*.dsk
+*.txaPackage
+
 # Application bundle for Mac OS
 *.app/
 
@@ -36,7 +49,13 @@ debugging
 debugging.*
 
 # Executables from example folder
-examples/*
-!examples/*.lpi
-!examples/*.lpr
-!examples/*.pas
+examples/fpc/*
+!examples/fpc/*.lpi
+!examples/fpc/*.lpr
+!examples/fpc/*.pas
+
+examples/delphi/*
+!examples/delphi/*.dpr
+!examples/delphi/*.dproj
+!examples/delphi/*.pas
+!examples/delphi/*.groupproj

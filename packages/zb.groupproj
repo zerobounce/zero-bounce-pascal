@@ -1,0 +1,36 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{955739FD-27A3-4A92-960F-600FAD51260D}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="ZeroBounce.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="ZeroBounce">
+        <MSBuild Projects="ZeroBounce.dproj"/>
+    </Target>
+    <Target Name="ZeroBounce:Clean">
+        <MSBuild Projects="ZeroBounce.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ZeroBounce:Make">
+        <MSBuild Projects="ZeroBounce.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="ZeroBounce"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="ZeroBounce:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="ZeroBounce:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

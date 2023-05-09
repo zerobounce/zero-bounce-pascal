@@ -1,11 +1,18 @@
 unit ZbUtility;
 
-{$mode objfpc}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 
 uses
-    Classes, SysUtils, openssl, opensslsockets, fphttpclient;
+    Classes, SysUtils, StrUtils, Types,
+    {$IFDEF FPC}
+    openssl, opensslsockets, fphttpclient
+    {$ELSE}
+    System.Net.HttpClient,
+    System.Net.Mime
+    {$ENDIF}
+;
 
 type
     TZbRequestResponse = record
@@ -50,11 +57,11 @@ var
     procedure ZBSetApiKey ( ApiKey : string );
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
-    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
+    function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
     // performs a POST request with a multi-part form body
-    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse;
-    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);
-    procedure ZBMockResponse(StatusCode: integer; Payload: String);
+    function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
+    procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
+    procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
     procedure Register;
 implementation
 
@@ -87,7 +94,12 @@ implementation
 
     function ZBGetRequest(url: String): TZbRequestResponse;
     var
+        {$IFDEF FPC}
         Client: TFPHTTPClient;
+        {$ELSE}
+        Client: THTTPClient;
+        Response: IHTTPResponse;
+        {$ENDIF}
         error: ZbException;
     begin
         if ZbResponseMock.StatusCode <> 0 then
@@ -97,9 +109,11 @@ implementation
 		end
 		else
         begin
+            Result.UrlCalled := url;
+
+            {$IFDEF FPC}
             InitSSLInterface;
 
-            Result.UrlCalled := url;
             Client := TFPHTTPClient.Create(nil);
             try
                 Result.Payload := Client.Get(url);
@@ -108,6 +122,19 @@ implementation
             finally
                 Client.Free;
             end;
+
+            {$ELSE}
+            Client := THTTPClient.Create;
+            try
+              Response := Client.Get(url);
+              Result.Payload := Response.ContentAsString();
+              Result.StatusCode := Response.StatusCode;
+              Result.ContentType := Response.HeaderValue['Content-Type'];
+            finally
+              Client.Free;
+            end;
+            {$ENDIF}
+
         end;
 
         // check for failure
@@ -121,7 +148,13 @@ implementation
 
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
     var
+        {$IFDEF FPC}
         Client: TFPHTTPClient;
+        {$ELSE}
+        Client: THTTPClient;
+        BodyStream: TStream;
+        Response: IHTTPResponse;
+        {$ENDIF}
         error: ZbException;
     begin
         if ZbResponseMock.StatusCode <> 0 then
@@ -131,9 +164,10 @@ implementation
         end
         else
         begin
+            Result.UrlCalled := url;
+            {$IFDEF FPC}
             InitSSLInterface;
 
-            Result.UrlCalled := url;
             Client := TFPHTTPClient.Create(nil);
 
             Client.AddHeader('Content-Type', 'application/json; charset=UTF-8');
@@ -146,6 +180,23 @@ implementation
             finally
                 Client.Free;
             end;
+            {$ELSE}
+            Client := THTTPClient.Create;
+            BodyStream := TStringStream.Create(JsonParam);
+            try
+              Client.CustomHeaders['Content-Type'] := 'application/json; charset=UTF-8';
+              Client.CustomHeaders['Accept'] := 'application/json';
+              Response := Client.Post(url, BodyStream);
+
+              Result.Payload := Response.ContentAsString();
+              Result.StatusCode := Response.StatusCode;
+              Result.ContentType := Response.HeaderValue['Content-Type'];
+            finally
+              Client.Free;
+              BodyStream.Free;
+            end;
+            {$ENDIF}
+
         end;
 
         // check for failure
@@ -161,10 +212,34 @@ implementation
     const
         FILE_NAME = 'bulk_upload.csv';
     var
+        {$IFDEF FPC}
         Client: TFPHTTPClient;
+        ResponseStream: TStringStream;
+        {$ELSE}
+        Client: THTTPClient;
+        MPForm: TMultiPartFormData;
+        Response: IHTTPResponse;
+        {$ENDIF}
         error: ZbException;
         FileStream: TStream;
-        ResponseStream: TStringStream;
+
+        {$IFNDEF FPC}
+        function FormDataFromTString(): TMultiPartFormData;
+        var
+          SIterator: TStringsEnumerator;
+          ASplit: TStringDynArray;
+        begin
+          Result := TMultiPartFormData.Create(False);
+
+          SIterator := TStringsEnumerator.Create(FormData);
+          while (SIterator.MoveNext) do
+          begin
+            ASplit := SplitString(SIterator.GetCurrent, FormData.NameValueSeparator);
+            Result.AddField(ASplit[0], ASplit[1]);
+          end;
+
+        end;
+        {$ENDIF}
     begin
         if ZbResponseMock.StatusCode <> 0 then
         begin
@@ -173,12 +248,13 @@ implementation
         end
         else
         begin
+            Result.UrlCalled := url;
+            {$IFDEF FPC}
             InitSSLInterface;
 
-            Result.UrlCalled := url;
             FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
-            ResponseStream := TStringStream.Create;
+            ResponseStream := TStringStream.Create(FileContent);
 
             try
                 try
@@ -209,15 +285,32 @@ implementation
                 if ResponseStream <> nil then
                     ResponseStream.Free;
             end;
+            {$ELSE}
+            Client := THTTPClient.Create;
+            FileStream := TStringStream.Create(FileContent);
+            MPForm := FormDataFromTString;
+            try
+              MPForm.AddStream('file', FileStream, FILE_NAME, 'text/csv');
+              Response := Client.Post(url, MPForm);
+
+              Result.Payload := Response.ContentAsString();
+              Result.StatusCode := Response.StatusCode;
+              Result.ContentType := Response.HeaderValue['Content-Type'];
+            finally
+              MPForm.Free;
+              Client.Free;
+              FileStream.Free;
+            end;
+            {$ENDIF}
         end;
 
-            // check for failure
-            if Result.StatusCode > 299 then
-            begin
-                error := ZbException.FromResponse('Request failed', Result);
-                error.MarkHttpError;
-                raise error;
-            end;
+        // check for failure
+        if Result.StatusCode > 299 then
+        begin
+            error := ZbException.FromResponse('Request failed', Result);
+            error.MarkHttpError;
+            raise error;
+        end;
     end;
 
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);

@@ -1,20 +1,18 @@
 unit ZbGeneric;
 
-{$mode objfpc}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 
 uses
-    SysUtils, DateUtils, openssl, opensslsockets, fpjson, jsonparser,
-
+    SysUtils, DateUtils,
     ZbStructures, ZbUtility;
 
-
-
 function ZbGetCredits : Integer;
-function ZbGetApiUsage : TApiUsage;
-function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage;
+function ZbGetApiUsage : TApiUsage; overload;
+function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; overload;
 function ZbActivityData(Email: String): Integer;
+
 procedure Register;
 
 implementation
@@ -24,7 +22,6 @@ implementation
     var
         UrlToAccess: string;
         response: TZbRequestResponse;
-        JObject: TJSONObject;
         error: ZbException;
     begin
         UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
@@ -32,8 +29,7 @@ implementation
 
         // attempt json parsing
         try
-			JObject := TJSONObject(GetJSON(response.Payload));
-            Result := JObject.Find('Credits').AsInteger;
+            Result := TZbJSon.Create(response.Payload).GetInteger('Credits');
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);
@@ -95,12 +91,10 @@ implementation
     function ZbActivityData(Email: String): Integer;
     var
         UrlToAccess: String;
-        JActiveInDays: TJSONData;
+        ActiveInDaysString: String;
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        Result := -1;
-
         UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
         UrlToAccess := Concat(UrlToAccess, '&email=', Email);
@@ -108,9 +102,12 @@ implementation
 
         // attempt json parsing
         try
-            JActiveInDays := TJSONObject(GetJSON(response.Payload)).Find('active_in_days');
-            if not JActiveInDays.IsNull then
-                Result := StrToInt(JActiveInDays.AsString);
+            ActiveInDaysString := TZbJSon.Create(response.Payload).GetString('active_in_days');
+            if ActiveInDaysString <> '' then
+                Result := StrToInt(ActiveInDaysString)
+            else
+                Result := -1;
+
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);

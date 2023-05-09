@@ -1,14 +1,36 @@
 unit ZbStructures;
 
-{$mode ObjFPC}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 
 uses
-    Classes, SysUtils, StrUtils, DateUtils, fpjson, jsonparser,
+    Classes, SysUtils, StrUtils, DateUtils, Types,
+    {$IFDEF FPC}
+    fpjson, jsonparser,
+    {$ELSE}
+    System.JSON,
+    {$ENDIF}
     ZbUtility;
 
 type
+    TZbJSONValue = {$IFDEF FPC}TJSONData{$ELSE}TJSONValue{$ENDIF};
+    TZbJson = class
+    protected
+        FCreated: Boolean;
+        FJSONObject: TJSONObject;
+    public
+        class function Parse(JsonContent: String): TJSONObject;
+
+        constructor Create(JsonContent: String);
+        constructor CreateWrap(JObject: TJSONObject);
+        function GetValue(Key: String): TZbJSONValue;
+        function GetString(Key: String): String;
+        function GetInteger(Key: String): Integer;
+        function GetBoolean(Key: String): Boolean;
+        function GetArray(Key: String; OUT JArray: TJSONArray): Boolean;
+    end;
+
     TApiUsage = Record
         Total: Integer;
         StatusValid: Integer;
@@ -105,10 +127,10 @@ type
     end;
 
 function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
-function ZbValidationFromJson(JObject: TJSONObject): TZbValidationResult;
-function ZbValidationFromJson(JsonContent: string): TZbValidationResult;
-function ZbBatchErrorFromJson(JObject: TJSONObject): TZbBatchError;
-function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError;
+function ZbValidationFromJson(JsonObj: TZbJson): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbValidationFromJson(JsonContent: string): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbBatchErrorFromJson(JsonObj: TZbJson): TZbBatchError; {$IFNDEF FPC} overload; {$ENDIF}
+function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError; {$IFNDEF FPC} overload; {$ENDIF}
 function ZbBatchValidationFromJson(JsonContent: string): TZBBatchValidation;
 function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
@@ -120,134 +142,256 @@ implementation
     begin
     end;
 
-    function StringOrNull(JObject: TJSONObject; JsonKey: String): String;
+
+    constructor TZbJson.Create(JsonContent: String);
+    begin
+        inherited Create;
+        FJSONObject := Parse(JsonContent);
+        FCreated := True;
+    end;
+
+    constructor TZbJson.CreateWrap(JObject: TJSONObject);
+    begin
+        inherited Create;
+        FJSONObject := JObject;
+        FCreated := False;
+    end;
+
+    class function TZbJson.Parse(JsonContent: String): TJSONObject;
+    begin
+        {$IFDEF FPC}
+        Result := TJSONObject(GetJSON(JsonContent));
+        {$ELSE}
+        Result := TJSONObject(TJSONObject.ParseJSONValue(JsonContent, True));
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetValue(Key: String): TZbJSONValue;
+    begin
+        {$IFDEF FPC}
+        Result := FJSONObject.Find(Key);
+        {$ELSE}
+        Result := FJSONObject.FindValue(Key);
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetString(Key: String): String;
     var
-        JData: TJSONData;
+        JValue: TZbJSONValue;
     begin
         Result := '';
-        JData := JObject.Find(JsonKey);
-        if (JData <> nil) and (not JData.IsNull) then
-            Result := JData.AsString;
+        JValue := GetValue(Key);
+        if JValue = nil then exit;
+
+        {$IFDEF FPC}
+        if JValue.IsNull then exit;
+        Result := JValue.AsString;
+        {$ELSE}
+        if JValue.Null then exit;
+        Result := JValue.AsType<String>;
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetInteger(Key: String): Integer;
+    var
+        JValue: TZbJSONValue;
+    begin
+        Result := 0;
+        JValue := GetValue(Key);
+        if JValue = nil then exit;
+
+        {$IFDEF FPC}
+        if JValue.IsNull then exit;
+        Result := JValue.AsInteger;
+        {$ELSE}
+        if JValue.Null then exit;
+        Result := JValue.AsType<Integer>;
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetBoolean(Key: String): Boolean;
+    var
+        JValue: TZbJSONValue;
+    begin
+        Result := False;
+        JValue := GetValue(Key);
+        if JValue = nil then exit;
+
+        {$IFDEF FPC}
+        if JValue.IsNull then exit;
+        Result := JValue.AsBoolean;
+        {$ELSE}
+        if JValue.Null then exit;
+        Result := JValue.AsType<Boolean>;
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetArray(Key: String; OUT JArray: TJSONArray): Boolean;
+    begin
+        {$IFDEF FPC}
+        Result := FJSONObject.Find(Key, JArray);
+        {$ELSE}
+        Result := FJSONObject.TryGetValue<TJSONArray>(Key, JArray);
+        {$ENDIF}
     end;
 
     function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
     var
-        JObject: TJSONObject;
+        JsonObj: TZbJson;
 
-        function ExtractDate(JsonKey: String): TDate;
+        function ExtractDate(DateString: String): TDate;
         var
             Day, Month, Year: Integer;
+            {$IFNDEF FPC}
+            ASplit: TStringDynArray;
+            {$ENDIF}
         begin
-            SScanf(JObject.Find(JsonKey).AsString, '%d/%d/%d', [@Month, @Day, @Year]);
+            {$IFDEF FPC}
+            SScanf(DateString, '%d/%d/%d', [@Month, @Day, @Year]);
+            {$ELSE}
+            ASplit := SplitString(DateString, '/');
+            Month := StrToInt(ASplit[0]);
+            Day := StrToInt(ASplit[1]);
+            Year := StrToInt(ASplit[2]);
+            {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, 0, 0, 0, 0);
         end;
 
     begin
-        JObject := TJSONObject(GetJSON(JsonContent));
-        Result.Total :=                               JObject.Find('total').AsInteger;
-        Result.StatusValid :=                         JObject.Find('status_valid').AsInteger;
-        Result.StatusInvalid :=                       JObject.Find('status_invalid').AsInteger;
-        Result.StatusCatchAll :=                      JObject.Find('status_catch_all').AsInteger;
-        Result.StatusDoNotMail :=                     JObject.Find('status_do_not_mail').AsInteger;
-        Result.StatusSpamtrap :=                      JObject.Find('status_spamtrap').AsInteger;
-        Result.StatusUnknown :=                       JObject.Find('status_unknown').AsInteger;
-        Result.SubStatusToxic :=                      JObject.Find('sub_status_toxic').AsInteger;
-        Result.SubStatusDisposable :=                 JObject.Find('sub_status_disposable').AsInteger;
-        Result.SubStatusRoleBased :=                  JObject.Find('sub_status_role_based').AsInteger;
-        Result.SubStatusPossibleTrap :=               JObject.Find('sub_status_possible_trap').AsInteger;
-        Result.SubStatusGlobalSuppression :=          JObject.Find('sub_status_global_suppression').AsInteger;
-        Result.SubStatusTimeoutExceeded :=            JObject.Find('sub_status_timeout_exceeded').AsInteger;
-        Result.SubStatusMailServerTemporaryError :=   JObject.Find('sub_status_mail_server_temporary_error').AsInteger;
-        Result.SubStatusMailServerDidNotRespond :=    JObject.Find('sub_status_mail_server_did_not_respond').AsInteger;
-        Result.SubStatusGreylisted :=                 JObject.Find('sub_status_greylisted').AsInteger;
-        Result.SubStatusAntispamSystem :=             JObject.Find('sub_status_antispam_system').AsInteger;
-        Result.SubStatusDoesNotAcceptMail :=          JObject.Find('sub_status_does_not_accept_mail').AsInteger;
-        Result.SubStatusExceptionOccurred :=          JObject.Find('sub_status_exception_occurred').AsInteger;
-        Result.SubStatusFailedSyntaxCheck :=          JObject.Find('sub_status_failed_syntax_check').AsInteger;
-        Result.SubStatusMailboxNotFound :=            JObject.Find('sub_status_mailbox_not_found').AsInteger;
-        Result.SubStatusUnroutableIpAddress :=        JObject.Find('sub_status_unroutable_ip_address').AsInteger;
-        Result.SubStatusPossibleTypo :=               JObject.Find('sub_status_possible_typo').AsInteger;
-        Result.SubStatusNoDnsEntries :=               JObject.Find('sub_status_no_dns_entries').AsInteger;
-        Result.SubStatusRoleBasedCatchAll :=          JObject.Find('sub_status_role_based_catch_all').AsInteger;
-        Result.SubStatusMailboxQuotaExceeded :=       JObject.Find('sub_status_mailbox_quota_exceeded').AsInteger;
-        Result.SubStatusForcibleDisconnect :=         JObject.Find('sub_status_forcible_disconnect').AsInteger;
-        Result.SubStatusFailedSmtpConnection :=       JObject.Find('sub_status_failed_smtp_connection').AsInteger;
-        Result.SubStatusMxForward :=                  JObject.Find('sub_status_mx_forward').AsInteger;
-        Result.SubStatusAlternate :=                  JObject.Find('sub_status_alternate').AsInteger;
-        Result.SubStatusBlocked :=                    JObject.Find('sub_status_blocked').AsInteger;
-        Result.SubStatusAllowed :=                    JObject.Find('sub_status_allowed').AsInteger;
+        JsonObj := TZbJson.Create(JsonContent);
 
-        Result.StartDate := ExtractDate('start_date');
-        Result.EndDate := ExtractDate('end_date');
+        Result.Total :=                               JsonObj.GetInteger('total');
+        Result.StatusValid :=                         JsonObj.GetInteger('status_valid');
+        Result.StatusInvalid :=                       JsonObj.GetInteger('status_invalid');
+        Result.StatusCatchAll :=                      JsonObj.GetInteger('status_catch_all');
+        Result.StatusDoNotMail :=                     JsonObj.GetInteger('status_do_not_mail');
+        Result.StatusSpamtrap :=                      JsonObj.GetInteger('status_spamtrap');
+        Result.StatusUnknown :=                       JsonObj.GetInteger('status_unknown');
+        Result.SubStatusToxic :=                      JsonObj.GetInteger('sub_status_toxic');
+        Result.SubStatusDisposable :=                 JsonObj.GetInteger('sub_status_disposable');
+        Result.SubStatusRoleBased :=                  JsonObj.GetInteger('sub_status_role_based');
+        Result.SubStatusPossibleTrap :=               JsonObj.GetInteger('sub_status_possible_trap');
+        Result.SubStatusGlobalSuppression :=          JsonObj.GetInteger('sub_status_global_suppression');
+        Result.SubStatusTimeoutExceeded :=            JsonObj.GetInteger('sub_status_timeout_exceeded');
+        Result.SubStatusMailServerTemporaryError :=   JsonObj.GetInteger('sub_status_mail_server_temporary_error');
+        Result.SubStatusMailServerDidNotRespond :=    JsonObj.GetInteger('sub_status_mail_server_did_not_respond');
+        Result.SubStatusGreylisted :=                 JsonObj.GetInteger('sub_status_greylisted');
+        Result.SubStatusAntispamSystem :=             JsonObj.GetInteger('sub_status_antispam_system');
+        Result.SubStatusDoesNotAcceptMail :=          JsonObj.GetInteger('sub_status_does_not_accept_mail');
+        Result.SubStatusExceptionOccurred :=          JsonObj.GetInteger('sub_status_exception_occurred');
+        Result.SubStatusFailedSyntaxCheck :=          JsonObj.GetInteger('sub_status_failed_syntax_check');
+        Result.SubStatusMailboxNotFound :=            JsonObj.GetInteger('sub_status_mailbox_not_found');
+        Result.SubStatusUnroutableIpAddress :=        JsonObj.GetInteger('sub_status_unroutable_ip_address');
+        Result.SubStatusPossibleTypo :=               JsonObj.GetInteger('sub_status_possible_typo');
+        Result.SubStatusNoDnsEntries :=               JsonObj.GetInteger('sub_status_no_dns_entries');
+        Result.SubStatusRoleBasedCatchAll :=          JsonObj.GetInteger('sub_status_role_based_catch_all');
+        Result.SubStatusMailboxQuotaExceeded :=       JsonObj.GetInteger('sub_status_mailbox_quota_exceeded');
+        Result.SubStatusForcibleDisconnect :=         JsonObj.GetInteger('sub_status_forcible_disconnect');
+        Result.SubStatusFailedSmtpConnection :=       JsonObj.GetInteger('sub_status_failed_smtp_connection');
+        Result.SubStatusMxForward :=                  JsonObj.GetInteger('sub_status_mx_forward');
+        Result.SubStatusAlternate :=                  JsonObj.GetInteger('sub_status_alternate');
+        Result.SubStatusBlocked :=                    JsonObj.GetInteger('sub_status_blocked');
+        Result.SubStatusAllowed :=                    JsonObj.GetInteger('sub_status_allowed');
+
+        Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
+        Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
+
     end;
 
     function ZbValidationFromJson(JsonContent: string): TZbValidationResult;
     begin
-        Result := ZbValidationFromJson(TJSONObject(GetJSON(JsonContent)))
+        Result := ZbValidationFromJson(TZbJson.Create(JsonContent));
     end;
 
-    function ZbValidationFromJson(JObject: TJSONObject): TZbValidationResult;
+    function ZbValidationFromJson(JsonObj: TZbJSon): TZbValidationResult;
 
-        function ExtractDateTime(JsonKey: String): TDateTime;
+        function ExtractDateTime(DateString: String): TDateTime;
         var
             Day, Month, Year, Hour, Minute, Second: Integer;
             Milis: Word;
+            {$IFNDEF FPC}
+            ASplitMain: TStringDynArray;
+            ASplitAux: TStringDynArray;
+            {$ENDIF}
         begin
             // %Y-%m-%d %H:%M:%S.%3f
+            {$IFDEF FPC}
             SScanf(
-                JObject.Find(JsonKey).AsString,
+                DateString,
                 '%d-%d-%d %d:%d:%d.%d',
                 [@Year, @Month, @Day, @Hour, @Minute, @Second, @Milis]
             );
+            {$ELSE}
+            // no sscanf in Delphi
+            ASplitMain := SplitString(DateString, ' ');
+
+            // %Y-%m-%d
+            ASplitAux := SplitString(ASplitMain[0], '-');
+            Year := StrToInt(ASplitAux[0]);
+            Month := StrToInt(ASplitAux[1]);
+            Day := StrToInt(ASplitAux[1]);
+
+            // %H:%M:%S.%3f
+            ASplitAux := SplitString(ASplitMain[1], '.');
+            if Length(ASplitAux) = 1 then
+                Milis := 0
+            else
+                Milis := StrToInt(ASplitAux[1]);
+            ASplitAux := SplitString(ASplitAux[0], ':');
+            Hour := StrToInt(ASplitAux[0]);
+            Minute := StrToInt(ASplitAux[1]);
+            Second := StrToInt(ASplitAux[2]);
+            {$ENDIF}
             Result := EncodeDateTime(Year, Month, Day, Hour, Minute, Second, Milis);
         end;
     begin
-        Result.Address :=       JObject.Find('address').AsString;
-        Result.Status :=        JObject.Find('status').AsString;
-        Result.SubStatus :=     JObject.Find('sub_status').AsString;
-        Result.FreeEmail :=     JObject.Find('free_email').AsBoolean;
+        Result.Address :=       JsonObj.GetString('address');
+        Result.Status :=        JsonObj.GetString('status');
+        Result.SubStatus :=     JsonObj.GetString('sub_status');
+        Result.FreeEmail :=     JsonObj.GetBoolean('free_email');
 
-        Result.DidYouMean :=    StringOrNull(JObject, 'did_you_mean');
-        Result.Account :=       StringOrNull(JObject, 'account');
-        Result.Domain :=        StringOrNull(JObject, 'domain');
-        Result.DomainAgeDays := StringOrNull(JObject, 'domain_age_days');
-        Result.SmtpProvider :=  StringOrNull(JObject, 'smtp_provider');
-        Result.MxRecord :=      StringOrNull(JObject, 'mx_record');
-        Result.MxFound :=       StringOrNull(JObject, 'mx_found');
-        Result.Firstname :=     StringOrNull(JObject, 'firstname');
-        Result.Lastname :=      StringOrNull(JObject, 'lastname');
-        Result.Gender :=        StringOrNull(JObject, 'gender');
-        Result.Country :=       StringOrNull(JObject, 'country');
-        Result.Region :=        StringOrNull(JObject, 'region');
-        Result.City :=          StringOrNull(JObject, 'city');
-        Result.Zipcode :=       StringOrNull(JObject, 'zipcode');
+        Result.DidYouMean :=    JsonObj.GetString('did_you_mean');
+        Result.Account :=       JsonObj.GetString('account');
+        Result.Domain :=        JsonObj.GetString('domain');
+        Result.DomainAgeDays := JsonObj.GetString('domain_age_days');
+        Result.SmtpProvider :=  JsonObj.GetString('smtp_provider');
+        Result.MxRecord :=      JsonObj.GetString('mx_record');
+        Result.MxFound :=       JsonObj.GetString('mx_found');
+        Result.Firstname :=     JsonObj.GetString('firstname');
+        Result.Lastname :=      JsonObj.GetString('lastname');
+        Result.Gender :=        JsonObj.GetString('gender');
+        Result.Country :=       JsonObj.GetString('country');
+        Result.Region :=        JsonObj.GetString('region');
+        Result.City :=          JsonObj.GetString('city');
+        Result.Zipcode :=       JsonObj.GetString('zipcode');
 
-        Result.ProcessedAt := ExtractDateTime('processed_at');
+        Result.ProcessedAt := ExtractDateTime(JsonObj.GetString('processed_at'));
     end;
 
 
     function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError;
     begin
-        Result := ZbBatchErrorFromJson(TJSONObject(GetJSON(JsonContent)));
+        Result := ZbBatchErrorFromJson(TZbJson.Create(JsonContent));
     end;
 
-    function ZbBatchErrorFromJson(JObject: TJSONObject): TZbBatchError;
+    function ZbBatchErrorFromJson(JsonObj: TZbJSon): TZbBatchError;
     begin
-        Result.Error := JObject.Find('error').AsString;
-        Result.EmailAddress := JObject.Find('email_address').AsString;
+        Result.Error := JsonObj.GetString('error');
+        Result.EmailAddress := JsonObj.GetString('email_address');
     end;
 
     function ZbBatchValidationFromJson(JsonContent: String): TZBBatchValidation;
     var
-        JObject: TJSONObject;
+        JsonObj: TZbJSon;
         JArray: TJSONArray;
         IIndex: Integer;
         Found: Boolean;
+        AListItem: TJSONObject;
     begin
-        JObject := TJSONObject(GetJSON(JsonContent));
+        JsonObj := TZbJson.Create(JsonContent);
 
         // parse emails validations
-        Found := JObject.Find('email_batch', JArray);
+        Found := JsonObj.GetArray('email_batch', JArray);
         if not Found then
             raise Exception.Create(
                 'Field "email_batch" not found while parsing batch validation response'
@@ -257,12 +401,21 @@ implementation
         begin
             SetLength(Result.EmailBatch, Result.EmailBatchLength);
             for IIndex := 0 to Result.EmailBatchLength - 1 do
-                Result.EmailBatch[IIndex] := ZbValidationFromJson(JArray.Objects[IIndex]);
+            begin
+                {$IFDEF FPC}
+                AListItem := JArray.Objects[IIndex];
+                {$ELSE}
+                AListItem := JArray[IIndex] as TJSONObject;
+                {$ENDIF}
+                Result.EmailBatch[IIndex] := ZbValidationFromJson(
+                    TZbJson.CreateWrap(AListItem)
+                );
+            end;
         end;
 
         // parse errors
         JArray.Free;
-        Found := JObject.Find('errors', JArray);
+        Found := JsonObj.GetArray('errors', JArray);
         if not Found then
             raise Exception.Create(
                 'Field "errors" not found while parsing batch validation response'
@@ -272,46 +425,55 @@ implementation
         begin
             SetLength(Result.Errors, Result.ErrorsLength);
             for IIndex := 0 to Result.ErrorsLength - 1 do
-                Result.Errors[IIndex] := ZbBatchErrorFromJson(JArray.Objects[IIndex]);
+            begin
+                {$IFDEF FPC}
+                AListItem := JArray.Objects[IIndex];
+                {$ELSE}
+                AListItem := JArray[IIndex] as TJSONObject;
+                {$ENDIF}
+                Result.Errors[IIndex] := ZbBatchErrorFromJson(
+                    TZbJson.CreateWrap(AListItem)
+                );
+            end;
         end;
+        JArray.Free;
     end;
 
     function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
     var
-        JObject: TJSONObject;
+        JsonObj: TZbJSon;
     begin
-        JObject := TJSONObject(GetJSON(JsonContent));
+        JsonObj := TZbJSon.Create(JsonContent);
 
-        Result.Success := JObject.Find('success').AsBoolean;
-        Result.Message := JObject.Find('message').AsString;
-        Result.FileName := StringOrNull(JObject, 'file_name');
-        Result.FileId := StringOrNull(JObject, 'file_id');
+        Result.Success := JsonObj.GetBoolean('success');
+        Result.Message := JsonObj.GetString('message');
+        Result.FileName := JsonObj.GetString('file_name');
+        Result.FileId := JsonObj.GetString('file_id');
     end;
 
     function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
     var
-        JObject: TJSONObject;
-        PercentageAuxArray: array of String;
+        JsonObj: TZbJSon;
+        PercentageAuxArray: TStringDynArray;
     begin
-        JObject := TJSONObject(GetJSON(JsonContent));
+        JsonObj := TZbJSon.Create(JsonContent);
 
-        Result.Success := JObject.Find('success').AsBoolean;
-        Result.FileId := JObject.Find('file_id').AsString;
-        Result.FileName := JObject.Find('file_name').AsString;
-        Result.FileStatus := JObject.Find('file_status').AsString;
-        Result.ErrorReason := StringOrNull(JObject, 'error_reason');
-        Result.ReturnUrl := StringOrNull(JObject, 'return_url');
-        Result.UploadDate := ISO8601ToDate(JObject.Find('upload_date').AsString);
+        Result.Success := JsonObj.GetBoolean('success');
+        Result.FileId := JsonObj.GetString('file_id');
+        Result.FileName := JsonObj.GetString('file_name');
+        Result.FileStatus := JsonObj.GetString('file_status');
+        Result.ErrorReason := JsonObj.GetString('error_reason');
+        Result.ReturnUrl := JsonObj.GetString('return_url');
+        Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
 
         // Percentage comes as a string; will parse it to float
         PercentageAuxArray := SplitString(
-            JObject.Find('complete_percentage').AsString, '%'
+            JsonObj.GetString('complete_percentage'), '%'
         );
         if Length(PercentageAuxArray) > 0 then
             Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
         else
             Result.CompletePercentage := -1;
     end;
-
 end.
 

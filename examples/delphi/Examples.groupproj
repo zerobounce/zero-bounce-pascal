@@ -1,0 +1,108 @@
+﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    <PropertyGroup>
+        <ProjectGuid>{1AA16907-ED4F-42B2-B5AE-C5C8B6A741DA}</ProjectGuid>
+    </PropertyGroup>
+    <ItemGroup>
+        <Projects Include="ExampleGetCredits.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ExampleGetApiUsage.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ExampleValidation.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ExampleBatchValidation.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ExampleBulkValidation.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="ExampleAiScoring.dproj">
+            <Dependencies/>
+        </Projects>
+        <Projects Include="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj">
+            <Dependencies/>
+        </Projects>
+    </ItemGroup>
+    <ProjectExtensions>
+        <Borland.Personality>Default.Personality.12</Borland.Personality>
+        <Borland.ProjectType/>
+        <BorlandProject>
+            <Default.Personality/>
+        </BorlandProject>
+    </ProjectExtensions>
+    <Target Name="ExampleGetCredits">
+        <MSBuild Projects="ExampleGetCredits.dproj"/>
+    </Target>
+    <Target Name="ExampleGetCredits:Clean">
+        <MSBuild Projects="ExampleGetCredits.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleGetCredits:Make">
+        <MSBuild Projects="ExampleGetCredits.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleGetApiUsage">
+        <MSBuild Projects="ExampleGetApiUsage.dproj"/>
+    </Target>
+    <Target Name="ExampleGetApiUsage:Clean">
+        <MSBuild Projects="ExampleGetApiUsage.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleGetApiUsage:Make">
+        <MSBuild Projects="ExampleGetApiUsage.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleValidation">
+        <MSBuild Projects="ExampleValidation.dproj"/>
+    </Target>
+    <Target Name="ExampleValidation:Clean">
+        <MSBuild Projects="ExampleValidation.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleValidation:Make">
+        <MSBuild Projects="ExampleValidation.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleBatchValidation">
+        <MSBuild Projects="ExampleBatchValidation.dproj"/>
+    </Target>
+    <Target Name="ExampleBatchValidation:Clean">
+        <MSBuild Projects="ExampleBatchValidation.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleBatchValidation:Make">
+        <MSBuild Projects="ExampleBatchValidation.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleBulkValidation">
+        <MSBuild Projects="ExampleBulkValidation.dproj"/>
+    </Target>
+    <Target Name="ExampleBulkValidation:Clean">
+        <MSBuild Projects="ExampleBulkValidation.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleBulkValidation:Make">
+        <MSBuild Projects="ExampleBulkValidation.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleAiScoring">
+        <MSBuild Projects="ExampleAiScoring.dproj"/>
+    </Target>
+    <Target Name="ExampleAiScoring:Clean">
+        <MSBuild Projects="ExampleAiScoring.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleAiScoring:Make">
+        <MSBuild Projects="ExampleAiScoring.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="ExampleActivityData">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj"/>
+    </Target>
+    <Target Name="ExampleActivityData:Clean">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Clean"/>
+    </Target>
+    <Target Name="ExampleActivityData:Make">
+        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Make"/>
+    </Target>
+    <Target Name="Build">
+        <CallTarget Targets="ExampleGetCredits;ExampleGetApiUsage;ExampleValidation;ExampleBatchValidation;ExampleBulkValidation;ExampleAiScoring;ExampleActivityData"/>
+    </Target>
+    <Target Name="Clean">
+        <CallTarget Targets="ExampleGetCredits:Clean;ExampleGetApiUsage:Clean;ExampleValidation:Clean;ExampleBatchValidation:Clean;ExampleBulkValidation:Clean;ExampleAiScoring:Clean;ExampleActivityData:Clean"/>
+    </Target>
+    <Target Name="Make">
+        <CallTarget Targets="ExampleGetCredits:Make;ExampleGetApiUsage:Make;ExampleValidation:Make;ExampleBatchValidation:Make;ExampleBulkValidation:Make;ExampleAiScoring:Make;ExampleActivityData:Make"/>
+    </Target>
+    <Import Project="$(BDS)\Bin\CodeGear.Group.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Group.Targets')"/>
+</Project>

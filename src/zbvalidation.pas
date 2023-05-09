@@ -1,13 +1,12 @@
 unit ZbValidation;
 
-{$mode ObjFPC}{$H+}
+{$I zboptions.inc}{$H+}
 
 interface
 
 
 uses
-    Classes, SysUtils, DateUtils, fpjson,
-
+    Classes, SysUtils, DateUtils,
     ZbStructures, ZbUtility;
 
 type
@@ -19,10 +18,10 @@ type
 procedure Register;
 function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
 
-function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
-function ZbValidateEmail(Email: String): TZbValidationResult;
-function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
-function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation;
+function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult; overload;
+function ZbValidateEmail(Email: String): TZbValidationResult; overload;
+function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation; overload;
+function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation; overload;
 
 
 implementation
@@ -44,8 +43,9 @@ implementation
             if FirstElement then
                 FirstElement := False
             else
-                BatchContent += ',';
-            BatchContent += format(
+                BatchContent := BatchContent + ',';
+
+            BatchContent := BatchContent + format(
                 '{"email_address": "%s", "ip_address": "%s"}',
                 [EmailAndIp.Email, EmailAndIp.Ip]
             );
