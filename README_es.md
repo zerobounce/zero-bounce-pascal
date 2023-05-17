@@ -1,78 +1,87 @@
-# Zero bounce API - pascal SDK
+{\rtf1\ansi\ansicpg1252\cocoartf2709
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx566\tx1133\tx1700\tx2267\tx2834\tx3401\tx3968\tx4535\tx5102\tx5669\tx6236\tx6803\pardirnatural\partightenfactor0
 
-This library is a wrapper for the ZeroBounce API v2.
-
-For more information about the API, visit https://www.zerobounce.net/docs/.
-
-In order to run this library, the zero-bounce API which requires an API key. Check [this guide](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) to see how to grab yours.
-
-## Package's units
-
-The methods implemented in this library can raise `ZbException`.
-
-- __ZbUtility__ - contains utility methods
-    - `ZbSetApiKey` - set the API key to be used within the all SDK's methods
-    - `ZbException` - exception containing data about the response context
-- __ZbGenerics__ - contains general purpose methods
-    - `ZbGetCredits` (returns integer) - fetch account's credits
-    - `ZbGetApiUsage` (returns `TApiUsage`) - fetch account's (overall or specific) API usage
-    - `ZbActivityData` (returns integer) - fetch the amount of days an email inbox has been active
-- __ZbValidation__ - fetch validation information about emails
-    - `ZbValidateEmail` (returns `TZbValidationResult`) - validate one email
-    - `ZbBatchValidateEmails` (retrns `TZBBatchValidation`) - validate a list of emails
-- __ZbBulk__ - bulk email validation or AI scoring
-    - Bulk Email validation:
-        - `ZbBulkValidationFileSubmit` (returns `TZBFileFeedback`) - submit for bulk validation a file contents, containing emails
-        - `ZbBulkValidationFileStatusCheck` (returns `TZBFileStatus`) - check the status of a submitted file
-        - `ZbBulkValidationResultFetch` (returns `TZBBulkResponse`) - fetch the validation result of a submitted file
-        - `ZbBulkValidationResultDelete` (returns `TZBFileFeedback`) - delete file submitted for bulk validation
-    - AI scoring:
-        - `ZbAiScoringFileSubmit` (returns `TZBFileFeedback`) - submit for AI scoring a file contents, containing emails
-        - `ZbAiScoringFileStatusCheck` (returns `TZBFileStatus`) - check the status of a submitted file
-        - `ZbAiScoringResultFetch` (returns `TZBBulkResponse`) - fetch the validation result of a submitted file
-        - `ZbAiScoringResultDelete` (returns `TZBFileFeedback`) - delete file submitted for AI scoring
-- __ZbStructures__ - contains structures returned by the methods enumerated above
-
-
-## Usage
-
-### Delphi
-
-In order to run this package, one must install [Delphi IDE](https://www.embarcadero.com/products/delphi/starter/free-download).
-
-Open Delphi IDE, File > Open, browse for `./packages/ZeroBounce.dpk` (or `./packages/zb.groupproj`), click "Open package".
-
-In order to run example snippets or your own project using the zero-bounce package, first install the package into Delphi:
-- open package (described above)
-- locate projects window (or CTRL+ALT+F11)
-- right click on the project ("ZeroBounce.bpl") > Compile
-- right click on the project > Install
-
-After installing, the example projects (`./examples/delphi/Examples.groupproj`) should run successfully. If that still doesn't happen, follow the steps below.
-
-To run the ZeroBounce SDK with any other Dephi project:
-- open desired project
-- Project > Options (or SHIFT+CTRL+F11) > Packages > Runtime Packages
-- enable "Link with runtime packages"
-- [optional] click on the three dots from "Runtime packages", browse to `C:\Users\Public\Documents\Embarcadero\Studio\{INSTALLED VERSION}\Bpl`, select "Any file (*.*)" from bottom-right, select `ZeroBounce.bpl` file
-- you can now import project's units
-
-### Free Pascal
-In order to run this package, one must install [Lazarus IDE](https://www.lazarus-ide.org/).
-
-Open Lazarus IDE, File > Open, browse for `./packages/zerobounce.lpk` (relative to repository root), click "Open package".
-
-In order to run unit tests, example snippets or your own project with the zero-bounce package, first install it into lazarus:
-- open package (described above)
-- locate package window (titled with "Package ZeroBounce {version}")
-- Compile
-- Use > Install
-
-After installing, opening either tests  (`./tests/unit_tests.lpi`) or example snippets (any `*.lpi` file from `./examples/fpc/` folder) should work running.
-
-To run ZeroBounce SDK with any other FPC project:
-- open desired project
-- Project > Project inspector > Add > New requirement
-- pick "ZeroBounce" from the list
-- it should now appear in "Required Packages"
-- you can now import project's units
+\f0\fs24 \cf0 # Zero bounce API - SDK para Pascal\
+\
+Esta biblioteca es un envoltorio para la API ZeroBounce v2.\
+\
+Para obtener m\'e1s informaci\'f3n sobre la API, visita https://www.zerobounce.net/docs/.\
+\
+Para ejecutar esta biblioteca, se requiere la clave de API de Zero Bounce. Consulta [esta gu\'eda](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) para obtener informaci\'f3n sobre c\'f3mo obtener la tuya.\
+\
+## Unidades del paquete\
+\
+Los m\'e9todos implementados en esta biblioteca pueden generar `ZbException`.\
+\
+- __ZbUtility__ - contiene m\'e9todos de utilidad\
+    - `ZbSetApiKey` - establece la clave de API que se utilizar\'e1 en todos los m\'e9todos del SDK\
+    - `ZbException` - excepci\'f3n que contiene datos sobre el contexto de la respuesta\
+- __ZbGenerics__ - contiene m\'e9todos de prop\'f3sito general\
+    - `ZbGetCredits` (devuelve un entero) - obtiene los cr\'e9ditos de la cuenta\
+    - `ZbGetApiUsage` (devuelve `TApiUsage`) - obtiene el uso de la API de la cuenta (general o espec\'edfico)\
+    - `ZbActivityData` (devuelve un entero) - obtiene la cantidad de d\'edas que ha estado activo un buz\'f3n de correo electr\'f3nico\
+- __ZbValidation__ - obtiene informaci\'f3n de validaci\'f3n sobre correos electr\'f3nicos\
+    - `ZbValidateEmail` (devuelve `TZbValidationResult`) - valida un correo electr\'f3nico\
+    - `ZbBatchValidateEmails` (devuelve `TZBBatchValidation`) - valida una lista de correos electr\'f3nicos\
+- __ZbBulk__ - validaci\'f3n masiva de correos electr\'f3nicos o puntuaci\'f3n de IA\
+    - Validaci\'f3n masiva de correos electr\'f3nicos:\
+        - `ZbBulkValidationFileSubmit` (devuelve `TZBFileFeedback`) - env\'eda para validaci\'f3n masiva el contenido de un archivo que contiene correos electr\'f3nicos\
+        - `ZbBulkValidationFileStatusCheck` (devuelve `TZBFileStatus`) - verifica el estado de un archivo enviado\
+        - `ZbBulkValidationResultFetch` (devuelve `TZBBulkResponse`) - obtiene el resultado de validaci\'f3n de un archivo enviado\
+        - `ZbBulkValidationResultDelete` (devuelve `TZBFileFeedback`) - elimina un archivo enviado para validaci\'f3n masiva\
+    - Puntuaci\'f3n de IA:\
+        - `ZbAiScoringFileSubmit` (devuelve `TZBFileFeedback`) - env\'eda para puntuaci\'f3n de IA el contenido de un archivo que contiene correos electr\'f3nicos\
+        - `ZbAiScoringFileStatusCheck` (devuelve `TZBFileStatus`) - verifica el estado de un archivo enviado\
+        - `ZbAiScoringResultFetch` (devuelve `TZBBulkResponse`) - obtiene el resultado de validaci\'f3n de un archivo enviado\
+        - `ZbAiScoringResultDelete` (devuelve `TZBFileFeedback`) - elimina un archivo enviado para puntuaci\'f3n de IA\
+- __ZbStructures__ - contiene las estructuras devueltas por los m\'e9todos enumerados anteriormente\
+\
+## Uso\
+\
+### Delphi\
+\
+Para ejecutar este paquete, debes instalar [Delphi IDE](https://www.embarcadero.com/products/delphi/starter/free-download).\
+\
+Abre Delphi IDE, selecciona Archivo > Abrir, busca `./packages/ZeroBounce.dpk\
+\
+` (o `./packages/zb.groupproj`), haz clic en "Abrir paquete".\
+\
+Para ejecutar los fragmentos de ejemplo o tu propio proyecto usando el paquete Zero Bounce, primero instala el paquete en Delphi:\
+- abre el paquete (descrito anteriormente)\
+- busca la ventana de proyectos (o CTRL+ALT+F11)\
+- haz clic derecho en el proyecto ("ZeroBounce.bpl") > Compilar\
+- haz clic derecho en el proyecto > Instalar\
+\
+Despu\'e9s de instalarlo, los proyectos de ejemplo (`./examples/delphi/Examples.groupproj`) se ejecutar\'e1n correctamente. Si eso a\'fan no sucede, sigue los pasos a continuaci\'f3n.\
+\
+Para ejecutar el SDK de ZeroBounce con cualquier otro proyecto de Delphi:\
+- abre el proyecto deseado\
+- Proyecto > Opciones (o SHIFT+CTRL+F11) > Paquetes > Paquetes en tiempo de ejecuci\'f3n\
+- habilita "Enlazar con paquetes en tiempo de ejecuci\'f3n"\
+- [opcional] haz clic en los tres puntos de "Paquetes en tiempo de ejecuci\'f3n", busca `C:\\Users\\Public\\Documents\\Embarcadero\\Studio\\\{VERSI\'d3N INSTALADA\}\\Bpl`, selecciona "Cualquier archivo (*.*)" en la parte inferior derecha, selecciona el archivo `ZeroBounce.bpl`\
+- ahora puedes importar las unidades del proyecto\
+\
+### Free Pascal\
+\
+Para ejecutar este paquete, debes instalar [Lazarus IDE](https://www.lazarus-ide.org/).\
+\
+Abre Lazarus IDE, selecciona Archivo > Abrir, busca `./packages/zerobounce.lpk` (relativo a la ra\'edz del repositorio), haz clic en "Abrir paquete".\
+\
+Para ejecutar las pruebas unitarias, los fragmentos de ejemplo o tu propio proyecto con el paquete Zero Bounce, primero inst\'e1lalo en Lazarus:\
+- abre el paquete (descrito anteriormente)\
+- busca la ventana del paquete (con el t\'edtulo "Package ZeroBounce \{versi\'f3n\}")\
+- Compilar\
+- Utilizar > Instalar\
+\
+Despu\'e9s de instalarlo, abrir las pruebas (`./tests/unit_tests.lpi`) o los fragmentos de ejemplo (cualquier archivo `*.lpi` de la carpeta `./examples/fpc/`) deber\'eda funcionar correctamente.\
+\
+Para ejecutar el SDK de ZeroBounce con cualquier otro proyecto de FPC:\
+- abre el proyecto deseado\
+- Proyecto > Inspector de proyectos > Agregar > Nueva dependencia\
+- selecciona "ZeroBounce" de la lista\
+- ahora deber\'eda aparecer en "Paquetes requeridos"\
+- ahora puedes importar las unidades del proyecto}
