@@ -1,12 +1,4 @@
-# Zero bounce API - SDK para Pascal
-
-Esta biblioteca es un envoltorio para la API ZeroBounce v2.
-
-Para obtener más información sobre la API, visita https://www.zerobounce.net/docs/.
-
-Para ejecutar esta biblioteca, se requiere la clave de API de Zero Bounce. Consulta [esta guía](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) para obtener información sobre cómo obtener la tuya.
-
-## Unidades del paquete
+#### Unidades del paquete
 
 Los métodos implementados en esta biblioteca pueden generar `ZbException`.
 
@@ -33,9 +25,9 @@ Los métodos implementados en esta biblioteca pueden generar `ZbException`.
         - `ZbAiScoringResultDelete` (devuelve `TZBFileFeedback`) - elimina un archivo enviado para puntuación de IA
 - __ZbStructures__ - contiene las estructuras devueltas por los métodos enumerados anteriormente
 
-## Uso
+#### Uso
 
-### Delphi
+##### Delphi
 
 Para ejecutar este paquete, debes instalar [Delphi IDE](https://www.embarcadero.com/products/delphi/starter/free-download).
 
@@ -58,7 +50,7 @@ Para ejecutar el SDK de ZeroBounce con cualquier otro proyecto de Delphi:
 - [opcional] haz clic en los tres puntos de "Paquetes en tiempo de ejecución", busca `C:\Users\Public\Documents\Embarcadero\Studio\{VERSIÓN INSTALADA}\Bpl`, selecciona "Cualquier archivo (*.*)" en la parte inferior derecha, selecciona el archivo `ZeroBounce.bpl`
 - ahora puedes importar las unidades del proyecto
 
-### Free Pascal
+##### Free Pascal
 
 Para ejecutar este paquete, debes instalar [Lazarus IDE](https://www.lazarus-ide.org/).
 

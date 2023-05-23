@@ -1,12 +1,4 @@
-# Zero bounce API - pascal SDK
-
-This library is a wrapper for the ZeroBounce API v2.
-
-For more information about the API, visit https://www.zerobounce.net/docs/.
-
-In order to run this library, the zero-bounce API which requires an API key. Check [this guide](https://www.zerobounce.net/docs/api-dashboard#API_keys_management) to see how to grab yours.
-
-## Package's units
+#### Package's units
 
 The methods implemented in this library can raise `ZbException`.
 
@@ -34,9 +26,9 @@ The methods implemented in this library can raise `ZbException`.
 - __ZbStructures__ - contains structures returned by the methods enumerated above
 
 
-## Usage
+#### Usage
 
-### Delphi
+##### Delphi
 
 In order to run this package, one must install [Delphi IDE](https://www.embarcadero.com/products/delphi/starter/free-download).
 
@@ -57,7 +49,7 @@ To run the ZeroBounce SDK with any other Dephi project:
 - [optional] click on the three dots from "Runtime packages", browse to `C:\Users\Public\Documents\Embarcadero\Studio\{INSTALLED VERSION}\Bpl`, select "Any file (*.*)" from bottom-right, select `ZeroBounce.bpl` file
 - you can now import project's units
 
-### Free Pascal
+##### Free Pascal
 In order to run this package, one must install [Lazarus IDE](https://www.lazarus-ide.org/).
 
 Open Lazarus IDE, File > Open, browse for `./packages/zerobounce.lpk` (relative to repository root), click "Open package".
