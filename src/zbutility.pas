@@ -100,7 +100,7 @@ implementation
         {$IFDEF FPC}
         Result := HTTPEncode(param);
         {$ELSE}
-        Result := TURLEncoding(param);
+        Result := TURLEncoding.Create.EncodePath(param);
         {$ENDIF}
     end;
 
