@@ -7,10 +7,11 @@ interface
 uses
     Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
-    openssl, opensslsockets, fphttpclient
+    openssl, opensslsockets, fphttpclient, httpprotocol
     {$ELSE}
     System.Net.HttpClient,
-    System.Net.Mime
+    System.Net.Mime,
+    System.NetEncoding
     {$ENDIF}
 ;
 
@@ -56,6 +57,7 @@ var
     ZbResponseMock: TZbRequestResponse = ();
 
     procedure ZBSetApiKey ( ApiKey : string );
+    function EncodeParam(param: String): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
@@ -91,6 +93,15 @@ implementation
     procedure ZBSetApiKey ( ApiKey : string );
     begin
         ZbApiKey := ApiKey;
+    end;
+
+    function EncodeParam(param: String): String;
+    begin
+        {$IFDEF FPC}
+        Result := HTTPEncode(param);
+        {$ELSE}
+        Result := TURLEncoding(param);
+        {$ENDIF}
     end;
 
     function ZBGetRequest(url: String): TZbRequestResponse;

@@ -5,7 +5,7 @@ unit ZbGeneric;
 interface
 
 uses
-    SysUtils, DateUtils, httpprotocol,
+    SysUtils, DateUtils,
     ZbStructures, ZbUtility;
 
 function ZbGetCredits : Integer;
@@ -100,7 +100,7 @@ implementation
     begin
         UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
-        UrlToAccess := Concat(UrlToAccess, '&email=', HTTPEncode(Email));
+        UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
@@ -128,14 +128,14 @@ implementation
     begin
         UrlToAccess := Concat(BASE_URI, ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
-        UrlToAccess := Concat(UrlToAccess, '&domain=', HTTPEncode(Domain));
+        UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 
         if FirstName <> '' then
-            UrlToAccess := Concat(UrlToAccess, '&first_name=', HTTPEncode(FirstName));
+            UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
         if MiddleName <> '' then
-            UrlToAccess := Concat(UrlToAccess, '&middle_name=', HTTPEncode(MiddleName));
+            UrlToAccess := Concat(UrlToAccess, '&middle_name=', EncodeParam(MiddleName));
         if LastName <> '' then
-            UrlToAccess := Concat(UrlToAccess, '&last_name=', HTTPEncode(LastName));
+            UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
 
         response := ZBGetRequest(UrlToAccess);
         try
