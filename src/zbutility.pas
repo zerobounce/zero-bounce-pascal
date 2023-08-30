@@ -48,6 +48,7 @@ const
     ENDPOINT_SCORING_STATUS = '/scoring/filestatus';
     ENDPOINT_SCORING_RESULT = '/scoring/getfile';
     ENDPOINT_SCORING_DELETE = '/scoring/deletefile';
+    ENDPOINT_EMAIL_FINDER = '/guessformat';
     cDefaultMock: TZbRequestResponse = ();
 
 var

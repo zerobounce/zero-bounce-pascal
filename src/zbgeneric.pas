@@ -5,13 +5,16 @@ unit ZbGeneric;
 interface
 
 uses
-    SysUtils, DateUtils,
+    SysUtils, DateUtils, httpprotocol,
     ZbStructures, ZbUtility;
 
 function ZbGetCredits : Integer;
 function ZbGetApiUsage : TApiUsage; overload;
 function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; overload;
 function ZbActivityData(Email: String): Integer;
+function ZbFindEmail(Domain, FirstName, MiddleName, LastName String) : TZbFindEmailResponse; overload;
+function ZbFindEmail(Domain, FirstName, LastName String) : TZbFindEmailResponse; overload;
+function ZbDomainSearch(Domain String) : TZbFindEmailResponse; overload;
 
 procedure Register;
 
@@ -97,7 +100,7 @@ implementation
     begin
         UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
-        UrlToAccess := Concat(UrlToAccess, '&email=', Email);
+        UrlToAccess := Concat(UrlToAccess, '&email=', HTTPEncode(Email));
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
@@ -117,6 +120,44 @@ implementation
 		end;
     end;
 
+    function ZbFindEmail(Domain, FirstName, MiddleName, LastName String) : TZbFindEmailResponse;
+    var
+        UrlToAccess: string;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(BASE_URI, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&domain=', HTTPEncode(Domain));
+
+        if FirstName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&first_name=', HTTPEncode(FirstName));
+        if MiddleName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&middle_name=', HTTPEncode(MiddleName));
+        if LastName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&last_name=', HTTPEncode(LastName));
+
+        response := ZBGetRequest(UrlToAccess);
+        try
+            Result := TZbFindEmailResponseFromJson(response.Payload);
+		except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+		end;
+    end;
+
+    function ZbFindEmail(Domain, FirstName, LastName String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmail(Domain, FirstName, '', LastName);
+    end;
+
+    function ZbDomainSearch(Domain String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmail(Domain, '', '', '');
+    end;
 
     procedure Register;
     begin
