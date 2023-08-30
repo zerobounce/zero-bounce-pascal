@@ -185,7 +185,7 @@ const
 
     MOCK_FIND_MAIL_STATUS_INVALID: string = '{' +
         '    "email": "",' +
-        '    "domain": "example.comcd",' +
+        '    "domain": "example.com",' +
         '    "format": "unknown",' +
         '    "status": "invalid",' +
         '    "sub_status": "no_dns_entries",' +
@@ -193,7 +193,7 @@ const
         '    "did_you_mean": "",' +
         '    "failure_reason": "",' +
         '    "other_domain_formats": []' +
-        '}'
+        '}';
 
     MOCK_FIND_MAIL_STATUS_VALID: string = '{' +
         '    "email": "john.doe@example.com",' +
@@ -214,7 +214,7 @@ const
         '            "confidence": "medium"' +
         '        }' +
         '    ]' +
-        '}'
+        '}';
 
 
 implementation

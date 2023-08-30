@@ -103,14 +103,14 @@ begin
    AssertEquals('activity data', ActivityAmount, -1);
 end;
 
-procedure AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
+procedure TTestGeneric.AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
 begin
    AssertEquals('invalid Status value', Response.Status, 'valid');
-   AssertEquals('invalid Email value', Response.Email, '');
+   AssertEquals('invalid Email value', Response.Email, 'john.doe@example.com');
    AssertEquals('invalid Domain value', Response.Domain, 'example.com');
    AssertTrue(
       'empty list of domain formats expected',
-      Length(response.OtherDomainFormats) == 2
+      Length(response.OtherDomainFormats) = 2
    );
    AssertEquals(
       'invalid DomainFormat value',
@@ -136,7 +136,7 @@ begin
    AssertEquals('invalid Domain value', Response.Domain, 'example.com');
    AssertTrue(
       'empty list of domain formats expected',
-      Length(response.OtherDomainFormats) == 0
+      Length(response.OtherDomainFormats) = 0
    );
 
 end;
@@ -151,7 +151,7 @@ begin
 end;
 
 
-procedure TestFindMailOverload;
+procedure TTestGeneric.TestFindMailOverload;
 var
    Response: TZbFindEmailResponse;
 begin
@@ -160,7 +160,7 @@ begin
    AssertFindMailValidStatusPayload(Response);
 end;
 
-procedure TestDomainSearchMethod;
+procedure TTestGeneric.TestDomainSearchMethod;
 var
    Response: TZbFindEmailResponse;
 begin

@@ -12,9 +12,9 @@ function ZbGetCredits : Integer;
 function ZbGetApiUsage : TApiUsage; overload;
 function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; overload;
 function ZbActivityData(Email: String): Integer;
-function ZbFindEmail(Domain, FirstName, MiddleName, LastName String) : TZbFindEmailResponse; overload;
-function ZbFindEmail(Domain, FirstName, LastName String) : TZbFindEmailResponse; overload;
-function ZbDomainSearch(Domain String) : TZbFindEmailResponse; overload;
+function ZbFindEmail(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbFindEmail(Domain, FirstName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbDomainSearch(Domain: String) : TZbFindEmailResponse; overload;
 
 procedure Register;
 
@@ -120,7 +120,7 @@ implementation
 		end;
     end;
 
-    function ZbFindEmail(Domain, FirstName, MiddleName, LastName String) : TZbFindEmailResponse;
+    function ZbFindEmail(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse;
     var
         UrlToAccess: string;
         response: TZbRequestResponse;
@@ -149,12 +149,12 @@ implementation
 		end;
     end;
 
-    function ZbFindEmail(Domain, FirstName, LastName String) : TZbFindEmailResponse;
+    function ZbFindEmail(Domain, FirstName, LastName: String) : TZbFindEmailResponse;
     begin
         Result := ZbFindEmail(Domain, FirstName, '', LastName);
     end;
 
-    function ZbDomainSearch(Domain String) : TZbFindEmailResponse;
+    function ZbDomainSearch(Domain: String) : TZbFindEmailResponse;
     begin
         Result := ZbFindEmail(Domain, '', '', '');
     end;

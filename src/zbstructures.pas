@@ -132,14 +132,14 @@ type
     end;
 
     TZbFindEmailResponse = record
-        Email String;
-        Domain String;
-        Format String;
-        Status String;
-        SubStatus String;
-        Confidence String;
-        DidYouMean String;
-        FailureReason String;
+        Email: String;
+        Domain: String;
+        Format: String;
+        Status: String;
+        SubStatus: String;
+        Confidence: String;
+        DidYouMean: String;
+        FailureReason: String;
         OtherDomainFormats: array of TZbDomainFormats;
     end;
 
@@ -498,8 +498,8 @@ implementation
 
     function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
     begin
-        Result.SubStatus = JsonObj.GetString('format');
-        Result.Confidence = JsonObj.GetString('confidence');
+        Result.Format := JsonObj.GetString('format');
+        Result.Confidence := JsonObj.GetString('confidence');
     end;
 
     function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
@@ -510,15 +510,15 @@ implementation
         IIndex: Integer;
         AListItem: TJSONObject;
     begin
-        JsonObj := TZbJson.Create(JsonContent)
-        Result.Email = JsonObj.GetString('email');
-        Result.Domain = JsonObj.GetString('domain');
-        Result.Format = JsonObj.GetString('format');
-        Result.Status = JsonObj.GetString('status');
-        Result.SubStatus = JsonObj.GetString('sub_status');
-        Result.Confidence = JsonObj.GetString('confidence');
-        Result.DidYouMean = JsonObj.GetString('did_you_mean');
-        Result.FailureReason = JsonObj.GetString('failure_reason');
+        JsonObj := TZbJson.Create(JsonContent);
+        Result.Email := JsonObj.GetString('email');
+        Result.Domain := JsonObj.GetString('domain');
+        Result.Format := JsonObj.GetString('format');
+        Result.Status := JsonObj.GetString('status');
+        Result.SubStatus := JsonObj.GetString('sub_status');
+        Result.Confidence := JsonObj.GetString('confidence');
+        Result.DidYouMean := JsonObj.GetString('did_you_mean');
+        Result.FailureReason := JsonObj.GetString('failure_reason');
 
         Found := JsonObj.GetArray('other_domain_formats', JArray);
         if not Found then
