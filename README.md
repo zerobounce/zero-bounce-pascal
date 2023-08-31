@@ -13,10 +13,12 @@ The methods implemented in this library can raise `ZbException`.
 - __ZbUtility__ - contains utility methods
     - `ZbSetApiKey` - set the API key to be used within the all SDK's methods
     - `ZbException` - exception containing data about the response context
-- __ZbGenerics__ - contains general purpose methods
+- __ZbGeneric__ - contains general purpose methods
     - `ZbGetCredits` (returns integer) - fetch account's credits
     - `ZbGetApiUsage` (returns `TApiUsage`) - fetch account's (overall or specific) API usage
     - `ZbActivityData` (returns integer) - fetch the amount of days an email inbox has been active
+    - `ZbFindEmail` (returns `ZbFindEmail`) - identifies and validates a person’s primary email address
+    - `ZbDomainSearch` (returns `ZbFindEmail`) - detects possible email address patterns used by a domain/company
 - __ZbValidation__ - fetch validation information about emails
     - `ZbValidateEmail` (returns `TZbValidationResult`) - validate one email
     - `ZbBatchValidateEmails` (retrns `TZBBatchValidation`) - validate a list of emails
