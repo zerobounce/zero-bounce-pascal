@@ -7,10 +7,11 @@ interface
 uses
     Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
-    openssl, opensslsockets, fphttpclient
+    openssl, opensslsockets, fphttpclient, httpprotocol
     {$ELSE}
     System.Net.HttpClient,
-    System.Net.Mime
+    System.Net.Mime,
+    System.NetEncoding
     {$ENDIF}
 ;
 
@@ -48,6 +49,7 @@ const
     ENDPOINT_SCORING_STATUS = '/scoring/filestatus';
     ENDPOINT_SCORING_RESULT = '/scoring/getfile';
     ENDPOINT_SCORING_DELETE = '/scoring/deletefile';
+    ENDPOINT_EMAIL_FINDER = '/guessformat';
     cDefaultMock: TZbRequestResponse = ();
 
 var
@@ -55,6 +57,7 @@ var
     ZbResponseMock: TZbRequestResponse = ();
 
     procedure ZBSetApiKey ( ApiKey : string );
+    function EncodeParam(param: String): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
@@ -90,6 +93,15 @@ implementation
     procedure ZBSetApiKey ( ApiKey : string );
     begin
         ZbApiKey := ApiKey;
+    end;
+
+    function EncodeParam(param: String): String;
+    begin
+        {$IFDEF FPC}
+        Result := HTTPEncode(param);
+        {$ELSE}
+        Result := TURLEncoding.Create.EncodeQuery(param);
+        {$ENDIF}
     end;
 
     function ZBGetRequest(url: String): TZbRequestResponse;

@@ -183,6 +183,39 @@ const
 
     BULK_DELETE_NOT_FOUND = '{ "success": false, "message": "File cannot be found."}';
 
+    MOCK_FIND_MAIL_STATUS_INVALID: string = '{' +
+        '    "email": "",' +
+        '    "domain": "example.com",' +
+        '    "format": "unknown",' +
+        '    "status": "invalid",' +
+        '    "sub_status": "no_dns_entries",' +
+        '    "confidence": "undetermined",' +
+        '    "did_you_mean": "",' +
+        '    "failure_reason": "",' +
+        '    "other_domain_formats": []' +
+        '}';
+
+    MOCK_FIND_MAIL_STATUS_VALID: string = '{' +
+        '    "email": "john.doe@example.com",' +
+        '    "domain": "example.com",' +
+        '    "format": "first.last",' +
+        '    "status": "valid",' +
+        '    "sub_status": "",' +
+        '    "confidence": "high",' +
+        '    "did_you_mean": "",' +
+        '    "failure_reason": "",' +
+        '    "other_domain_formats": [' +
+        '        {' +
+        '            "format": "first_last",' +
+        '            "confidence": "high"' +
+        '        },' +
+        '        {' +
+        '            "format": "first",' +
+        '            "confidence": "medium"' +
+        '        }' +
+        '    ]' +
+        '}';
+
 
 implementation
 

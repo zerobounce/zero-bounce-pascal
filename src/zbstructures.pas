@@ -126,6 +126,24 @@ type
         Content: String;
     end;
 
+    TZbDomainFormats = record
+        Format: String;
+        Confidence: String;
+    end;
+
+    TZbFindEmailResponse = record
+        Email: String;
+        Domain: String;
+        Format: String;
+        Status: String;
+        SubStatus: String;
+        Confidence: String;
+        DidYouMean: String;
+        FailureReason: String;
+        OtherDomainFormats: array of TZbDomainFormats;
+    end;
+
+
 function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
 function ZbValidationFromJson(JsonObj: TZbJson): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
 function ZbValidationFromJson(JsonContent: string): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
@@ -134,6 +152,8 @@ function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError; {$IFNDEF FPC}
 function ZbBatchValidationFromJson(JsonContent: string): TZBBatchValidation;
 function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
+function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
+function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 procedure Register;
 
 implementation
@@ -475,5 +495,52 @@ implementation
         else
             Result.CompletePercentage := -1;
     end;
+
+    function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
+    begin
+        Result.Format := JsonObj.GetString('format');
+        Result.Confidence := JsonObj.GetString('confidence');
+    end;
+
+    function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
+    var
+        JsonObj: TZbJSon;
+        JArray: TJSONArray;
+        Found: boolean;
+        IIndex: Integer;
+        AListItem: TJSONObject;
+    begin
+        JsonObj := TZbJson.Create(JsonContent);
+        Result.Email := JsonObj.GetString('email');
+        Result.Domain := JsonObj.GetString('domain');
+        Result.Format := JsonObj.GetString('format');
+        Result.Status := JsonObj.GetString('status');
+        Result.SubStatus := JsonObj.GetString('sub_status');
+        Result.Confidence := JsonObj.GetString('confidence');
+        Result.DidYouMean := JsonObj.GetString('did_you_mean');
+        Result.FailureReason := JsonObj.GetString('failure_reason');
+
+        Found := JsonObj.GetArray('other_domain_formats', JArray);
+        if not Found then
+            raise Exception.Create(
+                'Field "other_domain_formats" not found while parsing "find mail" response'
+            );
+        if JArray.Count > 0 then
+        begin
+            SetLength(Result.OtherDomainFormats, JArray.Count);
+            for IIndex := 0 to JArray.Count - 1 do
+            begin
+                {$IFDEF FPC}
+                AListItem := JArray.Objects[IIndex];
+                {$ELSE}
+                AListItem := JArray[IIndex] as TJSONObject;
+                {$ENDIF}
+                Result.OtherDomainFormats[IIndex] := TZbDomainFormatsFromJson(
+                    TZbJson.CreateWrap(AListItem)
+                );
+            end;
+        end;
+    end;
+
 end.
 
