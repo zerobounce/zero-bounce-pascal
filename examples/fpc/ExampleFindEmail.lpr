@@ -1,14 +1,12 @@
 program ExampleFindEmail;
 
-{$APPTYPE CONSOLE}
-
-{$R *.res}
+{$mode objfpc}{$H+}
 
 uses
-  System.SysUtils,
-  ZbGeneric,
-  ZbStructures,
-  ZbUtility;
+    SysUtils,
+    ZbGeneric,
+    ZbStructures,
+    ZbUtility;
 
 var
    Response: TZbFindEmailResponse;
@@ -35,5 +33,5 @@ begin
             WriteLn(e.Message);
         end;
     end;
-    ReadLn;
 end.
+
