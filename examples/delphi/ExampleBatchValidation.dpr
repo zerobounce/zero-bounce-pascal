@@ -21,7 +21,7 @@ begin
     param[1].Ip := '';
 
     try
-        ZBSetApiKey('YOUR__API__KEY');
+        ZBInitialize('YOUR__API__KEY');
 
         response := ZbBatchValidateEmails(param);
         for Validation in response.EmailBatch do

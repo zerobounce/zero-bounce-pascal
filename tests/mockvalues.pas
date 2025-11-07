@@ -34,6 +34,7 @@ const
         '"sub_status_mailbox_quota_exceeded": 0,' +
         '"sub_status_forcible_disconnect": 0,' +
         '"sub_status_failed_smtp_connection": 0,' +
+        '"sub_status_accept_all": 0,' +
         '"sub_status_mx_forward": 0,' +
         '"sub_status_alternate": 1,' +
         '"sub_status_blocked": 0,' +
@@ -185,22 +186,36 @@ const
 
     MOCK_FIND_MAIL_STATUS_INVALID: string = '{' +
         '    "email": "",' +
+        '    "email_confidence": "",' +
         '    "domain": "example.com",' +
+        '    "company_name": "",' +
+        '    "did_you_mean": "",' +
+        '    "failure_reason": ""' +
+        '}';
+
+    MOCK_FIND_MAIL_STATUS_VALID: string = '{' +
+        '    "email": "john.doe@example.com",' +
+        '    "email_confidence": "high",' +
+        '    "domain": "example.com",' +
+        '    "company_name": "",' +
+        '    "did_you_mean": "",' +
+        '    "failure_reason": ""' +
+        '}';
+
+    MOCK_DOMAIN_SEARCH_STATUS_INVALID: string = '{' +
+        '    "domain": "example.com",' +
+        '    "company_name": "",' +
         '    "format": "unknown",' +
-        '    "status": "invalid",' +
-        '    "sub_status": "no_dns_entries",' +
         '    "confidence": "undetermined",' +
         '    "did_you_mean": "",' +
         '    "failure_reason": "",' +
         '    "other_domain_formats": []' +
         '}';
 
-    MOCK_FIND_MAIL_STATUS_VALID: string = '{' +
-        '    "email": "john.doe@example.com",' +
+    MOCK_DOMAIN_SEARCH_STATUS_VALID: string = '{' +
         '    "domain": "example.com",' +
+        '    "company_name": "",' +
         '    "format": "first.last",' +
-        '    "status": "valid",' +
-        '    "sub_status": "",' +
         '    "confidence": "high",' +
         '    "did_you_mean": "",' +
         '    "failure_reason": "",' +

@@ -5,13 +5,13 @@ uses
     DateUtils,
     ZbGeneric, // ZbGetApiUsage method
     ZbStructures, // TApiUsage record
-    ZbUtility; // ZBSetApiKey method
+    ZbUtility; // ZBInitialize method
 
 var
   ApiUsage: TApiUsage;
 begin
     try
-      ZBSetApiKey('YOUR__API__KEY');
+      ZBInitialize('YOUR__API__KEY');
       ApiUsage := ZbGetApiUsage;
 
       WriteLn('Total API calls: ', ApiUsage.Total);

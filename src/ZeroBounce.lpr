@@ -29,7 +29,7 @@ exports
     ZbAiScoringResultDelete,
 
     // auxiliary
-    ZBSetApiKey,
+    ZBInitialize,
     TApiUsage,
     TZbValidationResult,
     TZbBatchError,

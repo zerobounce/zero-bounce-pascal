@@ -14,6 +14,7 @@ type
    TTestGeneric= class(TBaseTestCase)
    protected
       procedure AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
+      procedure AssertDomainSearchValidStatusPayload(Response: TZbDomainSearchResponse);
    published
       procedure TestCredits;
       procedure TestApiUsageParse;
@@ -24,8 +25,8 @@ type
       procedure TestActivityDataFound;
       procedure TestFindMailInvalidStatusPayload;
       procedure TestFindMailValidStatusPayload;
-      procedure TestFindMailOverload;
-      procedure TestDomainSearchMethod;
+      procedure TestDomainSearchInvalidStatusPayload;
+      procedure TestDomainSearchValidStatusPayload;
    end;
 
 
@@ -105,8 +106,12 @@ end;
 
 procedure TTestGeneric.AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
 begin
-   AssertEquals('invalid Status value', Response.Status, 'valid');
    AssertEquals('invalid Email value', Response.Email, 'john.doe@example.com');
+   AssertEquals('invalid Domain value', Response.Domain, 'example.com');
+end;
+
+procedure TTestGeneric.AssertDomainSearchValidStatusPayload(Response: TZbDomainSearchResponse);
+begin
    AssertEquals('invalid Domain value', Response.Domain, 'example.com');
    AssertTrue(
       'empty list of domain formats expected',
@@ -129,15 +134,10 @@ var
    Response: TZbFindEmailResponse;
 begin
    ZBMockResponse(200, MOCK_FIND_MAIL_STATUS_INVALID);
-   Response := ZbFindEmail('example.com', 'John', '', 'Doe');
+   Response := ZbFindEmailByDomain('example.com', 'John', '', 'Doe');
 
-   AssertEquals('invalid Status value', Response.Status, 'invalid');
    AssertEquals('invalid Email value', Response.Email, '');
    AssertEquals('invalid Domain value', Response.Domain, 'example.com');
-   AssertTrue(
-      'empty list of domain formats expected',
-      Length(response.OtherDomainFormats) = 0
-   );
 
 end;
 
@@ -146,29 +146,33 @@ var
    Response: TZbFindEmailResponse;
 begin
    ZBMockResponse(200, MOCK_FIND_MAIL_STATUS_VALID);
-   Response := ZbFindEmail('example.com', 'John', '', 'Doe');
+   Response := ZbFindEmailByDomain('example.com', 'John', '', 'Doe');
    AssertFindMailValidStatusPayload(Response);
 end;
 
-
-procedure TTestGeneric.TestFindMailOverload;
+procedure TTestGeneric.TestDomainSearchInvalidStatusPayload;
 var
-   Response: TZbFindEmailResponse;
+   Response: TZbDomainSearchResponse;
 begin
-   ZBMockResponse(200, MOCK_FIND_MAIL_STATUS_VALID);
-   Response := ZbFindEmail('example.com', 'John', 'Doe');
-   AssertFindMailValidStatusPayload(Response);
+   ZBMockResponse(200, MOCK_DOMAIN_SEARCH_STATUS_INVALID);
+   Response := ZbDomainSearchByDomain('example.com', 'John', '', 'Doe');
+
+   AssertEquals('invalid Domain value', Response.Domain, 'example.com');
+   AssertTrue(
+      'empty list of domain formats expected',
+      Length(response.OtherDomainFormats) = 0
+   );
+
 end;
 
-procedure TTestGeneric.TestDomainSearchMethod;
+procedure TTestGeneric.TestDomainSearchValidStatusPayload;
 var
-   Response: TZbFindEmailResponse;
+   Response: TZbDomainSearchResponse;
 begin
-   ZBMockResponse(200, MOCK_FIND_MAIL_STATUS_VALID);
-   Response := ZbDomainSearch('example.com');
-   AssertFindMailValidStatusPayload(Response);
+   ZBMockResponse(200, MOCK_DOMAIN_SEARCH_STATUS_VALID);
+   Response := ZbDomainSearchByDomain('example.com', 'John', '', 'Doe');
+   AssertDomainSearchValidStatusPayload(Response);
 end;
-
 
 
 initialization

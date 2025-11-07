@@ -4,14 +4,14 @@ uses
     SysUtils,
     ZbValidation, // ZbValidateEmail method
     ZbStructures, // TZbValidationResult record
-    ZbUtility; // ZBSetApiKey method
+    ZbUtility; // ZBInitialize method
 
 
 var
     response: TZbValidationResult;
 begin
     try
-        ZBSetApiKey('YOUR__API__KEY');
+        ZBInitialize('YOUR__API__KEY');
         response := ZbValidateEmail('possible_trap@example.com', '99.110.204.1');
 
         WriteLn('Validation status: ', response.Status);

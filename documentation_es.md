@@ -3,12 +3,16 @@
 Los métodos implementados en esta biblioteca pueden generar `ZbException`.
 
 - __ZbUtility__ - contiene métodos de utilidad
-    - `ZbSetApiKey` - establece la clave de API que se utilizará en todos los métodos del SDK
+    - `ZBInitialize` - establece la clave de API (y URL de la API) que se utilizará en todos los métodos del SDK
     - `ZbException` - excepción que contiene datos sobre el contexto de la respuesta
 - __ZbGenerics__ - contiene métodos de propósito general
     - `ZbGetCredits` (devuelve un entero) - obtiene los créditos de la cuenta
     - `ZbGetApiUsage` (devuelve `TApiUsage`) - obtiene el uso de la API de la cuenta (general o específico)
     - `ZbActivityData` (devuelve un entero) - obtiene la cantidad de días que ha estado activo un buzón de correo electrónico
+    - `ZbFindEmailByDomain` (returns `TZbFindEmailResponse`) - identifica y valida la dirección de correo electrónico principal de una persona a través del dominio.
+    - `ZbFindEmailByCompanyName` (returns `TZbFindEmailResponse`) - identifica y valida la dirección de correo electrónico principal de una persona a través del nombre de la empresa.
+    - `ZbDomainSearchByDomain` (returns `TZbDomainSearchResponse`) - detecta posibles patrones de direcciones de correo electrónico utilizados por un dominio
+    - `ZbDomainSearchByCompanyName` (returns `TZbDomainSearchResponse`) - detecta posibles patrones de direcciones de correo electrónico utilizados por una empresa
 - __ZbValidation__ - obtiene información de validación sobre correos electrónicos
     - `ZbValidateEmail` (devuelve `TZbValidationResult`) - valida un correo electrónico
     - `ZbBatchValidateEmails` (devuelve `TZBBatchValidation`) - valida una lista de correos electrónicos

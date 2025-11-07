@@ -28,7 +28,7 @@ var
     ProcessingResult: TZBBulkResponse;
     WaitAmount: Integer;
 begin
-    ZbSetApiKey('YOUR__API__KEY');
+    ZBInitialize('YOUR__API__KEY');
 
     SubmitParam.EmailAddressColumn := 1;
     SubmitParam.IpAddressColumn := 2;

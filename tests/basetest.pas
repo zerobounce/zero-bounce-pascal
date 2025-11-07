@@ -25,7 +25,7 @@ implementation
 
 procedure TBaseTestCase.SetUp;
 begin
-   ZBSetApiKey(MOCK_API_KEY);
+   ZBInitialize(MOCK_API_KEY);
 end;
 
 procedure TBaseTestCase.TearDown;

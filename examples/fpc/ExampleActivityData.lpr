@@ -3,7 +3,7 @@ program ExampleActivityData;
 uses
     SysUtils,
     ZbGeneric, // ZbActivityData method
-    ZbUtility; // ZBSetApiKey method
+    ZbUtility; // ZBInitialize method
 
 
 const
@@ -13,7 +13,7 @@ var
    Amount: Integer;
 begin
     try
-        ZBSetApiKey('YOUR__API__KEY');
+        ZBInitialize('YOUR__API__KEY');
 
         Amount := ZbActivityData(VALID_EMAIL);
         WriteLn('Activity data of the valid email: ', Amount);
