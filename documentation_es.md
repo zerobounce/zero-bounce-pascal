@@ -4,6 +4,10 @@ Los métodos implementados en esta biblioteca pueden generar `ZbException`.
 
 - __ZbUtility__ - contiene métodos de utilidad
     - `ZBInitialize` - establece la clave de API (y URL de la API) que se utilizará en todos los métodos del SDK
+        ```
+            // ApiURL can be ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU
+            ZBInitialize('YOUR__API__KEY', ZbApiURLDefault)
+        ```
     - `ZbException` - excepción que contiene datos sobre el contexto de la respuesta
 - __ZbGenerics__ - contiene métodos de propósito general
     - `ZbGetCredits` (devuelve un entero) - obtiene los créditos de la cuenta

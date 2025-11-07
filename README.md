@@ -12,6 +12,10 @@ The methods implemented in this library can raise `ZbException`.
 
 - __ZbUtility__ - contains utility methods
     - `ZBInitialize` - set the API key (and API base URL) to be used within the all SDK's methods
+        ```
+            // ApiURL can be ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU
+            ZBInitialize('YOUR__API__KEY', ZbApiURLDefault)
+        ```
     - `ZbException` - exception containing data about the response context
 - __ZbGeneric__ - contains general purpose methods
     - `ZbGetCredits` (returns integer) - fetch account's credits
