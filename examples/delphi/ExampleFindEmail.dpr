@@ -12,22 +12,14 @@ uses
 
 var
    Response: TZbFindEmailResponse;
-   IIndex: Integer;
 begin
     try
-        ZBSetApiKey('YOUR__API__KEY');
-        Response := ZbFindEmail('example.com', 'John', 'Doe');
-        WriteLn('Status: ', Response.Status);
+        ZBInitialize('YOUR__API__KEY');
+        Response := ZbFindEmailByDomain('example.com', 'John', 'Doe');
 
         // more info
         if Length(Response.Email) > 0 then
           WriteLn('Recommended email: ', Response.Email);
-        if Length(Response.OtherDomainFormats) > 0 then
-          WriteLn('Domain formats:');
-        for IIndex := 0 to Length(Response.OtherDomainFormats) - 1 do
-        begin
-          WriteLn(Response.OtherDomainFormats[IIndex].Format);
-        end;
 
     except on e: Exception do
         begin

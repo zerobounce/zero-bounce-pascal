@@ -86,7 +86,7 @@ var
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
-    ZBSetApiKey(MOCK_API_KEY);
+    ZBInitialize(MOCK_API_KEY);
 
     JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps2));
 
@@ -123,7 +123,7 @@ var
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
-    ZBSetApiKey(MOCK_API_KEY);
+    ZBInitialize(MOCK_API_KEY);
     JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps1));
 
     AssertEquals('api_key', JsonObj.GetString('api_key'), MOCK_API_KEY);
@@ -150,7 +150,7 @@ var
     JArray: TJSONArray;
     IsValid: Boolean;
 begin
-    ZBSetApiKey(MOCK_API_KEY);
+    ZBInitialize(MOCK_API_KEY);
     JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps0));
 
     AssertEquals('api_key', JsonObj.GetString('api_key'), MOCK_API_KEY);

@@ -4,7 +4,7 @@ uses
     SysUtils,
     ZbValidation, // ZbBatchValidateEmails method, TZbEmailAndIp record
     ZbStructures, // TZbValidationResult record
-    ZbUtility; // ZBSetApiKey method
+    ZbUtility; // ZBInitialize method
 
 const
    param: array of TZbEmailAndIp = (
@@ -16,7 +16,7 @@ var
     Validation: TZbValidationResult;
 begin
     try
-        ZBSetApiKey('YOUR__API__KEY');
+        ZBInitialize('YOUR__API__KEY');
 
         response := ZbBatchValidateEmails(param);
         for Validation in response.EmailBatch do

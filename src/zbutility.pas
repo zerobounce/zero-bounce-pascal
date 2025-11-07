@@ -32,9 +32,10 @@ type
         procedure MarkJsonError;
     end;
 
+    ZbApiURL = (ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU);
+
 const
     JSON_CONTENT_TYPE = 'application/json';
-    BASE_URI = 'https://api.zerobounce.net/v2';
     BULK_URI = 'https://bulkapi.zerobounce.net/v2';
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
@@ -53,10 +54,19 @@ const
     cDefaultMock: TZbRequestResponse = ();
 
 var
+    ZbApiURLValue: array[ZbApiURL] of string = (
+        'https://api.zerobounce.net/v2',
+        'https://api-us.zerobounce.net/v2',
+        'https://api-eu.zerobounce.net/v2'
+    );
+    ZbApiBaseURL: string = 'https://api.zerobounce.net/v2';
     ZbApiKey: string = '';
     ZbResponseMock: TZbRequestResponse = ();
 
-    procedure ZBSetApiKey ( ApiKey : string );
+    function ZBApiURLToString(url: ZbApiURL): string;
+    procedure ZBSetApiKey ( ApiKey : string );  deprecated 'Use ZBInitialize procedures';
+    procedure ZBInitialize(ApiKey: string); overload;
+    procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     function EncodeParam(param: String): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
@@ -90,9 +100,26 @@ implementation
          Self.Message := 'Json Error: ' + Self.Message;
 	end;
 
+    function ZBApiURLToString(url: ZbApiURL): string;
+    begin
+        ZBApiURLToString := ZbApiURLValue[url];
+    end;
+
     procedure ZBSetApiKey ( ApiKey : string );
     begin
         ZbApiKey := ApiKey;
+    end;
+
+    procedure ZBInitialize(ApiKey: string);
+    begin
+        ZbApiKey := ApiKey;
+        ZbApiBaseURL := ZBApiURLToString(ZbApiURLDefault);
+    end;
+
+    procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
+    begin
+        ZbApiKey := ApiKey;
+        ZbApiBaseURL := ZBApiURLToString(ApiBaseURL);
     end;
 
     function EncodeParam(param: String): String;

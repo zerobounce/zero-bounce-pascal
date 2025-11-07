@@ -11,14 +11,20 @@ In order to run this library, the zero-bounce API which requires an API key. Che
 The methods implemented in this library can raise `ZbException`.
 
 - __ZbUtility__ - contains utility methods
-    - `ZbSetApiKey` - set the API key to be used within the all SDK's methods
+    - `ZBInitialize` - set the API key (and API base URL) to be used within the all SDK's methods
+        ```
+            // ApiURL can be ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU
+            ZBInitialize('YOUR__API__KEY', ZbApiURLDefault)
+        ```
     - `ZbException` - exception containing data about the response context
 - __ZbGeneric__ - contains general purpose methods
     - `ZbGetCredits` (returns integer) - fetch account's credits
     - `ZbGetApiUsage` (returns `TApiUsage`) - fetch account's (overall or specific) API usage
     - `ZbActivityData` (returns integer) - fetch the amount of days an email inbox has been active
-    - `ZbFindEmail` (returns `ZbFindEmail`) - identifies and validates a person’s primary email address
-    - `ZbDomainSearch` (returns `ZbFindEmail`) - detects possible email address patterns used by a domain/company
+    - `ZbFindEmailByDomain` (returns `TZbFindEmailResponse`) - identifies and validates a person’s primary email address via domain
+    - `ZbFindEmailByCompanyName` (returns `TZbFindEmailResponse`) - identifies and validates a person’s primary email address via company name
+    - `ZbDomainSearchByDomain` (returns `TZbDomainSearchResponse`) - detects possible email address patterns used by a domain
+    - `ZbDomainSearchByCompanyName` (returns `TZbDomainSearchResponse`) - detects possible email address patterns used by a company
 - __ZbValidation__ - fetch validation information about emails
     - `ZbValidateEmail` (returns `TZbValidationResult`) - validate one email
     - `ZbBatchValidateEmails` (retrns `TZBBatchValidation`) - validate a list of emails

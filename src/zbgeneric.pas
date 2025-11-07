@@ -12,9 +12,17 @@ function ZbGetCredits : Integer;
 function ZbGetApiUsage : TApiUsage; overload;
 function ZbGetApiUsage(StartDate, EndDate: TDate) : TApiUsage; overload;
 function ZbActivityData(Email: String): Integer;
-function ZbFindEmail(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse; overload;
-function ZbFindEmail(Domain, FirstName, LastName: String) : TZbFindEmailResponse; overload;
-function ZbDomainSearch(Domain: String) : TZbFindEmailResponse; overload;
+function ZbFindEmailByDomain(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbFindEmailByDomain(Domain, FirstName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbFindEmailByDomain(Domain, FirstName: String) : TZbFindEmailResponse; overload; 
+function ZbFindEmailByCompanyName(CompanyName, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbFindEmailByCompanyName(CompanyName, FirstName, LastName: String) : TZbFindEmailResponse; overload;
+function ZbFindEmailByCompanyName(CompanyName, FirstName: String) : TZbFindEmailResponse; overload; 
+function ZbDomainSearchByDomain(Domain: String) : TZbDomainSearchResponse;
+function ZbDomainSearchByCompanyName(CompanyName: String) : TZbDomainSearchResponse;
+function ZbFindEmail(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse; overload; deprecated 'Use ZbFindEmailBy... methods for Email Finder API, or ZbDomainSearchBy... methods for Domain Search API';
+function ZbFindEmail(Domain, FirstName, LastName: String) : TZbFindEmailResponse; overload; deprecated 'Use ZbFindEmailBy... methods for Email Finder API, or ZbDomainSearchBy... methods for Domain Search API';
+function ZbDomainSearch(Domain: String) : TZbFindEmailResponse; overload; deprecated 'Use ZbFindEmailBy... methods for Email Finder API, or ZbDomainSearchBy... methods for Domain Search API';
 
 procedure Register;
 
@@ -27,7 +35,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
@@ -50,7 +58,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_API_USAGE, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_API_USAGE, '?api_key=', ZbApiKey);
         DateAuxString := Format(
             '%d-%d-%d',
             [
@@ -98,7 +106,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_ACTIVITY_DATA);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
@@ -120,13 +128,133 @@ implementation
 		end;
     end;
 
+    function ZbFindEmailByDomain(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse;
+    var
+        UrlToAccess: string;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
+        UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
+
+        if MiddleName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&middle_name=', EncodeParam(MiddleName));
+        if LastName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
+
+        response := ZBGetRequest(UrlToAccess);
+        try
+            Result := TZbFindEmailResponseFromJson(response.Payload);
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+        end;
+    end;
+
+    function ZbFindEmailByDomain(Domain, FirstName, LastName: String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmailByDomain(Domain, FirstName, '', LastName);
+    end;
+
+    function ZbFindEmailByDomain(Domain, FirstName: String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmailByDomain(Domain, FirstName, '', '');
+    end;
+
+    function ZbFindEmailByCompanyName(CompanyName, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse;
+    var
+        UrlToAccess: string;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
+        UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
+
+        if MiddleName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&middle_name=', EncodeParam(MiddleName));
+        if LastName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
+
+        response := ZBGetRequest(UrlToAccess);
+        try
+            Result := TZbFindEmailResponseFromJson(response.Payload);
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+        end;
+    end;
+
+    function ZbFindEmailByCompanyName(CompanyName, FirstName, LastName: String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmailByCompanyName(CompanyName, FirstName, '', LastName);
+    end;
+
+    function ZbFindEmailByCompanyName(CompanyName, FirstName: String) : TZbFindEmailResponse;
+    begin
+        Result := ZbFindEmailByCompanyName(CompanyName, FirstName, '', '');
+    end;
+
+    function ZbDomainSearchByDomain(Domain: String) : TZbDomainSearchResponse;
+    var
+        UrlToAccess: string;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
+
+        response := ZBGetRequest(UrlToAccess);
+        try
+            Result := TZbDomainSearchResponseFromJson(response.Payload);
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+        end;
+    end;
+
+    function ZbDomainSearchByCompanyName(CompanyName: String) : TZbDomainSearchResponse;
+    var
+        UrlToAccess: string;
+        response: TZbRequestResponse;
+        error: ZbException;
+    begin
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
+
+        response := ZBGetRequest(UrlToAccess);
+        try
+            Result := TZbDomainSearchResponseFromJson(response.Payload);
+        except on e: Exception do
+            begin
+               error := ZbException.FromResponse(e.Message, response);
+               error.MarkJsonError;
+               raise error;
+            end;
+        end;
+    end;
+
     function ZbFindEmail(Domain, FirstName, MiddleName, LastName: String) : TZbFindEmailResponse;
     var
         UrlToAccess: string;
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 

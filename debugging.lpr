@@ -11,7 +11,7 @@ var
    CreditsAmount: integer;
 
 begin
-     ZBSetApiKey('mock api key');
+     ZBInitialize('mock api key');
      CreditsAmount := ZBGetCredits;
      WriteLn('Credits: ', CreditsAmount);
 end.

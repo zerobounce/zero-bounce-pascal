@@ -61,7 +61,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_VALIDATE);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_VALIDATE);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
         UrlToAccess := Concat(UrlToAccess, '&email=', Email);
         UrlToAccess := Concat(UrlToAccess, '&ip_address=', IpAddress);
@@ -90,7 +90,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BASE_URI, ENDPOINT_BATCH_VALIDATE);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_BATCH_VALIDATE);
         JsonBody := ZbBatchRequestBodyFromEmails(Emails);
         response := ZBPostRequest(UrlToAccess, JsonBody);
 

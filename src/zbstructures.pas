@@ -60,6 +60,7 @@ type
         SubStatusMailboxQuotaExceeded: Integer;
         SubStatusForcibleDisconnect: Integer;
         SubStatusFailedSmtpConnection: Integer;
+        SubStatusAcceptAll: Integer;
         SubStatusMxForward: Integer;
         SubStatusAlternate: Integer;
         SubStatusBlocked: Integer;
@@ -133,16 +134,22 @@ type
 
     TZbFindEmailResponse = record
         Email: String;
+        EmailConfidence: String;
         Domain: String;
+        CompanyName: String;
+        DidYouMean: String;
+        FailureReason: String;
+    end;
+
+    TZbDomainSearchResponse = record
+        Domain: String;
+        CompanyName: String;
         Format: String;
-        Status: String;
-        SubStatus: String;
         Confidence: String;
         DidYouMean: String;
         FailureReason: String;
         OtherDomainFormats: array of TZbDomainFormats;
     end;
-
 
 function ZbApiUsageFromJson(JsonContent: string): TApiUsage;
 function ZbValidationFromJson(JsonObj: TZbJson): TZbValidationResult; {$IFNDEF FPC} overload; {$ENDIF}
@@ -154,6 +161,7 @@ function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
+function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
 procedure Register;
 
 implementation
@@ -308,6 +316,7 @@ implementation
         Result.SubStatusMailboxQuotaExceeded :=       JsonObj.GetInteger('sub_status_mailbox_quota_exceeded');
         Result.SubStatusForcibleDisconnect :=         JsonObj.GetInteger('sub_status_forcible_disconnect');
         Result.SubStatusFailedSmtpConnection :=       JsonObj.GetInteger('sub_status_failed_smtp_connection');
+        Result.SubStatusAcceptAll :=                  JsonObj.GetInteger('sub_status_accept_all');
         Result.SubStatusMxForward :=                  JsonObj.GetInteger('sub_status_mx_forward');
         Result.SubStatusAlternate :=                  JsonObj.GetInteger('sub_status_alternate');
         Result.SubStatusBlocked :=                    JsonObj.GetInteger('sub_status_blocked');
@@ -505,17 +514,28 @@ implementation
     function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
     var
         JsonObj: TZbJSon;
+    begin
+        JsonObj := TZbJson.Create(JsonContent);
+        Result.Email := JsonObj.GetString('email');
+        Result.EmailConfidence := JsonObj.GetString('email_confidence');
+        Result.Domain := JsonObj.GetString('domain');
+        Result.CompanyName := JsonObj.GetString('company_name');
+        Result.DidYouMean := JsonObj.GetString('did_you_mean');
+        Result.FailureReason := JsonObj.GetString('failure_reason');
+    end;
+
+    function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
+    var
+        JsonObj: TZbJSon;
         JArray: TJSONArray;
         Found: boolean;
         IIndex: Integer;
         AListItem: TJSONObject;
     begin
         JsonObj := TZbJson.Create(JsonContent);
-        Result.Email := JsonObj.GetString('email');
         Result.Domain := JsonObj.GetString('domain');
+        Result.CompanyName := JsonObj.GetString('company_name');
         Result.Format := JsonObj.GetString('format');
-        Result.Status := JsonObj.GetString('status');
-        Result.SubStatus := JsonObj.GetString('sub_status');
         Result.Confidence := JsonObj.GetString('confidence');
         Result.DidYouMean := JsonObj.GetString('did_you_mean');
         Result.FailureReason := JsonObj.GetString('failure_reason');
