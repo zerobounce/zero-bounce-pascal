@@ -155,7 +155,7 @@ var
    Response: TZbDomainSearchResponse;
 begin
    ZBMockResponse(200, MOCK_DOMAIN_SEARCH_STATUS_INVALID);
-   Response := ZbDomainSearchByDomain('example.com', 'John', '', 'Doe');
+   Response := ZbDomainSearchByDomain('example.com');
 
    AssertEquals('invalid Domain value', Response.Domain, 'example.com');
    AssertTrue(
@@ -170,7 +170,7 @@ var
    Response: TZbDomainSearchResponse;
 begin
    ZBMockResponse(200, MOCK_DOMAIN_SEARCH_STATUS_VALID);
-   Response := ZbDomainSearchByDomain('example.com', 'John', '', 'Doe');
+   Response := ZbDomainSearchByDomain('example.com');
    AssertDomainSearchValidStatusPayload(Response);
 end;
 

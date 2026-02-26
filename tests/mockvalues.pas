@@ -39,6 +39,8 @@ const
         '"sub_status_alternate": 1,' +
         '"sub_status_blocked": 0,' +
         '"sub_status_allowed": 0,' +
+        '"sub_status_gold": 0,' +
+        '"sub_status_role_based_accept_all": 0,' +
         '"start_date": "4/1/2023",' +
         '"end_date": "4/20/2023"' +
     '}';

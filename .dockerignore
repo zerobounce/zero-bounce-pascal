@@ -1,0 +1,8 @@
+.git
+.gitignore
+*.md
+documentation*.md
+examples
+debugging.*
+lib
+*.fpcunit.ini

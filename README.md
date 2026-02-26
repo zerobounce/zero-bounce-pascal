@@ -84,3 +84,19 @@ To run ZeroBounce SDK with any other FPC project:
 - pick "ZeroBounce" from the list
 - it should now appear in "Required Packages"
 - you can now import project's units
+
+## Testing
+
+Unit tests (FPCUnit) can be run via Docker or locally.
+
+**Docker:** from the **parent repository root** (where `docker-compose.yml` lives):
+```bash
+docker compose build pascal
+docker compose run --rm pascal
+```
+
+**Local (console):** with FPC and fp-units-fcl installed: `fpc -Fu./src -Fu./tests -Mobjfpc -O2 tests/unit_tests_console.lpr -FE.` then `./unit_tests_console --all`.
+
+**Local (GUI):** open `tests/unit_tests.lpr` in Lazarus and run (Run → Run).
+
+See the repo-wide [TESTING.md](../TESTING.md) for all SDK test commands.
