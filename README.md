@@ -50,6 +50,8 @@ In order to run this package, one must install [Delphi IDE](https://www.embarcad
 
 Open Delphi IDE, File > Open, browse for `./packages/ZeroBounce.dpk` (or `./packages/zb.groupproj`), click "Open package".
 
+**Minimal Indy example (no package):** For a self-contained single-email validation example using Indy (IdHTTP, IdSSLOpenSSL), see **`examples/delphi-api-v2/`**. Build `ValidateEmailExample.dpr` there; no SDK package install required.
+
 In order to run example snippets or your own project using the zero-bounce package, first install the package into Delphi:
 - open package (described above)
 - locate projects window (or CTRL+ALT+F11)
