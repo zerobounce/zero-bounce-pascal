@@ -105,4 +105,4 @@ See the repo-wide [TESTING.md](../TESTING.md) for all SDK test commands.
 
 ## Publish
 
-See the [sdk-docs (Lazarus OPM)](../sdk-docs/lazarus-opm/) guide in the SDKs repo for forum submission and release steps.
+No package registry. Use the Pascal SDK from this repo (clone or add as submodule).
