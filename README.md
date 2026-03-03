@@ -102,3 +102,7 @@ docker compose run --rm pascal
 **Local (GUI):** open `tests/unit_tests.lpr` in Lazarus and run (Run → Run).
 
 See the repo-wide [TESTING.md](../TESTING.md) for all SDK test commands.
+
+## Publish
+
+See the [sdk-docs (Lazarus OPM)](../sdk-docs/lazarus-opm/) guide in the SDKs repo for forum submission and release steps.
