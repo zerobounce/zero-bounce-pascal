@@ -1,0 +1,28 @@
+# Build and run FPCUnit console tests on every PR (FPC from apt).
+name: SDK CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Free Pascal and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fpc fp-units-fcl fp-units-base libssl-dev
+
+      - name: Build test runner
+        run: |
+          fpc -Fu./src -Fu./tests -Mobjfpc -O2 -gl -viwn \
+            tests/unit_tests_console.lpr -FE.
+
+      - name: Run tests
+        run: ./unit_tests_console --all
