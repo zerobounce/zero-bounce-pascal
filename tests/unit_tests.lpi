@@ -64,6 +64,11 @@
         <UnitName Value="TestBulk"/>
       </Unit>
       <Unit>
+        <Filename Value="testutility.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestUtility"/>
+      </Unit>
+      <Unit>
         <Filename Value="basetest.pas"/>
         <IsPartOfProject Value="True"/>
         <UnitName Value="BaseTest"/>

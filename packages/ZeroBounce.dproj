@@ -1,4 +1,4 @@
-﻿<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
     <PropertyGroup>
         <ProjectGuid>{FF53B522-0DE7-4E48-852B-B7E8E231D39A}</ProjectGuid>
         <MainSource>ZeroBounce.dpk</MainSource>
@@ -97,7 +97,7 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <DCC_Description>Delphi wrapper for the ZeroBounce API v2.</DCC_Description>
-        <DllVersion>0.1.0</DllVersion>
+        <DllVersion>1.1.0</DllVersion>
         <DllSuffix>280</DllSuffix>
     </PropertyGroup>
     <ItemGroup>

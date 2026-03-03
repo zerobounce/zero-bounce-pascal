@@ -51,7 +51,9 @@ const
     ENDPOINT_SCORING_RESULT = '/scoring/getfile';
     ENDPOINT_SCORING_DELETE = '/scoring/deletefile';
     ENDPOINT_EMAIL_FINDER = '/guessformat';
-    cDefaultMock: TZbRequestResponse = ();
+    cDefaultMock: TZbRequestResponse = (
+        StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
+    );
 
 var
     ZbApiURLValue: array[ZbApiURL] of string = (
@@ -61,7 +63,9 @@ var
     );
     ZbApiBaseURL: string = 'https://api.zerobounce.net/v2';
     ZbApiKey: string = '';
-    ZbResponseMock: TZbRequestResponse = ();
+    ZbResponseMock: TZbRequestResponse = (
+        StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
+    );
 
     function ZBApiURLToString(url: ZbApiURL): string;
     procedure ZBSetApiKey ( ApiKey : string );  deprecated 'Use ZBInitialize procedures';

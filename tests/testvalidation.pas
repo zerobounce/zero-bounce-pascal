@@ -40,8 +40,8 @@ implementation
 
 procedure TTestValidation.TestEmailValidationEndpoint;
 begin
-    ZBMockResponse(200, BATCH_VALIDATE_OK);
-    ZbBatchValidateEmails(EmailsAndIps2);
+    ZBMockResponse(200, VALDATION_RESPONSE_VALID);
+    ZbValidateEmail('valid@example.com');
     AssertEndpointCalled(ENDPOINT_VALIDATE);
 end;
 

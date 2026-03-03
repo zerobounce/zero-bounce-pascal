@@ -70,10 +70,13 @@ type
 
 
 const
-    SUBMIT_PARAM_EMPTY: TZbBulkParams = ();
+    SUBMIT_PARAM_EMPTY: TZbBulkParams = (
+        EmailAddressColumn: 0; FirstNameColumn: 0; LastNameColumn: 0;
+        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False
+    );
     SUBMIT_PARAM_PARTIAL: TZbBulkParams = (
-        EmailAddressColumn: 2;
-        FirstNameColumn: 1
+        EmailAddressColumn: 2; FirstNameColumn: 1; LastNameColumn: 0;
+        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False
     );
     SUBMIT_PARAM_FULL: TZbBulkParams = (
         EmailAddressColumn: 2;
@@ -84,12 +87,6 @@ const
         HasHeaderRow: True;
         RemoveDuplicate: True
     );
-
-// TODO: test:
-// GenericFileSubmit
-// GenericFileStatusCheck
-// GenericResultFetch
-// GenericResultDelete
 
 implementation
 
@@ -106,7 +103,7 @@ begin
         for Index := 0 to FormData.Count -1 do
         begin
             FormData.GetNameValue(Index, Key, Data);
-            Result.InsertKeyData(Index, Key, Data);
+            Result.Add(Key, Data);
         end;
     finally
         FormData.Free;
