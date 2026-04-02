@@ -37,6 +37,10 @@ type
 const
     JSON_CONTENT_TYPE = 'application/json';
     BULK_URI = 'https://bulkapi.zerobounce.net/v2';
+    { Bulk getfile query parameter download_type (validation and scoring). }
+    ZB_DOWNLOAD_TYPE_PHASE_1 = 'phase_1';
+    ZB_DOWNLOAD_TYPE_PHASE_2 = 'phase_2';
+    ZB_DOWNLOAD_TYPE_COMBINED = 'combined';
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
     ENDPOINT_VALIDATE = '/validate';

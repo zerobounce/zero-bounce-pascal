@@ -26,9 +26,11 @@ var
 begin
     ZBInitialize('YOUR__API__KEY');
 
+    FillChar(SubmitParam, SizeOf(SubmitParam), 0);
     SubmitParam.EmailAddressColumn := 1;
     SubmitParam.IpAddressColumn := 2;
     SubmitParam.HasHeaderRow := FALSE;
+    SubmitParam.AllowPhase2Specified := False;
 
     // submit csv file for bulk validation
     FileFeedback := ZbBulkValidationFileSubmit(CSV_FILE_CONTENT, SubmitParam);

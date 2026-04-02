@@ -171,6 +171,7 @@ const
         '    "file_name": "emails2.txt",' +
         '    "upload_date": "2023-04-26T17:52:23Z",' +
         '    "file_status": "Processing",' +
+        '    "file_phase_2_status": "N/A",' +
         '    "complete_percentage": "100%",' +
         '    "error_reason": null,' +
         '    "return_url": "https://mock.value.com/"' +

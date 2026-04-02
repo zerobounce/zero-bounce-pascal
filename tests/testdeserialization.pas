@@ -21,6 +21,7 @@ type
         procedure TestFileFeedbackParse;
         procedure TestFileFeedbackParsePartial;
         procedure TestFileStatusParse;
+        procedure TestGetFileJsonIndicatesError;
     end;
 
 implementation
@@ -133,11 +134,19 @@ begin
 
     AssertTrue('error_reason should not have content', Length(parsed.ErrorReason) = 0);
 
+    AssertEquals('file_phase_2_status', parsed.FilePhase2Status, 'N/A');
+
     AssertEquals(
         'upload_date',
         parsed.UploadDate,
         EncodeDateTime(2023, 4, 26, 17, 52, 23, 0)
     );
+end;
+
+procedure TTestDeserialization.TestGetFileJsonIndicatesError;
+begin
+    AssertTrue(ZbGetFileJsonIndicatesError('{ "success": false, "message": "x" }'));
+    AssertFalse(ZbGetFileJsonIndicatesError('{ "file_id": "a" }'));
 end;
 
 

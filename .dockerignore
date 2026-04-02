@@ -1,8 +1,22 @@
 .git
 .gitignore
+
+# Docs and samples not needed to compile/run unit_tests_console
 *.md
 documentation*.md
-examples
-debugging.*
-lib
+examples/
+
+# Build / IDE output
+lib/
+backup/
 *.fpcunit.ini
+debugging/
+debugging.*
+*.exe
+unit_tests_console
+
+# OS & env
+.DS_Store
+Thumbs.db
+.env
+.env.*

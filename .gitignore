@@ -61,4 +61,9 @@ examples/delphi/*
 !examples/delphi/*.groupproj
 
 .DS_Store
+Thumbs.db
+
+# Secrets (keep .env.example if you add one for docs)
 .env
+.env.*
+!.env.example

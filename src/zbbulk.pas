@@ -22,25 +22,37 @@ type
         IpAddressColumn: Integer;
         HasHeaderRow: Boolean;
         RemoveDuplicate: Boolean;
+        { When AllowPhase2Specified, sends allow_phase_2 (validation bulk sendfile only). }
+        AllowPhase2Specified: Boolean;
+        AllowPhase2: Boolean;
     end;
 
-function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
+    { Optional query parameters for bulk getfile (validation and scoring). }
+    TZbGetFileOptions = record
+        DownloadType: String;
+        ActivityDataSpecified: Boolean;
+        ActivityData: Boolean;
+    end;
+
+    PTZbGetFileOptions = ^TZbGetFileOptions;
+
+function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams; const Endpoint: String): TStrings;
 
 function ZbBulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 function ZbBulkValidationFileStatusCheck(FileId: String): TZBFileStatus;
-function ZbBulkValidationResultFetch(FileId: String): TZBBulkResponse;
+function ZbBulkValidationResultFetch(FileId: String; Options: PTZbGetFileOptions = nil): TZBBulkResponse;
 function ZbBulkValidationResultDelete(FileId: String): TZBFileFeedback;
 
 function ZbAiScoringFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 function ZbAiScoringFileStatusCheck(FileId: String): TZBFileStatus;
-function ZbAiScoringResultFetch(FileId: String): TZBBulkResponse;
+function ZbAiScoringResultFetch(FileId: String; Options: PTZbGetFileOptions = nil): TZBBulkResponse;
 function ZbAiScoringResultDelete(FileId: String): TZBFileFeedback;
 
 procedure Register;
 
 implementation
 
-    function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams): TStrings;
+    function ZbFromDataFromFileSubmitRecord(SubmitParams: TZbBulkParams; const Endpoint: String): TStrings;
 
         function StrBool(Value: Boolean): String;
         begin
@@ -66,6 +78,9 @@ implementation
 
         Result.AddPair('has_header_row', StrBool(SubmitParams.HasHeaderRow));
         Result.AddPair('remove_duplicate', StrBool(SubmitParams.RemoveDuplicate));
+
+        if (Endpoint = ENDPOINT_FILE_SEND) and SubmitParams.AllowPhase2Specified then
+            Result.AddPair('allow_phase_2', StrBool(SubmitParams.AllowPhase2));
     end;
 
 
@@ -77,7 +92,7 @@ var
     FormData: TStrings;
 begin
     UrlToAccess := Concat(BULK_URI, endpoint);
-    FormData := ZbFromDataFromFileSubmitRecord(FileParams);
+    FormData := ZbFromDataFromFileSubmitRecord(FileParams, endpoint);
     try
         response := ZBPostRequest(UrlToAccess, FormData, FileContent);
     finally
@@ -127,14 +142,26 @@ begin
     end;
 end;
 
-function GenericResultFetch(endpoint, FileId: String): TZBBulkResponse;
+function GenericResultFetch(const endpoint, FileId: String; Scoring: Boolean;
+    const Options: TZbGetFileOptions): TZBBulkResponse;
 var
     UrlToAccess: string;
     response: TZbRequestResponse;
     error: ZbException;
+    IsJsonCT: Boolean;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
-    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
+    if Length(Options.DownloadType) > 0 then
+        UrlToAccess := Concat(UrlToAccess, '&download_type=', EncodeParam(Options.DownloadType));
+    if (not Scoring) and Options.ActivityDataSpecified then
+    begin
+        if Options.ActivityData then
+            UrlToAccess := Concat(UrlToAccess, '&activity_data=true')
+        else
+            UrlToAccess := Concat(UrlToAccess, '&activity_data=false');
+    end;
+
     response := ZBGetRequest(UrlToAccess);
 
     if response.ContentType = '' then
@@ -144,7 +171,8 @@ begin
         raise error;
     end;
 
-    if response.ContentType.Contains(JSON_CONTENT_TYPE) then
+    IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
+    if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) then
     begin
         Result.HasContent := False;
         Result.Feedback := ZbFileFeedbackFromJson(response.Payload);
@@ -178,6 +206,21 @@ begin
     end;
 end;
 
+function ResolveGetFileOptions(Options: PTZbGetFileOptions): TZbGetFileOptions;
+var
+    Empty: TZbGetFileOptions;
+begin
+    if Options <> nil then
+        Result := Options^
+    else
+    begin
+        Empty.DownloadType := '';
+        Empty.ActivityDataSpecified := False;
+        Empty.ActivityData := False;
+        Result := Empty;
+    end;
+end;
+
 // BULK EMAIL VALIDATION
 function ZbBulkValidationFileSubmit(FileContent: String; FileParams: TZbBulkParams): TZBFileFeedback;
 begin
@@ -189,9 +232,9 @@ begin
     Result := GenericFileStatusCheck(ENDPOINT_FILE_STATUS, FileId);
 end;
 
-function ZbBulkValidationResultFetch(FileId: String): TZBBulkResponse;
+function ZbBulkValidationResultFetch(FileId: String; Options: PTZbGetFileOptions): TZBBulkResponse;
 begin
-    Result := GenericResultFetch(ENDPOINT_FILE_RESULT, FileId);
+    Result := GenericResultFetch(ENDPOINT_FILE_RESULT, FileId, False, ResolveGetFileOptions(Options));
 end;
 
 function ZbBulkValidationResultDelete(FileId: String): TZBFileFeedback;
@@ -210,9 +253,9 @@ begin
     Result := GenericFileStatusCheck(ENDPOINT_SCORING_STATUS, FileId);
 end;
 
-function ZbAiScoringResultFetch(FileId: String): TZBBulkResponse;
+function ZbAiScoringResultFetch(FileId: String; Options: PTZbGetFileOptions): TZBBulkResponse;
 begin
-    Result := GenericResultFetch(ENDPOINT_SCORING_RESULT, FileId);
+    Result := GenericResultFetch(ENDPOINT_SCORING_RESULT, FileId, True, ResolveGetFileOptions(Options));
 end;
 
 function ZbAiScoringResultDelete(FileId: String): TZBFileFeedback;

@@ -24,6 +24,7 @@ type
 
         constructor Create(JsonContent: String);
         constructor CreateWrap(JObject: TJSONObject);
+        destructor Destroy; override;
         function GetValue(Key: String): TZbJSONValue;
         function GetString(Key: String): String;
         function GetInteger(Key: String): Integer;
@@ -117,6 +118,7 @@ type
         FileId: String;
         FileName: String;
         FileStatus: String;
+        FilePhase2Status: String;
         ErrorReason: String;
         ReturnUrl: String;
         UploadDate: TDateTime;
@@ -161,6 +163,8 @@ function ZbBatchErrorFromJson(JsonContent: string): TZbBatchError; {$IFNDEF FPC}
 function ZbBatchValidationFromJson(JsonContent: string): TZBBatchValidation;
 function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
+{ True when getfile body is a JSON error/status object (incl. HTTP 200), aligned with other ZB SDKs. }
+function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
@@ -185,6 +189,13 @@ implementation
         inherited Create;
         FJSONObject := JObject;
         FCreated := False;
+    end;
+
+    destructor TZbJson.Destroy;
+    begin
+        if FCreated and (FJSONObject <> nil) then
+            FJSONObject.Free;
+        inherited Destroy;
     end;
 
     class function TZbJson.Parse(JsonContent: String): TJSONObject;
@@ -472,16 +483,95 @@ implementation
         JArray.Free;
     end;
 
+    function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
+    var
+        J: TZbJson;
+        V: TZbJSONValue;
+        Trimmed: String;
+    begin
+        Result := False;
+        Trimmed := Trim(JsonContent);
+        if (Length(Trimmed) < 1) or (Trimmed[1] <> '{') then
+            Exit;
+        try
+            J := TZbJson.Create(JsonContent);
+        except
+            Exit;
+        end;
+        try
+            V := J.GetValue('success');
+            if V <> nil then
+            begin
+                {$IFDEF FPC}
+                case V.JSONType of
+                    jtBoolean:
+                        if not V.AsBoolean then
+                        begin
+                            Result := True;
+                            Exit;
+                        end;
+                    jtString:
+                        if SameText(Trim(V.AsString), 'False') or SameText(Trim(V.AsString), 'false') then
+                        begin
+                            Result := True;
+                            Exit;
+                        end;
+                end;
+                {$ELSE}
+                if V is TJSONBool then
+                begin
+                    if not TJSONBool(V).AsBoolean then
+                    begin
+                        Result := True;
+                        Exit;
+                    end;
+                end
+                else if V is TJSONString then
+                begin
+                    if SameText(Trim(TJSONString(V).Value), 'False') or
+                        SameText(Trim(TJSONString(V).Value), 'false') then
+                    begin
+                        Result := True;
+                        Exit;
+                    end;
+                end;
+                {$ENDIF}
+            end;
+            if Length(Trim(J.GetString('message'))) > 0 then
+            begin
+                Result := True;
+                Exit;
+            end;
+            if Length(Trim(J.GetString('error'))) > 0 then
+            begin
+                Result := True;
+                Exit;
+            end;
+            if Length(Trim(J.GetString('error_message'))) > 0 then
+            begin
+                Result := True;
+                Exit;
+            end;
+            if J.GetValue('success') <> nil then
+                Result := True;
+        finally
+            J.Free;
+        end;
+    end;
+
     function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
     var
         JsonObj: TZbJSon;
     begin
         JsonObj := TZbJSon.Create(JsonContent);
-
-        Result.Success := JsonObj.GetBoolean('success');
-        Result.Message := JsonObj.GetString('message');
-        Result.FileName := JsonObj.GetString('file_name');
-        Result.FileId := JsonObj.GetString('file_id');
+        try
+            Result.Success := JsonObj.GetBoolean('success');
+            Result.Message := JsonObj.GetString('message');
+            Result.FileName := JsonObj.GetString('file_name');
+            Result.FileId := JsonObj.GetString('file_id');
+        finally
+            JsonObj.Free;
+        end;
     end;
 
     function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
@@ -490,23 +580,27 @@ implementation
         PercentageAuxArray: TStringDynArray;
     begin
         JsonObj := TZbJSon.Create(JsonContent);
+        try
+            Result.Success := JsonObj.GetBoolean('success');
+            Result.FileId := JsonObj.GetString('file_id');
+            Result.FileName := JsonObj.GetString('file_name');
+            Result.FileStatus := JsonObj.GetString('file_status');
+            Result.FilePhase2Status := JsonObj.GetString('file_phase_2_status');
+            Result.ErrorReason := JsonObj.GetString('error_reason');
+            Result.ReturnUrl := JsonObj.GetString('return_url');
+            Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
 
-        Result.Success := JsonObj.GetBoolean('success');
-        Result.FileId := JsonObj.GetString('file_id');
-        Result.FileName := JsonObj.GetString('file_name');
-        Result.FileStatus := JsonObj.GetString('file_status');
-        Result.ErrorReason := JsonObj.GetString('error_reason');
-        Result.ReturnUrl := JsonObj.GetString('return_url');
-        Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
-
-        // Percentage comes as a string; will parse it to float
-        PercentageAuxArray := SplitString(
-            JsonObj.GetString('complete_percentage'), '%'
-        );
-        if Length(PercentageAuxArray) > 0 then
-            Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
-        else
-            Result.CompletePercentage := -1;
+            // Percentage comes as a string; will parse it to float
+            PercentageAuxArray := SplitString(
+                JsonObj.GetString('complete_percentage'), '%'
+            );
+            if Length(PercentageAuxArray) > 0 then
+                Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
+            else
+                Result.CompletePercentage := -1;
+        finally
+            JsonObj.Free;
+        end;
     end;
 
     function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;

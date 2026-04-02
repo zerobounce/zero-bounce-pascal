@@ -26,7 +26,9 @@ type
             GenderColumn: 4;
             IpAddressColumn: 5;
             HasHeaderRow: True;
-            RemoveDuplicate: True
+            RemoveDuplicate: True;
+            AllowPhase2Specified: False;
+            AllowPhase2: False
         );
 
     protected
@@ -41,6 +43,8 @@ type
         procedure TestSubmitParamProviderEmpty;
         procedure TestSubmitParamProviderPartial;
         procedure TestSubmitParamProviderFull;
+        procedure TestSubmitParamAllowPhase2;
+        procedure TestSubmitParamScoringOmitsAllowPhase2;
 
         { TEST GENERIC FUNCTIONALITY OF THE BULK IMPORT, VIA BULK VALIDATION }
 
@@ -52,6 +56,9 @@ type
         procedure TestFileStatusCheckOk;
         procedure TestResultFetchOkJson;
         procedure TestResultFetchOkContent;
+        procedure TestResultFetchJsonErrorNonJsonContentType;
+        procedure TestResultFetchWithQueryOptions;
+        procedure TestScoringResultFetchOmitsActivityData;
         procedure TestResultDeleteNotFound;
         procedure TestResultDeleteOk;
 
@@ -72,11 +79,13 @@ type
 const
     SUBMIT_PARAM_EMPTY: TZbBulkParams = (
         EmailAddressColumn: 0; FirstNameColumn: 0; LastNameColumn: 0;
-        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False
+        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False;
+        AllowPhase2Specified: False; AllowPhase2: False
     );
     SUBMIT_PARAM_PARTIAL: TZbBulkParams = (
         EmailAddressColumn: 2; FirstNameColumn: 1; LastNameColumn: 0;
-        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False
+        GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False;
+        AllowPhase2Specified: False; AllowPhase2: False
     );
     SUBMIT_PARAM_FULL: TZbBulkParams = (
         EmailAddressColumn: 2;
@@ -85,20 +94,21 @@ const
         GenderColumn: 4;
         IpAddressColumn: 5;
         HasHeaderRow: True;
-        RemoveDuplicate: True
+        RemoveDuplicate: True;
+        AllowPhase2Specified: False; AllowPhase2: False
     );
 
 implementation
 
 
-function FileParamsMapFromRecord(FileParams: TZbBulkParams): TStringMapping;
+function FileParamsMapFromRecord(FileParams: TZbBulkParams; const Endpoint: String): TStringMapping;
 var
     FormData: TStrings;
     Index: Integer;
     Key, Data: String;
 begin
     try
-        FormData := ZbFromDataFromFileSubmitRecord(FileParams);
+        FormData := ZbFromDataFromFileSubmitRecord(FileParams, Endpoint);
         Result := TStringMapping.Create;
         for Index := 0 to FormData.Count -1 do
         begin
@@ -108,6 +118,11 @@ begin
     finally
         FormData.Free;
     end;
+end;
+
+function FileParamsMapFromRecord(FileParams: TZbBulkParams): TStringMapping;
+begin
+    Result := FileParamsMapFromRecord(FileParams, ENDPOINT_FILE_SEND);
 end;
 
 procedure TTestBulk.ExpectKeyInParamsMap(ParamsMap: TStringMapping; Key, ExpectedData: String);
@@ -193,6 +208,38 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'ip_address_column', '5');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'true');
         ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'true');
+    finally
+        ParamsMap.Free;
+    end;
+end;
+
+procedure TTestBulk.TestSubmitParamAllowPhase2;
+var
+    P: TZbBulkParams;
+    ParamsMap: TStringMapping;
+begin
+    P := SUBMIT_PARAM_FULL;
+    P.AllowPhase2Specified := True;
+    P.AllowPhase2 := True;
+    ParamsMap := FileParamsMapFromRecord(P, ENDPOINT_FILE_SEND);
+    try
+        ExpectKeyInParamsMap(ParamsMap, 'allow_phase_2', 'true');
+    finally
+        ParamsMap.Free;
+    end;
+end;
+
+procedure TTestBulk.TestSubmitParamScoringOmitsAllowPhase2;
+var
+    P: TZbBulkParams;
+    ParamsMap: TStringMapping;
+begin
+    P := SUBMIT_PARAM_FULL;
+    P.AllowPhase2Specified := True;
+    P.AllowPhase2 := True;
+    ParamsMap := FileParamsMapFromRecord(P, ENDPOINT_SCORING_SEND);
+    try
+        NotExpectKeyInParamsMap(ParamsMap, 'allow_phase_2');
     finally
         ParamsMap.Free;
     end;
@@ -318,6 +365,43 @@ begin
 
     AssertTrue(response.HasContent);
     AssertEquals(response.Content, RESULT_CONTENT_MOCK);
+end;
+
+procedure TTestBulk.TestResultFetchJsonErrorNonJsonContentType;
+var
+    response: TZBBulkResponse;
+begin
+    ZBMockResponse(200, '{ "success": false, "message": "File not ready" }', OCTET_STREAM_TYPE);
+    response := ZbBulkValidationResultFetch(MOCK_FILE_ID);
+    AssertFalse(response.HasContent);
+    AssertFalse(response.Feedback.Success);
+    AssertTrue(Pos('not ready', response.Feedback.Message) > 0);
+end;
+
+procedure TTestBulk.TestResultFetchWithQueryOptions;
+var
+    Opt: TZbGetFileOptions;
+begin
+    Opt.DownloadType := ZB_DOWNLOAD_TYPE_COMBINED;
+    Opt.ActivityDataSpecified := True;
+    Opt.ActivityData := True;
+    ZBMockResponse(200, RESULT_CONTENT_MOCK, OCTET_STREAM_TYPE);
+    ZbBulkValidationResultFetch(MOCK_FILE_ID, @Opt);
+    AssertTrue(Pos('download_type', ZbResponseMock.UrlCalled) > 0);
+    AssertTrue(Pos('activity_data=true', ZbResponseMock.UrlCalled) > 0);
+end;
+
+procedure TTestBulk.TestScoringResultFetchOmitsActivityData;
+var
+    Opt: TZbGetFileOptions;
+begin
+    Opt.DownloadType := ZB_DOWNLOAD_TYPE_PHASE_2;
+    Opt.ActivityDataSpecified := True;
+    Opt.ActivityData := True;
+    ZBMockResponse(200, RESULT_CONTENT_MOCK, OCTET_STREAM_TYPE);
+    ZbAiScoringResultFetch(MOCK_FILE_ID, @Opt);
+    AssertTrue(Pos('download_type', ZbResponseMock.UrlCalled) > 0);
+    AssertEquals('activity_data must not appear for scoring getfile', Pos('activity_data', ZbResponseMock.UrlCalled), 0);
 end;
 
 procedure TTestBulk.TestResultDeleteNotFound;

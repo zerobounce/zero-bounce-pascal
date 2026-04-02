@@ -28,18 +28,22 @@ The methods implemented in this library can raise `ZbException`.
 - __ZbValidation__ - fetch validation information about emails
     - `ZbValidateEmail` (returns `TZbValidationResult`) - validate one email
     - `ZbBatchValidateEmails` (retrns `TZBBatchValidation`) - validate a list of emails
-- __ZbBulk__ - bulk email validation or AI scoring
+- __ZbBulk__ - bulk email validation or AI scoring (bulk base URL: `https://bulkapi.zerobounce.net/v2`; see [v2 send file](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-send-file), [v2 file status](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-file-status), [v2 get file](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-get-file))
+    - `TZbBulkParams` - column indexes and flags for file submit; set `AllowPhase2Specified` and `AllowPhase2` to send `allow_phase_2` on **validation** sendfile only (not AI scoring).
+    - `TZbGetFileOptions` / `PTZbGetFileOptions` - optional `download_type` (`DownloadType`) and validation-only `activity_data` (`ActivityDataSpecified` + `ActivityData`); pass `@Options` as the second argument to result-fetch functions, or `nil` for defaults.
+    - Constants in __ZbUtility__: `ZB_DOWNLOAD_TYPE_PHASE_1`, `ZB_DOWNLOAD_TYPE_PHASE_2`, `ZB_DOWNLOAD_TYPE_COMBINED`.
     - Bulk Email validation:
         - `ZbBulkValidationFileSubmit` (returns `TZBFileFeedback`) - submit for bulk validation a file contents, containing emails
         - `ZbBulkValidationFileStatusCheck` (returns `TZBFileStatus`) - check the status of a submitted file
-        - `ZbBulkValidationResultFetch` (returns `TZBBulkResponse`) - fetch the validation result of a submitted file
+        - `ZbBulkValidationResultFetch` (returns `TZBBulkResponse`) - fetch the validation result; optional `Options: PTZbGetFileOptions = nil`
         - `ZbBulkValidationResultDelete` (returns `TZBFileFeedback`) - delete file submitted for bulk validation
     - AI scoring:
         - `ZbAiScoringFileSubmit` (returns `TZBFileFeedback`) - submit for AI scoring a file contents, containing emails
         - `ZbAiScoringFileStatusCheck` (returns `TZBFileStatus`) - check the status of a submitted file
-        - `ZbAiScoringResultFetch` (returns `TZBBulkResponse`) - fetch the validation result of a submitted file
+        - `ZbAiScoringResultFetch` (returns `TZBBulkResponse`) - fetch the scoring result; optional `Options: PTZbGetFileOptions = nil` (`activity_data` is not sent for scoring getfile)
         - `ZbAiScoringResultDelete` (returns `TZBFileFeedback`) - delete file submitted for AI scoring
-- __ZbStructures__ - contains structures returned by the methods enumerated above
+    - For getfile, if the response body is JSON error data (including some HTTP 200 cases), `TZBBulkResponse.HasContent` is false and `Feedback` is filled; otherwise `HasContent` is true and `Content` holds the file text. Helper: `ZbGetFileJsonIndicatesError` in __ZbStructures__.
+- __ZbStructures__ - contains structures returned by the methods enumerated above (`TZbFileStatus` includes `FilePhase2Status` / `file_phase_2_status` when the API returns it)
 
 
 ## Usage
@@ -96,6 +100,8 @@ Unit tests (FPCUnit) can be run via Docker or locally.
 docker compose build pascal
 docker compose run --rm pascal
 ```
+
+The repository includes a `.dockerignore` to keep the image build context small. You can also run `docker build -t zerobounce-pascal-sdk:test .` from this directory.
 
 **Local (console):** with FPC and fp-units-fcl installed: `fpc -Fu./src -Fu./tests -Mobjfpc -O2 tests/unit_tests_console.lpr -FE.` then `./unit_tests_console --all`.
 
