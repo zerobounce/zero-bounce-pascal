@@ -111,4 +111,16 @@ See the repo-wide [TESTING.md](../TESTING.md) for all SDK test commands.
 
 ## Publish
 
-No package registry. Use the Pascal SDK from this repo (clone or add as submodule).
+There is no package registry for the Pascal SDK. Releases are published as **GitHub releases** (clone or submodule from the tagged commit).
+
+### GitHub Actions (recommended)
+
+1. Bump version in `packages/zerobounce.lpk` (`<Version Major="…" Minor="…" Build="…"/>`).
+2. Commit, tag (`v2.1.2`), and push the tag.
+3. **Actions → Publish → Run workflow** and enter the tag, or:
+
+```bash
+gh workflow run publish.yml --repo zerobounce/zero-bounce-pascal -f tag=v2.1.2
+```
+
+The workflow validates the tag against the Lazarus package version, runs FPCUnit tests, and creates a GitHub release if missing.

@@ -82,6 +82,7 @@ type
         Domain: String;
         DomainAgeDays: String;
         SmtpProvider: String;
+        CatchallDomain: boolean;
         MxRecord: String;
         MxFound: String;
         Firstname: String;
@@ -399,6 +400,7 @@ implementation
         Result.Domain :=        JsonObj.GetString('domain');
         Result.DomainAgeDays := JsonObj.GetString('domain_age_days');
         Result.SmtpProvider :=  JsonObj.GetString('smtp_provider');
+        Result.CatchallDomain := JsonObj.GetBoolean('catchall_domain');
         Result.MxRecord :=      JsonObj.GetString('mx_record');
         Result.MxFound :=       JsonObj.GetString('mx_found');
         Result.Firstname :=     JsonObj.GetString('firstname');
