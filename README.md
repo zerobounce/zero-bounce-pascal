@@ -95,8 +95,9 @@ To run ZeroBounce SDK with any other FPC project:
 
 Unit tests (FPCUnit) can be run via Docker or locally.
 
-**Docker:** from the **parent repository root** (where `docker-compose.yml` lives):
+**Docker:** from the **`sdk-docs/`** folder in the SDKs monorepo:
 ```bash
+cd sdk-docs
 docker compose build pascal
 docker compose run --rm pascal
 ```
@@ -107,20 +108,11 @@ The repository includes a `.dockerignore` to keep the image build context small.
 
 **Local (GUI):** open `tests/unit_tests.lpr` in Lazarus and run (Run → Run).
 
-See the repo-wide [TESTING.md](../TESTING.md) for all SDK test commands.
+See [TESTING.md](../sdk-docs/TESTING.md) for all SDK test commands.
 
 ## Publish
 
-There is no package registry for the Pascal SDK. Releases are published as **GitHub releases** (clone or submodule from the tagged commit).
+1. Bump version in `packages/zerobounce.lpk`, commit, tag (`vX.Y.Z`), push tag.
+2. **Actions → Publish → Run workflow** with that tag.
 
-### GitHub Actions (recommended)
-
-1. Bump version in `packages/zerobounce.lpk` (`<Version Major="…" Minor="…" Build="…"/>`).
-2. Commit, tag (`v2.1.2`), and push the tag.
-3. **Actions → Publish → Run workflow** and enter the tag, or:
-
-```bash
-gh workflow run publish.yml --repo zerobounce/zero-bounce-pascal -f tag=v2.1.2
-```
-
-The workflow validates the tag against the Lazarus package version, runs FPCUnit tests, and creates a GitHub release if missing.
+No package registry — GitHub release only. Pin the tag via clone or submodule.
