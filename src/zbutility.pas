@@ -76,6 +76,7 @@ var
     procedure ZBInitialize(ApiKey: string); overload;
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     function EncodeParam(param: String): String;
+    function RedactSecrets(const S: string): string;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
@@ -92,9 +93,9 @@ implementation
     begin
         Payload := response.Payload;
         StatusCode := response.StatusCode;
-        NewMessage := Concat(AMessage, sLineBreak, 'Url:', sLineBreak, response.UrlCalled);
+        NewMessage := Concat(AMessage, sLineBreak, 'Url:', sLineBreak, RedactSecrets(response.UrlCalled));
         NewMessage := Concat(NewMessage, sLineBreak, 'Status code: ', format('%d', [StatusCode]));
-        NewMessage := Concat(NewMessage, sLineBreak, 'Payload:', sLineBreak, Payload);
+        NewMessage := Concat(NewMessage, sLineBreak, 'Payload:', sLineBreak, RedactSecrets(Payload));
         Create(NewMessage);
     end;
 
@@ -137,6 +138,14 @@ implementation
         {$ELSE}
         Result := TURLEncoding.Create.EncodeQuery(param);
         {$ENDIF}
+    end;
+
+    function RedactSecrets(const S: string): string;
+    begin
+        if ZbApiKey <> '' then
+            Result := StringReplace(S, ZbApiKey, 'REDACTED', [rfReplaceAll])
+        else
+            Result := S;
     end;
 
     function ZBGetRequest(url: String): TZbRequestResponse;
