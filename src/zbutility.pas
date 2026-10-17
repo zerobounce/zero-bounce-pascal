@@ -7,7 +7,7 @@ interface
 uses
     Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
-    openssl, opensslsockets, fphttpclient, httpprotocol
+    openssl, opensslsockets, fphttpclient, httpprotocol, ssockets, sslsockets, dynlibs
     {$ELSE}
     System.Net.HttpClient,
     System.Net.Mime,
@@ -67,6 +67,8 @@ var
     );
     ZbApiBaseURL: string = 'https://api.zerobounce.net/v2';
     ZbApiKey: string = '';
+    { FPC only: PEM CA bundle for TLS verification. When empty, SSL_CERT_FILE, system paths, and cacert.pem beside the exe are tried. }
+    ZbCACertFile: string = '';
     ZbResponseMock: TZbRequestResponse = (
         StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
     );
@@ -86,6 +88,104 @@ var
     procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
     procedure Register;
 implementation
+
+{$IFDEF FPC}
+type
+    { fphttpclient does not verify server certificates by default; api_key in URLs would be exposed to MITM. }
+    TZbTlsVerifier = class
+        procedure GetSocketHandler(Sender: TObject; const UseSSL: Boolean; out AHandler: TSocketHandler);
+        procedure VerifyCertificate(Sender: TObject; var Allow: Boolean);
+    end;
+
+    TZbSslGetPeerCert = function(ssl: PSSL): PX509; cdecl;
+    TZbX509CheckHost = function(x: PX509; chk: PAnsiChar; chklen: PtrUInt; flags: Cardinal; peername: Pointer): Integer; cdecl;
+
+var
+    ZbTlsVerifier: TZbTlsVerifier = nil;
+
+function ZbFindCACertFile: string;
+const
+    Candidates: array[0..3] of string = (
+        '/etc/ssl/certs/ca-certificates.crt',
+        '/etc/pki/tls/certs/ca-bundle.crt',
+        '/etc/ssl/ca-bundle.pem',
+        '/etc/ssl/cert.pem'
+    );
+var
+    I: Integer;
+begin
+    Result := ZbCACertFile;
+    if Result = '' then
+        Result := GetEnvironmentVariable('SSL_CERT_FILE');
+    if Result <> '' then
+        Exit;
+    for I := Low(Candidates) to High(Candidates) do
+        if FileExists(Candidates[I]) then
+            Exit(Candidates[I]);
+    Result := ExtractFilePath(ParamStr(0)) + 'cacert.pem';
+    if not FileExists(Result) then
+        Result := '';
+end;
+
+procedure TZbTlsVerifier.GetSocketHandler(Sender: TObject; const UseSSL: Boolean; out AHandler: TSocketHandler);
+var
+    Handler: TSSLSocketHandler;
+    CAFile: string;
+begin
+    AHandler := nil;
+    if not UseSSL then
+        Exit;
+    CAFile := ZbFindCACertFile;
+    if CAFile = '' then
+        raise ZbException.Create('No CA certificate bundle found to verify the TLS connection. ' +
+            'Set ZbCACertFile or the SSL_CERT_FILE environment variable.');
+    Handler := TSSLSocketHandler.GetDefaultHandler;
+    Handler.VerifyPeerCert := True;
+    Handler.CertificateData.CertCA.FileName := CAFile;
+    Handler.OnVerifyCertificate := VerifyCertificate;
+    AHandler := Handler;
+end;
+
+procedure TZbTlsVerifier.VerifyCertificate(Sender: TObject; var Allow: Boolean);
+var
+    Handler: TOpenSSLSocketHandler;
+    GetPeer: TZbSslGetPeerCert;
+    CheckHost: TZbX509CheckHost;
+    Cert: PX509;
+    Host: AnsiString;
+begin
+    Allow := False;
+    if not (Sender is TOpenSSLSocketHandler) then
+        Exit;
+    Handler := TOpenSSLSocketHandler(Sender);
+    if (Handler.SSL = nil) or not (Handler.Socket is TInetSocket) then
+        Exit;
+    if Handler.SSL.VerifyResult <> 0 then
+        Exit;
+    GetPeer := TZbSslGetPeerCert(GetProcedureAddress(SSLLibHandle, 'SSL_get1_peer_certificate'));
+    if not Assigned(GetPeer) then
+        GetPeer := TZbSslGetPeerCert(GetProcedureAddress(SSLLibHandle, 'SSL_get_peer_certificate'));
+    CheckHost := TZbX509CheckHost(GetProcedureAddress(SSLUtilHandle, 'X509_check_host'));
+    if not Assigned(GetPeer) or not Assigned(CheckHost) then
+        Exit;
+    Cert := GetPeer(Handler.SSL.SSL);
+    if Cert = nil then
+        Exit;
+    try
+        Host := AnsiString(TInetSocket(Handler.Socket).Host);
+        Allow := CheckHost(Cert, PAnsiChar(Host), Length(Host), 0, nil) = 1;
+    finally
+        X509Free(Cert);
+    end;
+end;
+
+procedure ZbUseVerifiedTls(Client: TFPHTTPClient);
+begin
+    if ZbTlsVerifier = nil then
+        ZbTlsVerifier := TZbTlsVerifier.Create;
+    Client.OnGetSocketHandler := ZbTlsVerifier.GetSocketHandler;
+end;
+{$ENDIF}
 
     constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
     var
@@ -132,11 +232,20 @@ implementation
     end;
 
     function EncodeParam(param: String): String;
+    {$IFNDEF FPC}
+    var
+        Encoding: TURLEncoding;
+    {$ENDIF}
     begin
         {$IFDEF FPC}
         Result := HTTPEncode(param);
         {$ELSE}
-        Result := TURLEncoding.Create.EncodeQuery(param);
+        Encoding := TURLEncoding.Create;
+        try
+            Result := Encoding.EncodeQuery(param);
+        finally
+            Encoding.Free;
+        end;
         {$ENDIF}
     end;
 
@@ -171,6 +280,9 @@ implementation
             InitSSLInterface;
 
             Client := TFPHTTPClient.Create(nil);
+            ZbUseVerifiedTls(Client);
+            Client.ConnectTimeout := 30000;
+            Client.IOTimeout := 120000;
             try
                 Result.Payload := Client.Get(url);
                 Result.StatusCode := Client.ResponseStatusCode;
@@ -225,6 +337,9 @@ implementation
             InitSSLInterface;
 
             Client := TFPHTTPClient.Create(nil);
+            ZbUseVerifiedTls(Client);
+            Client.ConnectTimeout := 30000;
+            Client.IOTimeout := 120000;
 
             Client.AddHeader('Content-Type', 'application/json; charset=UTF-8');
             Client.AddHeader('Accept', 'application/json');
@@ -234,6 +349,7 @@ implementation
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
+                Client.RequestBody.Free;
                 Client.Free;
             end;
             {$ELSE}
@@ -310,7 +426,10 @@ implementation
 
             FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
-            ResponseStream := TStringStream.Create(FileContent);
+            ZbUseVerifiedTls(Client);
+            Client.ConnectTimeout := 30000;
+            Client.IOTimeout := 120000;
+            ResponseStream := TStringStream.Create('');
 
             try
                 try
@@ -384,6 +503,11 @@ implementation
     procedure Register;
     begin
     end;
+
+{$IFDEF FPC}
+finalization
+    FreeAndNil(ZbTlsVerifier);
+{$ENDIF}
 
 end.
 

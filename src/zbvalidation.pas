@@ -30,6 +30,26 @@ implementation
     begin
     end;
 
+    { Escapes a value for use inside a JSON string literal. }
+    function ZbJsonEscape(const Value: String): String;
+    var
+        I: Integer;
+        C: Char;
+    begin
+        Result := '';
+        for I := 1 to Length(Value) do
+        begin
+            C := Value[I];
+            case C of
+                '"': Result := Result + '\"';
+                '\': Result := Result + '\\';
+                #0..#31: Result := Result + '\u' + IntToHex(Ord(C), 4);
+            else
+                Result := Result + C;
+            end;
+        end;
+    end;
+
     function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
     var
         EmailAndIp: TZbEmailAndIp;
@@ -47,11 +67,11 @@ implementation
 
             BatchContent := BatchContent + format(
                 '{"email_address": "%s", "ip_address": "%s"}',
-                [EmailAndIp.Email, EmailAndIp.Ip]
+                [ZbJsonEscape(EmailAndIp.Email), ZbJsonEscape(EmailAndIp.Ip)]
             );
         end;
         Result := format(
-            '{"api_key": "%s", "email_batch": [%s]}', [ZbApiKey, BatchContent]
+            '{"api_key": "%s", "email_batch": [%s]}', [ZbJsonEscape(ZbApiKey), BatchContent]
         )
     end;
 
@@ -62,9 +82,9 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_VALIDATE);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
-        UrlToAccess := Concat(UrlToAccess, '&email=', Email);
-        UrlToAccess := Concat(UrlToAccess, '&ip_address=', IpAddress);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
+        UrlToAccess := Concat(UrlToAccess, '&ip_address=', EncodeParam(IpAddress));
         response := ZBGetRequest(UrlToAccess);
 
         try

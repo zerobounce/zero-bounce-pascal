@@ -8,8 +8,8 @@ uses
   System.SysUtils,
   System.Classes,
   System.JSON,
-  IdHTTP,
-  IdSSLOpenSSL,
+  System.Net.HttpClient,
+  System.NetEncoding,
   ZeroBounceValidate in 'ZeroBounceValidate.pas';
 
 var
@@ -19,31 +19,23 @@ var
 
 function ValidateEmail(const ApiKey, EmailAddress: string; var Status: string): Boolean;
 var
-  HTTP: TIdHTTP;
-  SSLHandler: TIdSSLIOHandlerSocketOpenSSL;
+  Client: THTTPClient;
+  Response: IHTTPResponse;
   Url, ResponseBody: string;
   JsonResponse: TJsonObject;
   StatusVal, SubStatusVal: TJSONValue;
 begin
   Result := False;
   Status := '';
-  HTTP := nil;
-  SSLHandler := nil;
   JsonResponse := nil;
+  Client := THTTPClient.Create;
   try
     try
-      SSLHandler := TIdSSLIOHandlerSocketOpenSSL.Create(nil);
-      SSLHandler.SSLOptions.Method := sslvTLSv1_2;
-      SSLHandler.SSLOptions.SSLVersions := [sslvTLSv1_2];
-
-      HTTP := TIdHTTP.Create(nil);
-      HTTP.IOHandler := SSLHandler;
-      HTTP.ReadTimeout := 15000;
-      HTTP.Request.ContentType := 'application/json';
-
-      Url := 'https://api.zerobounce.net/v2/validate?api_key=' + ApiKey +
-             '&email=' + UrlEncode(EmailAddress, False) + '&ip_address=';
-      ResponseBody := HTTP.Get(Url);
+      Url := 'https://api.zerobounce.net/v2/validate?api_key=' +
+        TNetEncoding.URL.EncodeQuery(ApiKey) +
+        '&email=' + TNetEncoding.URL.EncodeQuery(EmailAddress) + '&ip_address=';
+      Response := Client.Get(Url);
+      ResponseBody := Response.ContentAsString;
 
       JsonResponse := TJSONObject.ParseJSONValue(ResponseBody) as TJSONObject;
       if JsonResponse = nil then
@@ -68,10 +60,7 @@ begin
       end;
     end;
   finally
-    if Assigned(HTTP) then
-      HTTP.Free;
-    if Assigned(SSLHandler) then
-      SSLHandler.Free;
+    Client.Free;
   end;
 end;
 
