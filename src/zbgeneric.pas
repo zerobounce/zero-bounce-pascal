@@ -35,7 +35,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_CREDITS, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_CREDITS, '?api_key=', EncodeParam(ZbApiKey));
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
@@ -58,7 +58,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_API_USAGE, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_API_USAGE, '?api_key=', EncodeParam(ZbApiKey));
         DateAuxString := Format(
             '%d-%d-%d',
             [
@@ -107,7 +107,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_ACTIVITY_DATA);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
 
@@ -135,7 +135,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
         UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
 
@@ -173,7 +173,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
         UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
 
@@ -211,7 +211,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 
         response := ZBGetRequest(UrlToAccess);
@@ -233,7 +233,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
 
         response := ZBGetRequest(UrlToAccess);
@@ -255,7 +255,7 @@ implementation
         error: ZbException;
     begin
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
-        UrlToAccess := Concat(UrlToAccess, '?api_key=', ZbApiKey);
+        UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 
         if FirstName <> '' then
