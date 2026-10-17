@@ -72,6 +72,12 @@ type
         EndDate: TDate;
     end;
 
+    TZbScoreEmailResult = record
+        Email: String;
+        Score: Integer;
+        HasScore: Boolean;
+    end;
+
     TZbValidationResult = record
         Address: String;
         Status: String;
@@ -171,6 +177,7 @@ function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
+function TZbScoreEmailResultFromJson(JsonContent: string): TZbScoreEmailResult;
 procedure Register;
 
 implementation
@@ -663,6 +670,38 @@ implementation
                     TZbJson.CreateWrap(AListItem)
                 );
             end;
+        end;
+    end;
+
+    function TZbScoreEmailResultFromJson(JsonContent: string): TZbScoreEmailResult;
+    var
+        JsonObj: TZbJson;
+        ScoreValue: TZbJSONValue;
+    begin
+        Result.Email := '';
+        Result.Score := 0;
+        Result.HasScore := False;
+        JsonObj := TZbJson.Create(JsonContent);
+        try
+            Result.Email := JsonObj.GetString('email');
+            ScoreValue := JsonObj.GetValue('score');
+            if ScoreValue <> nil then
+            begin
+                Result.HasScore := True;
+                {$IFDEF FPC}
+                if ScoreValue.JSONType = jtNumber then
+                    Result.Score := Trunc(ScoreValue.AsFloat)
+                else
+                    Result.Score := StrToInt(ScoreValue.AsString);
+                {$ELSE}
+                if ScoreValue is TJSONNumber then
+                    Result.Score := TJSONNumber(ScoreValue).AsInt
+                else
+                    Result.Score := StrToInt(ScoreValue.Value);
+                {$ENDIF}
+            end;
+        finally
+            JsonObj.Free;
         end;
     end;
 

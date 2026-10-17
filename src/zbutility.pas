@@ -43,6 +43,7 @@ const
     ZB_DOWNLOAD_TYPE_COMBINED = 'combined';
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
+    ENDPOINT_SCORE_EMAIL = '/scoring';
     ENDPOINT_VALIDATE = '/validate';
     ENDPOINT_API_USAGE = '/getapiusage';
     ENDPOINT_BATCH_VALIDATE = '/validatebatch';
@@ -82,6 +83,8 @@ var
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
+    // performs a POST request with application/x-www-form-urlencoded body
+    function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
     // performs a POST request with a multi-part form body
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
@@ -372,6 +375,70 @@ end;
         end;
 
         // check for failure
+        if Result.StatusCode > 299 then
+        begin
+            error := ZbException.FromResponse('Request failed', Result);
+            error.MarkHttpError;
+            raise error;
+        end;
+    end;
+
+    function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
+    var
+        {$IFDEF FPC}
+        Client: TFPHTTPClient;
+        {$ELSE}
+        Client: THTTPClient;
+        BodyStream: TStream;
+        Response: IHTTPResponse;
+        {$ENDIF}
+        error: ZbException;
+    begin
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            ZbResponseMock.UrlCalled := url;
+            Result := ZbResponseMock;
+        end
+        else
+        begin
+            Result.UrlCalled := url;
+            {$IFDEF FPC}
+            InitSSLInterface;
+
+            Client := TFPHTTPClient.Create(nil);
+            ZbUseVerifiedTls(Client);
+            Client.ConnectTimeout := 30000;
+            Client.IOTimeout := 120000;
+
+            Client.AddHeader('Content-Type', 'application/x-www-form-urlencoded');
+            Client.AddHeader('Accept', 'application/json');
+            Client.RequestBody := TRawByteStringStream.Create(FormBody);
+            try
+                Result.Payload := Client.Post(url);
+                Result.StatusCode := Client.ResponseStatusCode;
+                Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
+            finally
+                Client.RequestBody.Free;
+                Client.Free;
+            end;
+            {$ELSE}
+            Client := THTTPClient.Create;
+            BodyStream := TStringStream.Create(FormBody);
+            try
+              Client.CustomHeaders['Content-Type'] := 'application/x-www-form-urlencoded';
+              Client.CustomHeaders['Accept'] := 'application/json';
+              Response := Client.Post(url, BodyStream);
+
+              Result.Payload := Response.ContentAsString();
+              Result.StatusCode := Response.StatusCode;
+              Result.ContentType := Response.HeaderValue['Content-Type'];
+            finally
+              Client.Free;
+              BodyStream.Free;
+            end;
+            {$ENDIF}
+        end;
+
         if Result.StatusCode > 299 then
         begin
             error := ZbException.FromResponse('Request failed', Result);
