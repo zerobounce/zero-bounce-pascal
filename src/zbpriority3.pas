@@ -77,6 +77,7 @@ function ZbAddFilter(const Rule, Target, Value: String): String;
 function ZbListFilters(UsePost: Boolean): String;
 function ZbDeleteFilter(const Rule, Target, Value: String): String;
 
+function ZbListS3Files(const Bucket, Search: String): String;
 function ZbValidateS3File(Options: TZbValidateS3FileOptions): TZBFileFeedback;
 function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
 function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
@@ -100,6 +101,7 @@ const
     ENDPOINT_VALIDATE_S3 = '/validateS3file';
     ENDPOINT_SCORE_S3 = '/scoreS3file';
     ENDPOINT_EXPORT_S3 = '/exportS3file';
+    ENDPOINT_LIST_S3 = '/listS3files';
     ENDPOINT_FILTERS_ADD = '/filters/add';
     ENDPOINT_FILTERS_LIST = '/filters/list';
     ENDPOINT_FILTERS_DELETE = '/filters/delete';
@@ -410,6 +412,20 @@ begin
     Form.AddPair('target', Target);
     Form.AddPair('value', Value);
     Result := P3RawJsonForm(Concat(ZbApiBaseURL, ENDPOINT_FILTERS_DELETE), Form);
+end;
+
+function ZbListS3Files(const Bucket, Search: String): String;
+var
+    UrlToAccess: String;
+    response: TZbRequestResponse;
+begin
+    UrlToAccess := Concat(BULK_ROOT_URI, ENDPOINT_LIST_S3, '?api_key=', EncodeParam(ZbApiKey));
+    if Bucket <> '' then
+        UrlToAccess := Concat(UrlToAccess, '&bucket=', EncodeParam(Bucket));
+    if Search <> '' then
+        UrlToAccess := Concat(UrlToAccess, '&search=', EncodeParam(Search));
+    response := ZBGetRequest(UrlToAccess);
+    Result := response.Payload;
 end;
 
 function ZbValidateS3File(Options: TZbValidateS3FileOptions): TZBFileFeedback;

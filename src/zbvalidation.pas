@@ -19,6 +19,7 @@ type
         Timeout: Integer;
         ActivityData: Integer;
         VerifyPlus: Integer;
+        UsePost: Integer;
     end;
 
 procedure Register;
@@ -75,6 +76,7 @@ implementation
         Result.Timeout := -1;
         Result.ActivityData := -1;
         Result.VerifyPlus := -1;
+        Result.UsePost := -1;
     end;
 
     function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
@@ -137,6 +139,7 @@ implementation
     ): TZbValidationResult;
     var
         UrlToAccess: string;
+        FormBody: string;
         response: TZbRequestResponse;
         error: ZbException;
     begin
@@ -158,7 +161,29 @@ implementation
                 UrlToAccess := Concat(UrlToAccess, '&verify_plus=false')
             else
                 UrlToAccess := Concat(UrlToAccess, '&verify_plus=true');
-        response := ZBGetRequest(UrlToAccess);
+        if Options.UsePost = 1 then
+        begin
+            FormBody := Concat(
+                'api_key=', EncodeParam(ZbApiKey),
+                '&email=', EncodeParam(Email),
+                '&ip_address=', EncodeParam(IpAddress)
+            );
+            if Options.Timeout >= 0 then
+                FormBody := Concat(FormBody, '&timeout=', EncodeParam(IntToStr(Options.Timeout)));
+            if Options.ActivityData >= 0 then
+                if Options.ActivityData = 0 then
+                    FormBody := Concat(FormBody, '&activity_data=false')
+                else
+                    FormBody := Concat(FormBody, '&activity_data=true');
+            if Options.VerifyPlus >= 0 then
+                if Options.VerifyPlus = 0 then
+                    FormBody := Concat(FormBody, '&verify_plus=false')
+                else
+                    FormBody := Concat(FormBody, '&verify_plus=true');
+            response := ZBFormPostRequest(Concat(ZbApiBaseURL, ENDPOINT_VALIDATE), FormBody);
+        end
+        else
+            response := ZBGetRequest(UrlToAccess);
 
         try
             Result := ZbValidationFromJson(response.Payload);
