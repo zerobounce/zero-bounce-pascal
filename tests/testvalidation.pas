@@ -18,6 +18,7 @@ type
         procedure TestBatchBodyEncoder;
         procedure TestBatchBodyEncoderOneEmail;
         procedure TestBatchBodyEncoderNoEmails;
+        procedure TestBatchBodyEncoderWithOptions;
         procedure TestBatchEmailValidationEndpoint;
         procedure TestBatchEmailValidationErrorResponse;
         procedure TestBatchEmailValidationErrorInPayload;
@@ -142,6 +143,22 @@ begin
         EmailsAndIps1[0].Ip
     );
 
+end;
+
+procedure TTestValidation.TestBatchBodyEncoderWithOptions;
+var
+    JsonObj: TZbJSon;
+    Options: TZbValidateOptions;
+begin
+    ZBInitialize(MOCK_API_KEY);
+    Options := ZbDefaultValidateOptions;
+    Options.Timeout := 45;
+    Options.ActivityData := 1;
+    Options.VerifyPlus := 1;
+    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps1, Options));
+    AssertEquals('timeout', JsonObj.GetInteger('timeout'), 45);
+    AssertTrue('activity_data', JsonObj.GetBoolean('activity_data'));
+    AssertTrue('verify_plus', JsonObj.GetBoolean('verify_plus'));
 end;
 
 procedure TTestValidation.TestBatchBodyEncoderNoEmails;
