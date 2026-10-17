@@ -18,4 +18,7 @@ RUN fpc -Fu./src -Fu./tests -Mobjfpc -O2 -gl -viwn \
     tests/unit_tests_console.lpr -FE.
 
 # Run all registered tests (--all); exit code 1 on failure
+
+USER 65532:65532
+
 CMD ["./unit_tests_console", "--all"]
