@@ -8,7 +8,7 @@ unit ZeroBounce;
 interface
 
 uses
-        ZbBulk, ZbGeneric, ZbStructures, ZbUtility, ZbValidation, 
+        ZbBulk, ZbGeneric, ZbPriority3, ZbStructures, ZbUtility, ZbValidation, 
         LazarusPackageIntf;
 
 implementation
@@ -20,6 +20,7 @@ begin
   RegisterUnit('ZbStructures', @ZbStructures.Register);
   RegisterUnit('ZbUtility', @ZbUtility.Register);
   RegisterUnit('ZbValidation', @ZbValidation.Register);
+  RegisterUnit('ZbPriority3', @ZbPriority3.Register);
 end;
 
 initialization

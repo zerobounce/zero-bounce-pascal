@@ -4,7 +4,7 @@ program unit_tests_console;
 
 uses
   Classes, SysUtils, consoletestrunner,
-  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestUtility;
+  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestPriority3, TestUtility;
 
 var
   App: TTestRunner;
