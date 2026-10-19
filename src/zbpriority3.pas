@@ -87,7 +87,7 @@ procedure Register;
 implementation
 
 const
-    BULK_ROOT_URI = 'https://bulkapi.zerobounce.net';
+    { ZbBulkRootURL lives in ZbUtility so tests can point bulk calls at a local stub. }
     ENDPOINT_EMAIL_FINDER_SEND = '/email-finder/sendfile';
     ENDPOINT_EMAIL_FINDER_STATUS = '/email-finder/filestatus';
     ENDPOINT_EMAIL_FINDER_RESULT = '/email-finder/getfile';
@@ -207,7 +207,7 @@ const
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BULK_ROOT_URI, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         try
@@ -228,7 +228,7 @@ const
         error: ZbException;
         IsJsonCT: Boolean;
     begin
-        UrlToAccess := Concat(BULK_ROOT_URI, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         if response.ContentType = '' then
@@ -237,6 +237,8 @@ const
             error.MarkHttpError;
             raise error;
         end;
+        if ZbBodyLooksLikeHtml(response.Payload) then
+            raise ZbException.FromResponse('', response);
         IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
         if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) then
         begin
@@ -256,7 +258,7 @@ const
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(BULK_ROOT_URI, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         try
@@ -277,8 +279,8 @@ const
         Form := TStringList.Create;
         Form.AddPair('api_key', ZbApiKey);
         Form.AddPair('domain_column', IntToStr(DomainColumn));
-        if (Options <> nil) and Options^.HasHeaderRowSpecified and Options^.HasHeaderRow then
-            Form.AddPair('has_header_row', 'true');
+        if (Options <> nil) and Options^.HasHeaderRowSpecified then
+            Form.AddPair('has_header_row', StrBool(Options^.HasHeaderRow));
         if (Options <> nil) and (Options^.FirstNameColumn > 0) then
             Form.AddPair('first_name_column', IntToStr(Options^.FirstNameColumn));
         if (Options <> nil) and (Options^.LastNameColumn > 0) then
@@ -296,7 +298,7 @@ begin
     if DomainColumn < 1 then
         raise ZbException.Create('Empty parameter: domain_column');
     Result := P3MultipartSubmit(
-        Concat(BULK_ROOT_URI, ENDPOINT_EMAIL_FINDER_SEND),
+        Concat(ZbBulkRootURL, ENDPOINT_EMAIL_FINDER_SEND),
         FileContent,
         BuildEmailFinderForm(DomainColumn, Options)
     );
@@ -327,9 +329,9 @@ begin
     Form := TStringList.Create;
     Form.AddPair('api_key', ZbApiKey);
     Form.AddPair('domain_column', IntToStr(DomainColumn));
-    if (Options <> nil) and Options^.HasHeaderRowSpecified and Options^.HasHeaderRow then
-        Form.AddPair('has_header_row', 'true');
-    Result := P3MultipartSubmit(Concat(BULK_ROOT_URI, ENDPOINT_DOMAIN_SEARCH_SEND), FileContent, Form);
+    if (Options <> nil) and Options^.HasHeaderRowSpecified then
+        Form.AddPair('has_header_row', StrBool(Options^.HasHeaderRow));
+    Result := P3MultipartSubmit(Concat(ZbBulkRootURL, ENDPOINT_DOMAIN_SEARCH_SEND), FileContent, Form);
 end;
 
 function ZbDomainSearchFileStatus(FileId: String): TZBFileStatus;
@@ -419,7 +421,7 @@ var
     UrlToAccess: String;
     response: TZbRequestResponse;
 begin
-    UrlToAccess := Concat(BULK_ROOT_URI, ENDPOINT_LIST_S3, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(ZbBulkRootURL, ENDPOINT_LIST_S3, '?api_key=', EncodeParam(ZbApiKey));
     if Bucket <> '' then
         UrlToAccess := Concat(UrlToAccess, '&bucket=', EncodeParam(Bucket));
     if Search <> '' then
@@ -454,7 +456,7 @@ begin
     if Options.AllowPhase2Specified then
         Form.AddPair('allow_phase_2', StrBool(Options.AllowPhase2));
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(BULK_ROOT_URI, ENDPOINT_VALIDATE_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_VALIDATE_S3), Form);
 end;
 
 function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
@@ -471,7 +473,7 @@ begin
     if Options.EmailAddressColumnSpecified then
         Form.AddPair('email_address_column', IntToStr(Options.EmailAddressColumn));
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(BULK_ROOT_URI, ENDPOINT_SCORE_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_SCORE_S3), Form);
 end;
 
 function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
@@ -486,7 +488,7 @@ begin
     Form.AddPair('file_id', FileId);
     Form.AddPair('export_bucket', ExportBucket);
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(BULK_ROOT_URI, ENDPOINT_EXPORT_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_EXPORT_S3), Form);
 end;
 
 procedure Register;

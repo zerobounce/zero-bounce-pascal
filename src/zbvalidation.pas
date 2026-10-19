@@ -103,10 +103,16 @@ implementation
             else
                 BatchContent := BatchContent + ',';
 
-            BatchContent := BatchContent + format(
-                '{"email_address": "%s", "ip_address": "%s"}',
-                [ZbJsonEscape(EmailAndIp.Email), ZbJsonEscape(EmailAndIp.Ip)]
-            );
+            if EmailAndIp.Ip = '' then
+                BatchContent := BatchContent + format(
+                    '{"email_address": "%s", "ip_address": null}',
+                    [ZbJsonEscape(EmailAndIp.Email)]
+                )
+            else
+                BatchContent := BatchContent + format(
+                    '{"email_address": "%s", "ip_address": "%s"}',
+                    [ZbJsonEscape(EmailAndIp.Email), ZbJsonEscape(EmailAndIp.Ip)]
+                );
         end;
         Extras := '';
         if Options.Timeout >= 0 then
@@ -215,6 +221,7 @@ implementation
         JsonBody: String;
         response: TZbRequestResponse;
         error: ZbException;
+        errorIndex: Integer;
     begin
         if (Options.Timeout >= 0) and ((Options.Timeout < 10) or (Options.Timeout > 120)) then
             raise ZbException.Create('Invalid parameter: timeout (must be between 10 and 120 seconds)');
@@ -224,7 +231,14 @@ implementation
 
         try
             Result := ZbBatchValidationFromJson(response.Payload);
-        except on e: Exception do
+            if Length(Result.Errors) > 0 then
+                for errorIndex := 0 to High(Result.Errors) do
+                    if Result.Errors[errorIndex].EmailAddress = 'all' then
+                        raise ZbException.Create(Result.Errors[errorIndex].Error);
+        except
+            on e: ZbException do
+                raise;
+            on e: Exception do
             begin
                 error := ZbException.FromResponse(e.Message, response);
                error.MarkJsonError;

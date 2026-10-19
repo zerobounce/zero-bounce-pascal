@@ -36,7 +36,6 @@ type
 
 const
     JSON_CONTENT_TYPE = 'application/json';
-    BULK_URI = 'https://bulkapi.zerobounce.net/v2';
     { Bulk getfile query parameter download_type (validation and scoring). }
     ZB_DOWNLOAD_TYPE_PHASE_1 = 'phase_1';
     ZB_DOWNLOAD_TYPE_PHASE_2 = 'phase_2';
@@ -66,13 +65,19 @@ var
         'https://api-us.zerobounce.net/v2',
         'https://api-eu.zerobounce.net/v2'
     );
-    ZbApiBaseURL: string = 'https://api.zerobounce.net/v2';
-    ZbApiKey: string = '';
+    { Bulk hosts. Tests may point these at a local stub. }
+    BULK_URI: string = 'https://bulkapi.zerobounce.net/v2';
+    ZbBulkRootURL: string = 'https://bulkapi.zerobounce.net';
     { FPC only: PEM CA bundle for TLS verification. When empty, SSL_CERT_FILE, system paths, and cacert.pem beside the exe are tried. }
     ZbCACertFile: string = '';
     ZbResponseMock: TZbRequestResponse = (
         StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
     );
+
+{ Per-thread. One thread must not call ZBInitialize for a second key while another request is in flight on that same thread. }
+threadvar
+    ZbApiBaseURL: string;
+    ZbApiKey: string;
 
     function ZBApiURLToString(url: ZbApiURL): string;
     procedure ZBSetApiKey ( ApiKey : string );  deprecated 'Use ZBInitialize procedures';
@@ -80,6 +85,8 @@ var
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     function EncodeParam(param: String): String;
     function RedactSecrets(const S: string): string;
+    function ZbBodyLooksLikeHtml(const Body: String): Boolean;
+    function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
@@ -190,15 +197,116 @@ begin
 end;
 {$ENDIF}
 
+    function ZbLowerPrefix(const Value: String): String;
+    var
+        I: Integer;
+    begin
+        Result := Copy(Value, 1, 2000);
+        for I := 1 to Length(Result) do
+            if Result[I] in ['A'..'Z'] then
+                Result[I] := Chr(Ord(Result[I]) + 32);
+    end;
+
+    function ZbBodyLooksLikeHtml(const Body: String): Boolean;
+    var
+        Lower: String;
+    begin
+        Lower := ZbLowerPrefix(Body);
+        Result := (Pos('<!doctype html', Lower) > 0) or (Pos('<html', Lower) > 0) or
+            (Pos('<head', Lower) > 0) or (Pos('<body', Lower) > 0);
+    end;
+
+    function ZbHtmlTitle(const Body: String): String;
+    var
+        Lower: String;
+        StartAt, OpenEnd, CloseAt: Integer;
+    begin
+        Result := '';
+        Lower := ZbLowerPrefix(Body);
+        StartAt := Pos('<title', Lower);
+        if StartAt = 0 then Exit;
+        OpenEnd := Pos('>', Copy(Lower, StartAt, MaxInt));
+        if OpenEnd = 0 then Exit;
+        OpenEnd := StartAt + OpenEnd - 1;
+        CloseAt := Pos('</title>', Copy(Lower, OpenEnd, MaxInt));
+        if CloseAt = 0 then Exit;
+        Result := Trim(Copy(Body, OpenEnd + 1, CloseAt - 2));
+    end;
+
+    function ZbStripErrorPrefix(const Value: String): String;
+    begin
+        Result := Trim(Value);
+        while True do
+        begin
+            if Pos('Error:', Result) = 1 then
+                Result := Trim(Copy(Result, 7, MaxInt))
+            else if Pos('[Error]:', Result) = 1 then
+                Result := Trim(Copy(Result, 9, MaxInt))
+            else
+                Break;
+        end;
+    end;
+
+    function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
+    var
+        Trimmed: String;
+    begin
+        Trimmed := Trim(Body);
+        if Trimmed = '' then
+            Exit(Format('Empty response from ZeroBounce (HTTP %d)', [StatusCode]));
+        if ZbBodyLooksLikeHtml(Body) then
+        begin
+            Result := ZbHtmlTitle(Body);
+            if Result = '' then
+                Exit('ZeroBounce returned an HTML error page instead of an API response.');
+            Exit('ZeroBounce returned an HTML error page ("' + Result + '") instead of an API response.');
+        end;
+        if (Length(Trimmed) > 0) and ((Trimmed[1] = '{') or (Trimmed[1] = '[')) then
+        begin
+            if (Pos('Access denied', Trimmed) > 0) and (Pos('cloudflare_error', Trimmed) > 0) then
+                Exit('Error 1020: Access denied');
+            if Length(Trimmed) > 1000 then
+                Exit('ZeroBounce returned a response that is not valid JSON.');
+            Exit(Trimmed);
+        end;
+        if Length(Trimmed) > 1000 then
+            Exit('ZeroBounce returned a response that is not valid JSON.');
+        Result := ZbStripErrorPrefix(Trimmed);
+        if Result = '' then
+            Result := Format('Empty response from ZeroBounce (HTTP %d)', [StatusCode]);
+    end;
+
+    procedure ZbRequireApiKey;
+    begin
+        if ZbApiKey = '' then
+            raise ZbException.Create('ZeroBounce is not initialized. Please call ZBInitialize(api_key) first');
+    end;
+
+    procedure ZbFinishResponse(const Response: TZbRequestResponse);
+    var
+        Error: ZbException;
+    begin
+        if ZbBodyLooksLikeHtml(Response.Payload) or (Response.StatusCode > 299) then
+        begin
+            Error := ZbException.FromResponse('', Response);
+            Error.MarkHttpError;
+            raise Error;
+        end;
+    end;
+
     constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
     var
         NewMessage: String;
     begin
         Payload := response.Payload;
         StatusCode := response.StatusCode;
-        NewMessage := Concat(AMessage, sLineBreak, 'Url:', sLineBreak, RedactSecrets(response.UrlCalled));
-        NewMessage := Concat(NewMessage, sLineBreak, 'Status code: ', format('%d', [StatusCode]));
-        NewMessage := Concat(NewMessage, sLineBreak, 'Payload:', sLineBreak, RedactSecrets(Payload));
+        if (AMessage <> '') and (Length(AMessage) < 300) and
+           (Pos('Access violation', AMessage) = 0) and
+           (Pos('<', AMessage) = 0) and (Pos('<<<', AMessage) = 0) and
+           (Pos(Copy(Trim(response.Payload), 1, 24), AMessage) = 0) then
+            NewMessage := AMessage
+        else
+            NewMessage := ZbMessageFromBody(response.Payload, response.StatusCode);
         Create(NewMessage);
     end;
 
@@ -264,12 +372,14 @@ end;
     var
         {$IFDEF FPC}
         Client: TFPHTTPClient;
+        ResponseStream: TStringStream;
         {$ELSE}
         Client: THTTPClient;
         Response: IHTTPResponse;
         {$ENDIF}
         error: ZbException;
     begin
+        ZbRequireApiKey;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -286,11 +396,14 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            ResponseStream := TStringStream.Create('');
             try
-                Result.Payload := Client.Get(url);
+                Client.HTTPMethod('GET', url, ResponseStream, [200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503]);
+                Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
+                ResponseStream.Free;
                 Client.Free;
             end;
 
@@ -308,13 +421,7 @@ end;
 
         end;
 
-        // check for failure
-        if Result.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', Result);
-            error.MarkHttpError;
-            raise error;
-        end;
+        ZbFinishResponse(Result);
     end;
 
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse;
@@ -328,6 +435,7 @@ end;
         {$ENDIF}
         error: ZbException;
     begin
+        ZbRequireApiKey;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -374,13 +482,7 @@ end;
 
         end;
 
-        // check for failure
-        if Result.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', Result);
-            error.MarkHttpError;
-            raise error;
-        end;
+        ZbFinishResponse(Result);
     end;
 
     function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
@@ -394,6 +496,7 @@ end;
         {$ENDIF}
         error: ZbException;
     begin
+        ZbRequireApiKey;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -480,6 +583,7 @@ end;
         end;
         {$ENDIF}
     begin
+        ZbRequireApiKey;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             Result := ZbResponseMock;
@@ -546,13 +650,7 @@ end;
             {$ENDIF}
         end;
 
-        // check for failure
-        if Result.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', Result);
-            error.MarkHttpError;
-            raise error;
-        end;
+        ZbFinishResponse(Result);
     end;
 
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String);
@@ -570,6 +668,10 @@ end;
     procedure Register;
     begin
     end;
+
+initialization
+    ZbApiKey := '';
+    ZbApiBaseURL := 'https://api.zerobounce.net/v2';
 
 {$IFDEF FPC}
 finalization

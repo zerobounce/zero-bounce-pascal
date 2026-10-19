@@ -202,15 +202,15 @@ begin
 end;
 
 procedure TTestValidation.TestBatchEmailValidationErrorInPayload;
-var
-    validation: TZBBatchValidation;
 begin
     ZBMockResponse(200, BATCH_VALIDATE_ERROR);
-    validation := ZbBatchValidateEmails(EmailsAndIps2);
-
-    AssertEquals('email_batch length', validation.EmailBatchLength, 0);
-    AssertEquals('errors length', validation.ErrorsLength, 1);
-    AssertEquals('email_address in error', validation.Errors[0].EmailAddress, 'all');
+    try
+        ZbBatchValidateEmails(EmailsAndIps2);
+        Fail('account-level batch error should fail the call');
+    except
+        on e: ZbException do
+            AssertTrue('account error', e.Message.Contains('Invalid API Key') or e.Message.Contains('ran out of credits'));
+    end;
 end;
 
 procedure TTestValidation.TestBatchEmailValidationOkPayload;
