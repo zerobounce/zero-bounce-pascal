@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TZbValidateOptions` accepts `DomainInfo`, `GreylistProcessing` and `CallbackUrl`. A `-1` field is not sent; booleans go on the wire as the strings `true`/`false`. `CallbackUrl` is where the greylist retry posts its result, so it is rejected without `GreylistProcessing = 1`, and when blank, before any request is sent.
+- `TZbValidationResult` carries `DomainWebsiteExists`, `DomainRegistrantCompanyName` and `Message`. `Message` is the API's `Message` key, returned instead of a result while a greylist retry is still running.
+- The rest of the documented bulk surface: `ZbEmailFinderS3File`, `ZbDomainSearchS3File`, and the SFTP/FTP jobs `ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile` and `ZbExportSFTPFile`, sharing the new `TZbBulkFileJobOptions`. `ZbValidateSFTPFile`'s `FileName` is optional - leaving it empty uses the input bucket from your ZeroBounce settings - and `ZbExportSFTPFile` takes `export_path`, not the `export_bucket` `ZbExportS3File` sends.
+- The Inbox Placement Tester: the API key goes on the query string, bodies are camelCase JSON, and unset fields are left out.
+- **ZbUtility**: `ZbListEvaluatorURL` and `ZbInboxPlacementURL` (separate base URLs rather than paths built from `BULK_URI`), `ZBSendRequest`, `EncodePathSegment`, and `ZbLastRequestMethod` / `ZbLastRequestBody` for the offline tests.
+
+### Changed
+
+- `ZbGetListEvaluatorResult` uses `ZbListEvaluatorURL`, encodes the file id as a single path segment, and rejects a blank id before a request is sent.
+- `ZbExportS3File`'s `ExportBucket` is optional, matching the documented endpoint: an empty string uses the export bucket from your ZeroBounce settings. A whitespace-only value is still rejected.
+
+### Fixed
+
+- A validation response without `processed_at` no longer raises. A greylist retry that is still running answers with `Message` and no date; `ProcessedAt` is left at zero instead.
+
+
+### Added
+
 - `ZbValidateEmail` and `ZbBatchValidateEmails` take `TZbValidateOptions`: `Timeout`, `ActivityData`, `VerifyPlus`, and `UsePost` (form-encoded `POST /validate`).
 - `TZbValidationResult` reads `ActiveInDays` and `ActiveFirstSeen`.
 - `ZbScoreEmail` (`GET /v2/scoring`) and `ZbScoreEmailPost` (form-encoded `POST /v2/scoring`).

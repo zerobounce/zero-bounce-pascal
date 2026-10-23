@@ -68,6 +68,14 @@ var
     { Bulk hosts. Tests may point these at a local stub. }
     BULK_URI: string = 'https://bulkapi.zerobounce.net/v2';
     ZbBulkRootURL: string = 'https://bulkapi.zerobounce.net';
+    { The list evaluator and the Inbox Placement Tester have their own base
+      URLs, not paths built from BULK_URI, so overriding that alone leaves them
+      pointing at the live API. }
+    ZbListEvaluatorURL: string = 'https://bulkapi.zerobounce.net/v2/listevaluator';
+    ZbInboxPlacementURL: string = 'https://bulkapi.zerobounce.net/api/ipt';
+    { What the last request actually sent. Offline tests assert on these. }
+    ZbLastRequestMethod: string = '';
+    ZbLastRequestBody: string = '';
     { FPC only: PEM CA bundle for TLS verification. When empty, SSL_CERT_FILE, system paths, and cacert.pem beside the exe are tried. }
     ZbCACertFile: string = '';
     ZbResponseMock: TZbRequestResponse = (
@@ -91,6 +99,12 @@ threadvar
     // performs a POST request with a raw JSON body
     function ZBPostRequest(url: String; JsonParam: String): TZbRequestResponse; overload;
     // performs a POST request with application/x-www-form-urlencoded body
+    { Encodes a value as a single path segment: EncodeParam is query encoding,
+      which may turn a space into '+'. }
+    function EncodePathSegment(param: String): String;
+    { A request with an explicit method and an optional body, for the Inbox
+      Placement Tester's PUT and DELETE. }
+    function ZBSendRequest(Method, url, Body, ContentType: String): TZbRequestResponse;
     function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
     // performs a POST request with a multi-part form body
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
@@ -485,6 +499,84 @@ end;
         ZbFinishResponse(Result);
     end;
 
+    function EncodePathSegment(param: String): String;
+    begin
+        { HTTPEncode / EncodeQuery are query encoders and turn a space into '+',
+          which is a literal plus inside a path. }
+        Result := StringReplace(EncodeParam(param), '+', '%20', [rfReplaceAll]);
+    end;
+
+    function ZBSendRequest(Method, url, Body, ContentType: String): TZbRequestResponse;
+    var
+        {$IFDEF FPC}
+        Client: TFPHTTPClient;
+        ResponseStream: TStringStream;
+        {$ELSE}
+        Client: THTTPClient;
+        BodyStream: TStream;
+        Response: IHTTPResponse;
+        {$ENDIF}
+    begin
+        ZbRequireApiKey;
+        ZbLastRequestMethod := Method;
+        ZbLastRequestBody := Body;
+
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            ZbResponseMock.UrlCalled := url;
+            Result := ZbResponseMock;
+        end
+        else
+        begin
+            Result.UrlCalled := url;
+
+            {$IFDEF FPC}
+            InitSSLInterface;
+
+            Client := TFPHTTPClient.Create(nil);
+            ZbUseVerifiedTls(Client);
+            Client.ConnectTimeout := 30000;
+            Client.IOTimeout := 120000;
+            Client.AddHeader('Accept', 'application/json');
+            if Body <> '' then
+            begin
+                Client.AddHeader('Content-Type', ContentType);
+                Client.RequestBody := TRawByteStringStream.Create(Body);
+            end;
+            ResponseStream := TStringStream.Create('');
+            try
+                Client.HTTPMethod(Method, url, ResponseStream, []);
+                Result.Payload := ResponseStream.DataString;
+                Result.StatusCode := Client.ResponseStatusCode;
+                Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
+            finally
+                ResponseStream.Free;
+                if Body <> '' then
+                    Client.RequestBody.Free;
+                Client.Free;
+            end;
+
+            {$ELSE}
+            Client := THTTPClient.Create;
+            BodyStream := TStringStream.Create(Body);
+            try
+                Client.CustomHeaders['Accept'] := 'application/json';
+                if Body <> '' then
+                    Client.CustomHeaders['Content-Type'] := ContentType;
+                Response := Client.Execute(Method, url, BodyStream);
+                Result.Payload := Response.ContentAsString();
+                Result.StatusCode := Response.StatusCode;
+                Result.ContentType := Response.HeaderValue['Content-Type'];
+            finally
+                Client.Free;
+                BodyStream.Free;
+            end;
+            {$ENDIF}
+        end;
+
+        ZbFinishResponse(Result);
+    end;
+
     function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
     var
         {$IFDEF FPC}
@@ -497,6 +589,8 @@ end;
         error: ZbException;
     begin
         ZbRequireApiKey;
+        ZbLastRequestMethod := 'POST';
+        ZbLastRequestBody := FormBody;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;

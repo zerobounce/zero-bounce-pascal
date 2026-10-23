@@ -54,6 +54,38 @@ type
         EmailAddressColumn: Integer;
     end;
 
+    { The documented fields shared by the six S3 and SFTP/FTP file jobs.
+
+      FileName is required by every job except ZbValidateSFTPFile, where the
+      docs list it as optional: leaving it empty there uses the input bucket
+      configured in your ZeroBounce settings. }
+    TZbBulkFileJobOptions = record
+        FileName: String;
+        HasHeaderRow: Boolean;
+        RemoveDuplicatesSpecified: Boolean;
+        RemoveDuplicates: Boolean;
+        ReturnUrl: String;
+    end;
+
+    { The optional fields of a new Inbox Placement test. Only what is set is sent. }
+    TZbCreateInboxPlacementTestOptions = record
+        TestTypeSpecified: Boolean;
+        TestType: Integer;
+        SenderEmail: String;
+        WebhookUrl: String;
+    end;
+    PTZbCreateInboxPlacementTestOptions = ^TZbCreateInboxPlacementTestOptions;
+
+    { The documented filters of the Inbox Placement test list. }
+    TZbListInboxPlacementTestsOptions = record
+        Status: String;
+        PageSpecified: Boolean;
+        Page: Integer;
+        PageSizeSpecified: Boolean;
+        PageSize: Integer;
+    end;
+    PTZbListInboxPlacementTestsOptions = ^TZbListInboxPlacementTestsOptions;
+
     PTZbEmailFinderSendFileOptions = ^TZbEmailFinderSendFileOptions;
     PTZbDomainSearchSendFileOptions = ^TZbDomainSearchSendFileOptions;
 
@@ -81,6 +113,39 @@ function ZbListS3Files(const Bucket, Search: String): String;
 function ZbValidateS3File(Options: TZbValidateS3FileOptions): TZBFileFeedback;
 function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
 function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
+
+{ The rest of the documented bulk surface.
+
+  https://www.zerobounce.net/docs/api-integrations/amazon-s3-bulk-api
+  https://www.zerobounce.net/docs/api-integrations/sftp_bulk_api
+
+  The SFTP server, path and protocol are never sent by the SDK; they come from
+  your ZeroBounce settings. }
+function ZbEmailFinderS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+function ZbDomainSearchS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+{ This is the one job whose file_name the docs list as optional: leave
+  Options.FileName empty to use the input bucket from your settings. }
+function ZbValidateSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+function ZbScoreSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+function ZbEmailFinderSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+function ZbDomainSearchSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+{ Note the field name: this one takes export_path, not the export_bucket that
+  ZbExportS3File sends. An empty ExportPath uses the one from your settings. }
+function ZbExportSFTPFile(const FileId, ExportPath: String): TZBFileFeedback;
+function ZbDefaultBulkFileJobOptions: TZbBulkFileJobOptions;
+
+{ Inbox Placement Tester (/api/ipt). Its own host, the API key on the query
+  string, camelCase JSON bodies, and errors under a "detail" key. Spends the
+  account's inbox-test credits. }
+function ZbInboxPlacementProviders: String;
+function ZbInboxPlacementTestTypes: String;
+function ZbCreateInboxPlacementTest(Name: String;
+    Options: PTZbCreateInboxPlacementTestOptions): String;
+function ZbInboxPlacementTest(TestId: String): String;
+function ZbListInboxPlacementTests(Options: PTZbListInboxPlacementTestsOptions): String;
+function ZbDeleteInboxPlacementTest(TestId: String): String;
+function ZbInboxPlacementWebhook: String;
+function ZbSetInboxPlacementWebhook(WebhookUrl: String): String;
 
 procedure Register;
 
@@ -365,7 +430,14 @@ function ZbGetListEvaluatorResult(FileId: String): String;
 var
     UrlToAccess: String;
 begin
-    UrlToAccess := Concat(BULK_URI, '/listevaluator/', FileId, '/?api_key=', EncodeParam(ZbApiKey));
+    if Trim(FileId) = '' then
+        raise ZbException.Create('Empty parameter: file_id');
+    { The list evaluator has its own base URL, not a path built from BULK_URI,
+      and the file id is one path segment, so a slash must stay encoded. }
+    UrlToAccess := Concat(
+        ZbListEvaluatorURL, '/', EncodePathSegment(Trim(FileId)),
+        '/?api_key=', EncodeParam(ZbApiKey)
+    );
     Result := P3RawJsonGet(UrlToAccess);
 end;
 
@@ -482,17 +554,235 @@ var
 begin
     if Trim(FileId) = '' then
         raise ZbException.Create('Empty parameter: file_id');
-    if Trim(ExportBucket) = '' then
+    if (ExportBucket <> '') and (Trim(ExportBucket) = '') then
         raise ZbException.Create('Empty parameter: export_bucket');
     Form := TStringList.Create;
     Form.AddPair('file_id', FileId);
-    Form.AddPair('export_bucket', ExportBucket);
+    { The documented endpoint treats export_bucket as optional: without it the
+      export bucket from the account's settings is used. }
+    if ExportBucket <> '' then
+        Form.AddPair('export_bucket', ExportBucket);
     Form.AddPair('api_key', ZbApiKey);
     Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_EXPORT_S3), Form);
 end;
 
 procedure Register;
 begin
+end;
+
+function ZbDefaultBulkFileJobOptions: TZbBulkFileJobOptions;
+begin
+    Result.FileName := '';
+    Result.HasHeaderRow := True;
+    Result.RemoveDuplicatesSpecified := False;
+    Result.RemoveDuplicates := False;
+    Result.ReturnUrl := '';
+end;
+
+function P3BoolField(Value: Boolean): String;
+begin
+    if Value then
+        P3BoolField := 'true'
+    else
+        P3BoolField := 'false';
+end;
+
+{ POSTs one of the six documented S3 / SFTP file jobs on the bulkapi root.
+  Booleans go on the wire as the strings 'true'/'false', and an option the
+  caller left unset is not sent at all. }
+function P3BulkRootFileJob(const Endpoint: String; Options: TZbBulkFileJobOptions;
+    FileNameRequired: Boolean): TZBFileFeedback;
+var
+    Body: String;
+    response: TZbRequestResponse;
+    error: ZbException;
+begin
+    if FileNameRequired and (Trim(Options.FileName) = '') then
+        raise ZbException.Create('Empty parameter: file_name');
+    if (not FileNameRequired) and (Options.FileName <> '')
+        and (Trim(Options.FileName) = '') then
+        raise ZbException.Create('Empty parameter: file_name');
+
+    Body := Concat('api_key=', EncodeParam(ZbApiKey));
+    Body := Concat(Body, '&has_header_row=', P3BoolField(Options.HasHeaderRow));
+    if Options.FileName <> '' then
+        Body := Concat(Body, '&file_name=', EncodeParam(Options.FileName));
+    if Options.RemoveDuplicatesSpecified then
+        Body := Concat(Body, '&remove_duplicates=', P3BoolField(Options.RemoveDuplicates));
+    if Options.ReturnUrl <> '' then
+        Body := Concat(Body, '&return_url=', EncodeParam(Options.ReturnUrl));
+
+    response := ZBFormPostRequest(Concat(ZbBulkRootURL, Endpoint), Body);
+    try
+        Result := ZbFileFeedbackFromJson(response.Payload);
+    except on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
+end;
+
+function ZbEmailFinderS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    Result := P3BulkRootFileJob('/emailFinderS3file', Options, True);
+end;
+
+function ZbDomainSearchS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    Result := P3BulkRootFileJob('/domainSearchS3file', Options, True);
+end;
+
+function ZbValidateSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    { The one job whose file_name the docs make optional. }
+    Result := P3BulkRootFileJob('/validateSFTPfile', Options, False);
+end;
+
+function ZbScoreSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    Result := P3BulkRootFileJob('/scoreSFTPfile', Options, True);
+end;
+
+function ZbEmailFinderSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    Result := P3BulkRootFileJob('/emailFinderSFTPfile', Options, True);
+end;
+
+function ZbDomainSearchSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
+begin
+    Result := P3BulkRootFileJob('/domainSearchSFTPfile', Options, True);
+end;
+
+function ZbExportSFTPFile(const FileId, ExportPath: String): TZBFileFeedback;
+var
+    Body: String;
+    response: TZbRequestResponse;
+    error: ZbException;
+begin
+    if Trim(FileId) = '' then
+        raise ZbException.Create('Empty parameter: file_id');
+    if (ExportPath <> '') and (Trim(ExportPath) = '') then
+        raise ZbException.Create('Empty parameter: export_path');
+
+    Body := Concat('api_key=', EncodeParam(ZbApiKey), '&file_id=', EncodeParam(FileId));
+    if ExportPath <> '' then
+        Body := Concat(Body, '&export_path=', EncodeParam(ExportPath));
+
+    response := ZBFormPostRequest(Concat(ZbBulkRootURL, '/exportSFTPfile'), Body);
+    try
+        Result := ZbFileFeedbackFromJson(response.Payload);
+    except on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
+end;
+
+function P3JsonEscapeValue(const Value: String): String;
+begin
+    Result := StringReplace(Value, '\', '\\', [rfReplaceAll]);
+    Result := StringReplace(Result, '"', '\"', [rfReplaceAll]);
+end;
+
+function P3InboxPlacementRequest(const Method, Path, ExtraQuery, Body: String): String;
+var
+    UrlToAccess: String;
+begin
+    UrlToAccess := Concat(ZbInboxPlacementURL, Path);
+    { The API key goes on the query string here, not in the body. }
+    UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey), ExtraQuery);
+    Result := ZBSendRequest(Method, UrlToAccess, Body, JSON_CONTENT_TYPE).Payload;
+end;
+
+function P3InboxPlacementTestSegment(const TestId: String): String;
+begin
+    if Trim(TestId) = '' then
+        raise ZbException.Create('Empty parameter: test_id');
+    Result := EncodePathSegment(Trim(TestId));
+end;
+
+function ZbInboxPlacementProviders: String;
+begin
+    Result := P3InboxPlacementRequest('GET', '/providers', '', '');
+end;
+
+function ZbInboxPlacementTestTypes: String;
+begin
+    Result := P3InboxPlacementRequest('GET', '/test-types', '', '');
+end;
+
+function ZbCreateInboxPlacementTest(Name: String;
+    Options: PTZbCreateInboxPlacementTestOptions): String;
+var
+    Body: String;
+begin
+    if Trim(Name) = '' then
+        raise ZbException.Create('Empty parameter: name');
+
+    { camelCase JSON, with unset fields left out. }
+    Body := Concat('{"name":"', P3JsonEscapeValue(Name), '"');
+    if Options <> nil then
+    begin
+        if Options^.TestTypeSpecified then
+            Body := Concat(Body, ',"testType":', IntToStr(Options^.TestType));
+        if Options^.SenderEmail <> '' then
+            Body := Concat(Body, ',"senderEmail":"', P3JsonEscapeValue(Options^.SenderEmail), '"');
+        if Options^.WebhookUrl <> '' then
+            Body := Concat(Body, ',"webhookUrl":"', P3JsonEscapeValue(Options^.WebhookUrl), '"');
+    end;
+    Body := Concat(Body, '}');
+
+    Result := P3InboxPlacementRequest('POST', '/test', '', Body);
+end;
+
+function ZbInboxPlacementTest(TestId: String): String;
+begin
+    Result := P3InboxPlacementRequest(
+        'GET', Concat('/test/', P3InboxPlacementTestSegment(TestId)), '', ''
+    );
+end;
+
+function ZbListInboxPlacementTests(Options: PTZbListInboxPlacementTestsOptions): String;
+var
+    Query: String;
+begin
+    Query := '';
+    if Options <> nil then
+    begin
+        if Options^.Status <> '' then
+            Query := Concat(Query, '&status=', EncodeParam(Options^.Status));
+        if Options^.PageSpecified then
+            Query := Concat(Query, '&page=', IntToStr(Options^.Page));
+        if Options^.PageSizeSpecified then
+            Query := Concat(Query, '&pageSize=', IntToStr(Options^.PageSize));
+    end;
+    Result := P3InboxPlacementRequest('GET', '/test', Query, '');
+end;
+
+function ZbDeleteInboxPlacementTest(TestId: String): String;
+begin
+    Result := P3InboxPlacementRequest(
+        'DELETE', Concat('/test/', P3InboxPlacementTestSegment(TestId)), '', ''
+    );
+end;
+
+function ZbInboxPlacementWebhook: String;
+begin
+    Result := P3InboxPlacementRequest('GET', '/webhook', '', '');
+end;
+
+function ZbSetInboxPlacementWebhook(WebhookUrl: String): String;
+begin
+    if Trim(WebhookUrl) = '' then
+        raise ZbException.Create('Empty parameter: webhook_url');
+    Result := P3InboxPlacementRequest(
+        'PUT', '/webhook', '',
+        Concat('{"webhookUrl":"', P3JsonEscapeValue(WebhookUrl), '"}')
+    );
 end;
 
 end.
