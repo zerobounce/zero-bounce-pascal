@@ -48,6 +48,7 @@ const
     ERROR_PAYLOAD: string = '{"error": "Mock error message"}';
     ACTIVITY_DATA_FOUND: string = '{"found": true, "active_in_days": "180"};';
     ACTIVITY_DATA_NOT_FOUND: string = '{"found": false, "active_in_days": null};';
+    SCORE_EMAIL_RESPONSE: string = '{"email":"mark@gmail.com","score":10}';
 
     VALDATION_RESPONSE_VALID: string = '{' +
         '    "address": "valid@example.com",' +

@@ -3,8 +3,11 @@ program unit_tests_console;
 {$mode objfpc}{$H+}
 
 uses
+{$IFDEF UNIX}
+  cthreads,
+{$ENDIF}
   Classes, SysUtils, consoletestrunner,
-  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestUtility;
+  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestPriority3, TestUtility, TestOffline;
 
 var
   App: TTestRunner;

@@ -15,13 +15,34 @@ type
         Ip: String;
     end;
 
+    TZbValidateOptions = record
+        Timeout: Integer;
+        ActivityData: Integer;
+        VerifyPlus: Integer;
+        UsePost: Integer;
+    end;
+
 procedure Register;
-function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
+function ZbDefaultValidateOptions: TZbValidateOptions;
+function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String; overload;
+function ZbBatchRequestBodyFromEmails(
+    Emails: array of TZbEmailAndIp;
+    Options: TZbValidateOptions
+): String; overload;
 
 function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult; overload;
 function ZbValidateEmail(Email: String): TZbValidationResult; overload;
+function ZbValidateEmail(
+    Email: String;
+    IpAddress: String;
+    Options: TZbValidateOptions
+): TZbValidationResult; overload;
 function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation; overload;
 function ZbBatchValidateEmails(Emails: array of String): TZBBatchValidation; overload;
+function ZbBatchValidateEmails(
+    Emails: array of TZbEmailAndIp;
+    Options: TZbValidateOptions
+): TZBBatchValidation; overload;
 
 
 implementation
@@ -50,11 +71,28 @@ implementation
         end;
     end;
 
+    function ZbDefaultValidateOptions: TZbValidateOptions;
+    begin
+        Result.Timeout := -1;
+        Result.ActivityData := -1;
+        Result.VerifyPlus := -1;
+        Result.UsePost := -1;
+    end;
+
     function ZbBatchRequestBodyFromEmails(Emails: array of TZbEmailAndIp): String;
+    begin
+        Result := ZbBatchRequestBodyFromEmails(Emails, ZbDefaultValidateOptions);
+    end;
+
+    function ZbBatchRequestBodyFromEmails(
+        Emails: array of TZbEmailAndIp;
+        Options: TZbValidateOptions
+    ): String;
     var
         EmailAndIp: TZbEmailAndIp;
         BatchContent: String;
         FirstElement: Boolean;
+        Extras: String;
     begin
         BatchContent := '';
         FirstElement := True;
@@ -65,19 +103,49 @@ implementation
             else
                 BatchContent := BatchContent + ',';
 
-            BatchContent := BatchContent + format(
-                '{"email_address": "%s", "ip_address": "%s"}',
-                [ZbJsonEscape(EmailAndIp.Email), ZbJsonEscape(EmailAndIp.Ip)]
-            );
+            if EmailAndIp.Ip = '' then
+                BatchContent := BatchContent + format(
+                    '{"email_address": "%s", "ip_address": null}',
+                    [ZbJsonEscape(EmailAndIp.Email)]
+                )
+            else
+                BatchContent := BatchContent + format(
+                    '{"email_address": "%s", "ip_address": "%s"}',
+                    [ZbJsonEscape(EmailAndIp.Email), ZbJsonEscape(EmailAndIp.Ip)]
+                );
         end;
+        Extras := '';
+        if Options.Timeout >= 0 then
+            Extras := Extras + format(', "timeout": %d', [Options.Timeout]);
+        if Options.ActivityData >= 0 then
+            if Options.ActivityData = 0 then
+                Extras := Extras + ', "activity_data": false'
+            else
+                Extras := Extras + ', "activity_data": true';
+        if Options.VerifyPlus >= 0 then
+            if Options.VerifyPlus = 0 then
+                Extras := Extras + ', "verify_plus": false'
+            else
+                Extras := Extras + ', "verify_plus": true';
         Result := format(
-            '{"api_key": "%s", "email_batch": [%s]}', [ZbJsonEscape(ZbApiKey), BatchContent]
+            '{"api_key": "%s", "email_batch": [%s]%s}',
+            [ZbJsonEscape(ZbApiKey), BatchContent, Extras]
         )
     end;
 
     function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
+    begin
+        Result := ZbValidateEmail(Email, IpAddress, ZbDefaultValidateOptions);
+    end;
+
+    function ZbValidateEmail(
+        Email: String;
+        IpAddress: String;
+        Options: TZbValidateOptions
+    ): TZbValidationResult;
     var
         UrlToAccess: string;
+        FormBody: string;
         response: TZbRequestResponse;
         error: ZbException;
     begin
@@ -85,7 +153,43 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         UrlToAccess := Concat(UrlToAccess, '&ip_address=', EncodeParam(IpAddress));
-        response := ZBGetRequest(UrlToAccess);
+        if (Options.Timeout >= 0) and ((Options.Timeout < 3) or (Options.Timeout > 60)) then
+            raise ZbException.Create('Invalid parameter: timeout (must be between 3 and 60 seconds)');
+        if Options.Timeout >= 0 then
+            UrlToAccess := Concat(UrlToAccess, '&timeout=', EncodeParam(IntToStr(Options.Timeout)));
+        if Options.ActivityData >= 0 then
+            if Options.ActivityData = 0 then
+                UrlToAccess := Concat(UrlToAccess, '&activity_data=false')
+            else
+                UrlToAccess := Concat(UrlToAccess, '&activity_data=true');
+        if Options.VerifyPlus >= 0 then
+            if Options.VerifyPlus = 0 then
+                UrlToAccess := Concat(UrlToAccess, '&verify_plus=false')
+            else
+                UrlToAccess := Concat(UrlToAccess, '&verify_plus=true');
+        if Options.UsePost = 1 then
+        begin
+            FormBody := Concat(
+                'api_key=', EncodeParam(ZbApiKey),
+                '&email=', EncodeParam(Email),
+                '&ip_address=', EncodeParam(IpAddress)
+            );
+            if Options.Timeout >= 0 then
+                FormBody := Concat(FormBody, '&timeout=', EncodeParam(IntToStr(Options.Timeout)));
+            if Options.ActivityData >= 0 then
+                if Options.ActivityData = 0 then
+                    FormBody := Concat(FormBody, '&activity_data=false')
+                else
+                    FormBody := Concat(FormBody, '&activity_data=true');
+            if Options.VerifyPlus >= 0 then
+                if Options.VerifyPlus = 0 then
+                    FormBody := Concat(FormBody, '&verify_plus=false')
+                else
+                    FormBody := Concat(FormBody, '&verify_plus=true');
+            response := ZBFormPostRequest(Concat(ZbApiBaseURL, ENDPOINT_VALIDATE), FormBody);
+        end
+        else
+            response := ZBGetRequest(UrlToAccess);
 
         try
             Result := ZbValidationFromJson(response.Payload);
@@ -104,19 +208,37 @@ implementation
     end;
 
     function ZbBatchValidateEmails(Emails: array of TZbEmailAndIp): TZBBatchValidation;
+    begin
+        Result := ZbBatchValidateEmails(Emails, ZbDefaultValidateOptions);
+    end;
+
+    function ZbBatchValidateEmails(
+        Emails: array of TZbEmailAndIp;
+        Options: TZbValidateOptions
+    ): TZBBatchValidation;
     var
         UrlToAccess: String;
         JsonBody: String;
         response: TZbRequestResponse;
         error: ZbException;
+        errorIndex: Integer;
     begin
+        if (Options.Timeout >= 0) and ((Options.Timeout < 10) or (Options.Timeout > 120)) then
+            raise ZbException.Create('Invalid parameter: timeout (must be between 10 and 120 seconds)');
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_BATCH_VALIDATE);
-        JsonBody := ZbBatchRequestBodyFromEmails(Emails);
+        JsonBody := ZbBatchRequestBodyFromEmails(Emails, Options);
         response := ZBPostRequest(UrlToAccess, JsonBody);
 
         try
             Result := ZbBatchValidationFromJson(response.Payload);
-        except on e: Exception do
+            if Length(Result.Errors) > 0 then
+                for errorIndex := 0 to High(Result.Errors) do
+                    if Result.Errors[errorIndex].EmailAddress = 'all' then
+                        raise ZbException.Create(Result.Errors[errorIndex].Error);
+        except
+            on e: ZbException do
+                raise;
+            on e: Exception do
             begin
                 error := ZbException.FromResponse(e.Message, response);
                error.MarkJsonError;

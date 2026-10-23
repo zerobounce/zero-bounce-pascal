@@ -15,6 +15,8 @@ exports
     ZbGetCredits,
     ZbGetApiUsage,
     ZbGetApiUsageWithin,
+    ZbScoreEmail,
+    ZbScoreEmailPost,
     ZbValidateEmail,
     ZbValidateEmailAndIp,
     ZbBatchValidateEmails,
@@ -31,6 +33,7 @@ exports
     // auxiliary
     ZBInitialize,
     TApiUsage,
+    TZbScoreEmailResult,
     TZbValidationResult,
     TZbBatchError,
     TZbBatchValidation,

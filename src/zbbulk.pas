@@ -126,8 +126,8 @@ var
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
-    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
 
     // attempt json parsing
@@ -171,6 +171,8 @@ begin
         raise error;
     end;
 
+    if ZbBodyLooksLikeHtml(response.Payload) then
+        raise ZbException.FromResponse('', response);
     IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
     if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) then
     begin
@@ -190,8 +192,8 @@ var
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', ZbApiKey);
-    UrlToAccess := Concat(UrlToAccess, '&file_id=', FileId);
+    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
 
     // attempt json parsing

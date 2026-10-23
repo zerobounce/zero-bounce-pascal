@@ -18,6 +18,7 @@ type
         procedure TestBatchBodyEncoder;
         procedure TestBatchBodyEncoderOneEmail;
         procedure TestBatchBodyEncoderNoEmails;
+        procedure TestBatchBodyEncoderWithOptions;
         procedure TestBatchEmailValidationEndpoint;
         procedure TestBatchEmailValidationErrorResponse;
         procedure TestBatchEmailValidationErrorInPayload;
@@ -144,6 +145,22 @@ begin
 
 end;
 
+procedure TTestValidation.TestBatchBodyEncoderWithOptions;
+var
+    JsonObj: TZbJSon;
+    Options: TZbValidateOptions;
+begin
+    ZBInitialize(MOCK_API_KEY);
+    Options := ZbDefaultValidateOptions;
+    Options.Timeout := 45;
+    Options.ActivityData := 1;
+    Options.VerifyPlus := 1;
+    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps1, Options));
+    AssertEquals('timeout', JsonObj.GetInteger('timeout'), 45);
+    AssertTrue('activity_data', JsonObj.GetBoolean('activity_data'));
+    AssertTrue('verify_plus', JsonObj.GetBoolean('verify_plus'));
+end;
+
 procedure TTestValidation.TestBatchBodyEncoderNoEmails;
 var
     JsonObj: TZbJSon;
@@ -185,15 +202,15 @@ begin
 end;
 
 procedure TTestValidation.TestBatchEmailValidationErrorInPayload;
-var
-    validation: TZBBatchValidation;
 begin
     ZBMockResponse(200, BATCH_VALIDATE_ERROR);
-    validation := ZbBatchValidateEmails(EmailsAndIps2);
-
-    AssertEquals('email_batch length', validation.EmailBatchLength, 0);
-    AssertEquals('errors length', validation.ErrorsLength, 1);
-    AssertEquals('email_address in error', validation.Errors[0].EmailAddress, 'all');
+    try
+        ZbBatchValidateEmails(EmailsAndIps2);
+        Fail('account-level batch error should fail the call');
+    except
+        on e: ZbException do
+            AssertTrue('account error', e.Message.Contains('Invalid API Key') or e.Message.Contains('ran out of credits'));
+    end;
 end;
 
 procedure TTestValidation.TestBatchEmailValidationOkPayload;

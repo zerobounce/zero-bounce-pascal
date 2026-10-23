@@ -23,6 +23,8 @@ type
       procedure TestActivityDataEndpoint;
       procedure TestActivityDataNotFound;
       procedure TestActivityDataFound;
+      procedure TestScoreEmailGet;
+      procedure TestScoreEmailPost;
       procedure TestFindMailInvalidStatusPayload;
       procedure TestFindMailValidStatusPayload;
       procedure TestDomainSearchInvalidStatusPayload;
@@ -102,6 +104,29 @@ begin
    ZBMockResponse(200, ACTIVITY_DATA_NOT_FOUND);
    ActivityAmount := ZbActivityData('valid@example.com');
    AssertEquals('activity data', ActivityAmount, -1);
+end;
+
+procedure TTestGeneric.TestScoreEmailGet;
+var
+   ScoreResult: TZbScoreEmailResult;
+begin
+   ZBMockResponse(200, SCORE_EMAIL_RESPONSE);
+   ScoreResult := ZbScoreEmail('mark@gmail.com');
+   AssertEndpointCalled(ENDPOINT_SCORE_EMAIL);
+   AssertEquals('email', ScoreResult.Email, 'mark@gmail.com');
+   AssertTrue('score present', ScoreResult.HasScore);
+   AssertEquals('score', ScoreResult.Score, 10);
+end;
+
+procedure TTestGeneric.TestScoreEmailPost;
+var
+   ScoreResult: TZbScoreEmailResult;
+begin
+   ZBMockResponse(200, SCORE_EMAIL_RESPONSE);
+   ScoreResult := ZbScoreEmailPost('mark@gmail.com');
+   AssertEndpointCalled(ENDPOINT_SCORE_EMAIL);
+   AssertEquals('email', ScoreResult.Email, 'mark@gmail.com');
+   AssertEquals('score', ScoreResult.Score, 10);
 end;
 
 procedure TTestGeneric.AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
