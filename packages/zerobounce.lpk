@@ -50,6 +50,11 @@
         <UnitName Value="ZbPriority3"/>
       </Item>
       <Item>
+        <Filename Value="../src/zbwarmup.pas"/>
+        <HasRegisterProc Value="True"/>
+        <UnitName Value="ZbWarmup"/>
+      </Item>
+      <Item>
         <Filename Value="../src/zboptions.inc"/>
         <Type Value="Include"/>
       </Item>

@@ -68,6 +68,8 @@ type
         SubStatusAllowed: Integer;
         SubStatusGold: Integer;
         SubStatusRoleBasedAcceptAll: Integer;
+        SubStatusLeadingPeriodRemoved: Integer;
+        SubStatusAliasAddress: Integer;
         StartDate: TDate;
         EndDate: TDate;
     end;
@@ -101,6 +103,12 @@ type
         City: String;
         Zipcode: String;
         ProcessedAt: TDateTime;
+        { Returned with domain_info. }
+        DomainWebsiteExists: String;
+        DomainRegistrantCompanyName: String;
+        { The API's "Message" key, returned instead of a result while a
+          greylist retry is still running. }
+        Message: String;
     end;
 
     TZbBatchError = record
@@ -346,6 +354,8 @@ implementation
         Result.SubStatusAllowed :=                    JsonObj.GetInteger('sub_status_allowed');
         Result.SubStatusGold :=                       JsonObj.GetInteger('sub_status_gold');
         Result.SubStatusRoleBasedAcceptAll :=         JsonObj.GetInteger('sub_status_role_based_accept_all');
+        Result.SubStatusLeadingPeriodRemoved :=       JsonObj.GetInteger('sub_status_leading_period_removed');
+        Result.SubStatusAliasAddress :=               JsonObj.GetInteger('sub_status_alias_address');
 
         Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
         Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
@@ -422,7 +432,18 @@ implementation
         Result.City :=          JsonObj.GetString('city');
         Result.Zipcode :=       JsonObj.GetString('zipcode');
 
-        Result.ProcessedAt := ExtractDateTime(JsonObj.GetString('processed_at'));
+        { A greylist retry that is still running answers with "Message" and no
+          processed_at, so an absent date leaves ProcessedAt at zero rather
+          than raising. }
+        if Trim(JsonObj.GetString('processed_at')) = '' then
+            Result.ProcessedAt := 0
+        else
+            Result.ProcessedAt := ExtractDateTime(JsonObj.GetString('processed_at'));
+
+        Result.DomainWebsiteExists := JsonObj.GetString('domain_website_exists');
+        Result.DomainRegistrantCompanyName := JsonObj.GetString('domain_registrant_company_name');
+        { Note the capital M: that is the key the API uses. }
+        Result.Message := JsonObj.GetString('Message');
     end;
 
 

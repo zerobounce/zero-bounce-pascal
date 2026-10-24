@@ -19,6 +19,15 @@ type
         Timeout: Integer;
         ActivityData: Integer;
         VerifyPlus: Integer;
+        { -1 omit, 0 false, 1 true. Fills DomainWebsiteExists and
+          DomainRegistrantCompanyName on the result. }
+        DomainInfo: Integer;
+        { -1 omit, 0 false, 1 true. Retries a greylisted address in the background. }
+        GreylistProcessing: Integer;
+        { Where the greylist retry posts its result. Empty to omit. It needs
+          GreylistProcessing = 1 and is rejected without it, and when blank,
+          before any request is sent. }
+        CallbackUrl: String;
         UsePost: Integer;
     end;
 
@@ -76,6 +85,9 @@ implementation
         Result.Timeout := -1;
         Result.ActivityData := -1;
         Result.VerifyPlus := -1;
+        Result.DomainInfo := -1;
+        Result.GreylistProcessing := -1;
+        Result.CallbackUrl := '';
         Result.UsePost := -1;
     end;
 
@@ -115,8 +127,11 @@ implementation
                 );
         end;
         Extras := '';
+        { LIVE: validatebatch takes timeout as a JSON *string*. Sent as a
+          number the API rejects the whole batch with the account-level
+          "Invalid API Key or your account ran out of credits". }
         if Options.Timeout >= 0 then
-            Extras := Extras + format(', "timeout": %d', [Options.Timeout]);
+            Extras := Extras + format(', "timeout": "%d"', [Options.Timeout]);
         if Options.ActivityData >= 0 then
             if Options.ActivityData = 0 then
                 Extras := Extras + ', "activity_data": false'
@@ -155,6 +170,17 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '&ip_address=', EncodeParam(IpAddress));
         if (Options.Timeout >= 0) and ((Options.Timeout < 3) or (Options.Timeout > 60)) then
             raise ZbException.Create('Invalid parameter: timeout (must be between 3 and 60 seconds)');
+        if Options.CallbackUrl <> '' then
+        begin
+            if Trim(Options.CallbackUrl) = '' then
+                raise ZbException.Create('Empty parameter: callback_url');
+            { The callback is where the greylist retry posts its result, so it
+              is meaningless - and rejected by the API - without the retry. }
+            if Options.GreylistProcessing <> 1 then
+                raise ZbException.Create(
+                    'Invalid parameter: callback_url requires greylist_processing to be true'
+                );
+        end;
         if Options.Timeout >= 0 then
             UrlToAccess := Concat(UrlToAccess, '&timeout=', EncodeParam(IntToStr(Options.Timeout)));
         if Options.ActivityData >= 0 then
@@ -167,6 +193,18 @@ implementation
                 UrlToAccess := Concat(UrlToAccess, '&verify_plus=false')
             else
                 UrlToAccess := Concat(UrlToAccess, '&verify_plus=true');
+        if Options.DomainInfo >= 0 then
+            if Options.DomainInfo = 0 then
+                UrlToAccess := Concat(UrlToAccess, '&domain_info=false')
+            else
+                UrlToAccess := Concat(UrlToAccess, '&domain_info=true');
+        if Options.GreylistProcessing >= 0 then
+            if Options.GreylistProcessing = 0 then
+                UrlToAccess := Concat(UrlToAccess, '&greylist_processing=false')
+            else
+                UrlToAccess := Concat(UrlToAccess, '&greylist_processing=true');
+        if Options.CallbackUrl <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&callback_url=', EncodeParam(Options.CallbackUrl));
         if Options.UsePost = 1 then
         begin
             FormBody := Concat(
@@ -186,6 +224,18 @@ implementation
                     FormBody := Concat(FormBody, '&verify_plus=false')
                 else
                     FormBody := Concat(FormBody, '&verify_plus=true');
+            if Options.DomainInfo >= 0 then
+                if Options.DomainInfo = 0 then
+                    FormBody := Concat(FormBody, '&domain_info=false')
+                else
+                    FormBody := Concat(FormBody, '&domain_info=true');
+            if Options.GreylistProcessing >= 0 then
+                if Options.GreylistProcessing = 0 then
+                    FormBody := Concat(FormBody, '&greylist_processing=false')
+                else
+                    FormBody := Concat(FormBody, '&greylist_processing=true');
+            if Options.CallbackUrl <> '' then
+                FormBody := Concat(FormBody, '&callback_url=', EncodeParam(Options.CallbackUrl));
             response := ZBFormPostRequest(Concat(ZbApiBaseURL, ENDPOINT_VALIDATE), FormBody);
         end
         else

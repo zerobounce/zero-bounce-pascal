@@ -15,6 +15,8 @@ type
         procedure TestApiUsageParse;
         procedure TestValidationParseValidContent;
         procedure TestValidationParseInvalidContent;
+        procedure TestValidationParseAiAgentMailbox;
+        procedure TestValidationParseUnknownSubStatus;
         procedure TestBatchErrorParse;
         procedure TestBatchValidationParseOkContent;
         procedure TestBatchValidationParseErrorContent;
@@ -49,6 +51,43 @@ begin
         validation.ProcessedAt,
         EncodeDateTime(2023, 04, 25, 13, 08, 24, 269)
     );
+end;
+
+procedure TTestDeserialization.TestValidationParseAiAgentMailbox;
+var
+    validation: TZbValidationResult;
+begin
+    // ai_agent_mailbox is returned under both valid and catch-all.
+    validation := ZbValidationFromJson(
+        '{"address": "agent@example.com", "status": "valid",' +
+        ' "sub_status": "ai_agent_mailbox",' +
+        ' "processed_at": "2026-10-20 12:00:00.000"}'
+    );
+    AssertEquals('status', validation.Status, 'valid');
+    AssertEquals('sub_status', validation.SubStatus, 'ai_agent_mailbox');
+
+    validation := ZbValidationFromJson(
+        '{"address": "agent@example.com", "status": "catch-all",' +
+        ' "sub_status": "ai_agent_mailbox",' +
+        ' "processed_at": "2026-10-20 12:00:00.000"}'
+    );
+    AssertEquals('status', validation.Status, 'catch-all');
+    AssertEquals('sub_status', validation.SubStatus, 'ai_agent_mailbox');
+end;
+
+procedure TTestDeserialization.TestValidationParseUnknownSubStatus;
+var
+    validation: TZbValidationResult;
+begin
+    // SubStatus is a plain String with no enum behind it, so a value this SDK
+    // predates reaches the caller untouched. That is why ai_agent_mailbox
+    // needed no change here.
+    validation := ZbValidationFromJson(
+        '{"address": "future@example.com", "status": "valid",' +
+        ' "sub_status": "some_future_sub_status",' +
+        ' "processed_at": "2026-10-20 12:00:00.000"}'
+    );
+    AssertEquals('sub_status', validation.SubStatus, 'some_future_sub_status');
 end;
 
 procedure TTestDeserialization.TestValidationParseInvalidContent;

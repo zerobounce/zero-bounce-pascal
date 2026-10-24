@@ -36,6 +36,8 @@ contains
   zbgeneric in '..\src\zbgeneric.pas',
   zbstructures in '..\src\zbstructures.pas',
   zbutility in '..\src\zbutility.pas',
-  zbvalidation in '..\src\zbvalidation.pas';
+  zbvalidation in '..\src\zbvalidation.pas',
+  zbpriority3 in '..\src\zbpriority3.pas',
+  zbwarmup in '..\src\zbwarmup.pas';
 
 end.

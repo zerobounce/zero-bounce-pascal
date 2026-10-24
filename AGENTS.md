@@ -1,61 +1,60 @@
-# AGENTS.md
-
-Guidance for AI coding agents working in this repository.
-
-## Project
-
-`zero-bounce-pascal` is the ZeroBounce Pascal/Delphi SDK. Callers use `ZBInitialize(apiKey)` and the `Zb*` functions in `src/`. HTTP uses Free Pascal `fphttpclient` or Delphi `THTTPClient` in `src/zbutility.pas`. There is no package registry: releases are GitHub tags.
+# Agent notes — zero-bounce-pascal
 
 ## Layout
 
-- `src/zbvalidation.pas`: single and batch validation.
-- `src/zbbulk.pas`: bulk file send, status, get, and delete, including AI scoring.
-- `src/zbgeneric.pas`: credits, usage, activity, scoring, email finder, and domain search.
-- `src/zbpriority3.pas`: bulk email finder, domain search, list evaluator, filters, and S3.
-- `src/zbstructures.pas`: response records and JSON parsing.
-- `src/zbutility.pas`: HTTP, URL encoding, and `ZbException`.
-- `packages/zerobounce.lpk`: package version as attributes `Major`, `Minor`, and `Build`. There is no single version string.
-- `tests/unit_tests_console.lpr`: FPCUnit runner. `tests/testoffline.pas` is the offline suite. It speaks HTTP to a stub bound to `127.0.0.1`.
-- `examples/delphi-api-v2/`: a separate Indy example. It is not the SDK HTTP stack.
+- `src/zbutility.pas`: the HTTP layer, the base URLs and the response mock. `ZBGetRequest` / `ZBPostRequest` are the originals; `ZBSendRequest` takes an explicit method and an optional body, which the form-encoded bulk jobs and the Inbox Placement Tester's PUT and DELETE need. `ZBFormPostRequest` wraps it.
+- `src/zbvalidation.pas`: single and batch validation, plus `TZbValidateOptions`.
+- `src/zbbulk.pas`: the multipart bulk uploads, their status checks and `getfile`.
+- `src/zbpriority3.pas`: real-time AI scoring, the filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester.
+- `src/zbwarmup.pas`: the Warmup API. A separate product on its own host with its own team-scoped key and an `API-Key` header, so it has its own `ZbWarmupInitialize` and never touches `ZbApiKey`.
+- `src/zbstructures.pas`: the records and their JSON parsers.
+- `tests/testpriority3.pas`, `tests/testbulkjobs.pas`, `tests/testwarmup.pas`: the offline suites for the above. Every request is answered by `ZbMockResponse`.
+- `live/live_api.lpr`: the opt-in live suite. Its own program, outside `tests/`, so the offline suite never builds or runs it.
 
-## Commands
+## Build and test
 
-Free Pascal was not on the machine used to add the offline suite. CI installs it. The default test command is:
+FPC runs in Docker (there is no `fpc` on the host):
 
-```bash
-fpc -Fu./src -Fu./tests -Mobjfpc -O2 -gl -viwn \
-  tests/unit_tests_console.lpr -FE.
-./unit_tests_console --all
+```sh
+cd ../sdk-docs && docker compose run --rm --build pascal
 ```
 
-That compile is the typecheck. There is no separate lint step. CI (`.github/workflows/sdk_ci.yml`) runs the same build and `./unit_tests_console --all`. Do not commit `unit_tests_console` or `debugging`.
+To build and run against the working tree without rebuilding the image:
 
-## Conventions
+```sh
+docker run --rm -u 0 -v "$PWD":/src -w /src zerobounce-sdk-pascal:test \
+  sh -c "fpc -Fu./src -Fu./tests -Mobjfpc -O2 -gl -viwn tests/unit_tests_console.lpr -FE/tmp && /tmp/unit_tests_console --all"
+```
 
-- **The API key is per thread.** `ZbApiKey` and `ZbApiBaseURL` are `threadvar`. Call `ZBInitialize` on every thread before requests. Do not share one thread across two keys.
-- **Column indexes are 1-based** for optional name, gender, and IP columns. `0` means the field is left out. `ZbValidateS3File` sends `EmailAddressColumn` when `EmailAddressColumnSpecified` is true, including `0`.
-- **Tri-state ints are `-1` omit, `0` false, `1` true** on `TZbValidateOptions`. Booleans that have a `Specified` flag are omitted until that flag is true. Explicit false is sent as `false`.
-- **Booleans are the strings `true` and `false`.**
-- **`AllowPhase2` is validation bulk send only.** `ActivityData` on get-file is validation only.
-- **Batch validation uses `ZbApiBaseURL`**, which defaults to `https://api.zerobounce.net/v2`, not the bulk host. An empty IP address is JSON `null`.
-- **Failures raise `ZbException`.** `Message` is short: no raw HTML, no megabyte body, and no `Error: Error:` prefix. `Payload` still holds the response body. An account-level batch error (`EmailAddress` `all`) raises. A per-address error stays on `TZBBatchValidation.Errors`.
-- **Offline tests retarget `ZbApiBaseURL`, `BULK_URI`, and `ZbBulkRootURL` at `http://127.0.0.1`.** Do not call the live API from the default test run.
-- Match the surrounding style. Do not reformat unrelated code.
+A new test unit must be added to the `uses` clause of `tests/unit_tests_console.lpr`, or it never runs.
 
-## Changelog
+The live suite is a separate program and is never built by the command above:
 
-`CHANGELOG.md` follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and the project adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html).
+```sh
+docker run --rm -u 0 -v "$PWD":/src -w /src \
+  -e ZEROBOUNCE_API_KEY -e ZEROBOUNCE_WARMUP_API_KEY \
+  -e ZEROBOUNCE_LIVE_SPEND=1 -e ZEROBOUNCE_LIVE_CHANGES=1 \
+  zerobounce-sdk-pascal:test \
+  sh -c "fpc -Fu./src -Mobjfpc -O2 live/live_api.lpr -FE/tmp && /tmp/live_api"
+```
 
-- Add every user-visible change to `## [Unreleased]` in the same commit as the change.
-- Group entries under these headings, in this order, omitting empty ones: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
-- Write for SDK users. Leave out CI-only changes and fixes to code that was never released.
-- At 2.y.z, a breaking change bumps the major version, a new function or option bumps the minor version, and fixes alone bump the patch version.
+Keys come from the environment only. Never write one into a file, a commit, a log, a fixture or a message.
+
+The `.o` and `.ppu` files at the repo root are build artifacts, not sources.
+
+## Rules
+
+- **Only endpoints documented at https://www.zerobounce.net/docs/.** Do not add a function for an endpoint the public docs do not describe, even if it exists on the server. Check before concluding something is undocumented: the S3 and SFTP bulk endpoints live under https://www.zerobounce.net/docs/api-integrations, not the main API reference.
+- **Four base URLs.** `ZbApiBaseURL`, `BULK_URI` (ends in `/v2`), `ZbBulkRootURL` (the S3/SFTP jobs, **no** `/v2`), and `ZbListEvaluatorURL` / `ZbInboxPlacementURL`. The last three are separate values rather than paths built from `BULK_URI`, so overriding the main one alone leaves a test pointing at the live API. `TTestPriority3.SetUp` resets them.
+- **`EncodeParam` is query encoding.** It can turn a space into `+`, which is correct in a query string but a literal plus in a path. Use `EncodePathSegment` for anything that goes into a path, such as the list evaluator file id and the Inbox Placement test id.
+- **The live API wins over the docs.** Where they disagree, follow the API and say so in a comment at the call site, prefixed `LIVE:`. The ones found so far: `validatebatch` takes `timeout` as a JSON *string*; the Inbox Placement Tester authenticates with `Authorization: Bearer` and lists tests from `GET /tests` (plural); every S3/SFTP job requires both `file_name` and `return_url`, `validateSFTPfile` included, although the docs call its `file_name` optional; `send-evaluated-file` takes the file id as a form field; Warmup's `check-domain-dmarc` takes an *email address*, not a domain; and `test-smtp-configuration` answers a failed SMTP login with HTTP 500.
+- **A `"success": false` field on an HTTP 200 is a failure.** `getfile` and `deletefile` report an unknown or deleted file id that way. `ZbSuccessMeansFailure` catches it in `ZbFinishResponse`, and `ZbException.StatusCode` carries the HTTP status.
+- **`ZbExportSFTPFile` sends `export_path`**, not the `export_bucket` that `ZbExportS3File` sends.
+- **Safety rails in `ZbUtility`.** `ZbCheckedApiKey` rejects a key with surrounding whitespace or control characters, `ZbRequireHttpsUrl` allows https (and loopback, for a local stub) only, `ZbPathSegment` rejects `.` and `..`, redirects are never followed, and `RedactSecrets` keeps the key out of exception messages. Use them rather than adding a second rail beside them.
+- **Optional record fields use a `Has...` flag.** Pascal records have no nullable scalars, so every optional option carries a companion boolean and is only sent when that flag is set.
+- **Offline tests only.** Never call the live API from a test under `tests/`. `ZbMockResponse` short-circuits every request function; `ZbLastRequestMethod`, `ZbLastRequestBody` and `ZbLastRequestHeader` record what would have been sent.
+- **Never from the live suite:** creating an Inbox Placement test (it cannot be deleted while running), setting the Inbox Placement webhook (it cannot be cleared), or ZB managed Warmup onboarding (it provisions a mailbox). Everything the `ZEROBOUNCE_LIVE_CHANGES=1` tier creates is removed again in the same run.
 
 ## Releasing
 
-Publishing and pushing tags need a maintainer's explicit approval. Do not bump the version, tag, or publish unless they asked.
-
-1. Move `[Unreleased]` entries under `## [x.y.z] - YYYY-MM-DD`, leave an empty `[Unreleased]` section, and update the compare links.
-2. Set the same version on `<Version Major="x" Minor="y" Build="z"/>` in `packages/zerobounce.lpk`. Those three attributes are the version. There is no runtime version constant.
-3. Build and run `./unit_tests_console --all` with the command above.
-4. Tag `vx.y.z` on that commit and run the Publish workflow. It creates the GitHub release. There is no package registry.
+Before tagging a release, run the live suite by hand with real keys and both flags set, and paste its summary line into the release notes. The offline suite cannot catch an API that has changed shape underneath the SDK.

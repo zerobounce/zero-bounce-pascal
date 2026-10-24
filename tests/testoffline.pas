@@ -345,6 +345,11 @@ begin
   ZbApiBaseURL := Format('http://127.0.0.1:%d/v2', [Stub.Port]);
   BULK_URI := ZbApiBaseURL;
   ZbBulkRootURL := Format('http://127.0.0.1:%d', [Stub.Port]);
+  { The list evaluator and the Inbox Placement Tester are separate base URLs,
+    not paths built from BULK_URI, so they have to be pointed at the stub too -
+    otherwise these tests reach the live API. }
+  ZbListEvaluatorURL := Format('http://127.0.0.1:%d/v2/listevaluator', [Stub.Port]);
+  ZbInboxPlacementURL := Format('http://127.0.0.1:%d/api/ipt', [Stub.Port]);
   ZbResponseMock := cDefaultMock;
 end;
 
