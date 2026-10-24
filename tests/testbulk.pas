@@ -54,12 +54,12 @@ type
         procedure TestResultDeleteError;
         procedure TestFileSubmitOk;
         procedure TestFileStatusCheckOk;
-        procedure TestResultFetchOkJson;
+        procedure TestResultFetchSuccessFalseIsAnError;
         procedure TestResultFetchOkContent;
-        procedure TestResultFetchJsonErrorNonJsonContentType;
+        procedure TestResultFetchSuccessFalseNonJsonContentType;
         procedure TestResultFetchWithQueryOptions;
         procedure TestScoringResultFetchOmitsActivityData;
-        procedure TestResultDeleteNotFound;
+        procedure TestResultDeleteNotFoundIsAnError;
         procedure TestResultDeleteOk;
 
         { TEST THAT EACH INDIVIDUAL METHOD WILL CALL EXPECTED ENDPOINT }
@@ -342,18 +342,25 @@ begin
     );
 end;
 
-procedure TTestBulk.TestResultFetchOkJson;
+procedure TTestBulk.TestResultFetchSuccessFalseIsAnError;
 var
-    response: TZBBulkResponse;
+    Raised: Boolean;
 begin
+    { LIVE: getfile answers a deleted or unknown file id with HTTP 200 and a
+      "success": false field. That is a failure, not a result, and the caller
+      must not have to inspect a flag to notice it. }
     ZBMockResponse(200, BULK_RESULT_DELETED);
-    response := ZbBulkValidationResultFetch(MOCK_FILE_ID);
-
-    AssertFalse(response.HasContent);
-    AssertEquals('success', response.Feedback.Success, False);
-    AssertTrue('message does not have content', Length(response.Feedback.Message) > 0);
-    AssertTrue('file_name should not have content', Length(response.Feedback.FileName) = 0);
-    AssertTrue('file_id should not have content', Length(response.Feedback.FileId) = 0);
+    Raised := False;
+    try
+        ZbBulkValidationResultFetch(MOCK_FILE_ID);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('File deleted', e.Message) > 0);
+            AssertEquals('the HTTP status is kept on the error', 200, e.StatusCode);
+        end;
+    end;
+    AssertTrue('a "success": false body should be reported as an error', Raised);
 end;
 
 procedure TTestBulk.TestResultFetchOkContent;
@@ -367,15 +374,24 @@ begin
     AssertEquals(response.Content, RESULT_CONTENT_MOCK);
 end;
 
-procedure TTestBulk.TestResultFetchJsonErrorNonJsonContentType;
+procedure TTestBulk.TestResultFetchSuccessFalseNonJsonContentType;
 var
-    response: TZBBulkResponse;
+    Raised: Boolean;
 begin
+    { The same failure arrives with an octet-stream content type, because
+      getfile labels every answer as a download. The body decides. }
     ZBMockResponse(200, '{ "success": false, "message": "File not ready" }', OCTET_STREAM_TYPE);
-    response := ZbBulkValidationResultFetch(MOCK_FILE_ID);
-    AssertFalse(response.HasContent);
-    AssertFalse(response.Feedback.Success);
-    AssertTrue(Pos('not ready', response.Feedback.Message) > 0);
+    Raised := False;
+    try
+        ZbBulkValidationResultFetch(MOCK_FILE_ID);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('not ready', e.Message) > 0);
+            AssertEquals('the HTTP status is kept on the error', 200, e.StatusCode);
+        end;
+    end;
+    AssertTrue('a "success": false body should be reported as an error', Raised);
 end;
 
 procedure TTestBulk.TestResultFetchWithQueryOptions;
@@ -404,17 +420,23 @@ begin
     AssertEquals('activity_data must not appear for scoring getfile', Pos('activity_data', ZbResponseMock.UrlCalled), 0);
 end;
 
-procedure TTestBulk.TestResultDeleteNotFound;
+procedure TTestBulk.TestResultDeleteNotFoundIsAnError;
 var
-    response: TZBFileFeedback;
+    Raised: Boolean;
 begin
+    { deletefile reports an unknown id the same way: HTTP 200, success false. }
     ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
-    response := ZbBulkValidationResultDelete(MOCK_FILE_ID);
-
-    AssertEquals('success', response.Success, False);
-    AssertTrue('message does not have content', Length(response.Message) > 0);
-    AssertTrue('file_name should not have content', Length(response.FileName) = 0);
-    AssertTrue('file_id should not have content', Length(response.FileId) = 0);
+    Raised := False;
+    try
+        ZbBulkValidationResultDelete(MOCK_FILE_ID);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('cannot be found', e.Message) > 0);
+            AssertEquals('the HTTP status is kept on the error', 200, e.StatusCode);
+        end;
+    end;
+    AssertTrue('a "success": false body should be reported as an error', Raised);
 end;
 
 procedure TTestBulk.TestResultDeleteOk;
@@ -450,7 +472,7 @@ end;
 
 procedure TTestBulk.TestBulkValidationResultFetchEndpoint;
 begin
-    ZBMockResponse(200, BULK_RESULT_DELETED);
+    ZBMockResponse(200, RESULT_CONTENT_MOCK, OCTET_STREAM_TYPE);
     ZbBulkValidationResultFetch(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_FILE_RESULT);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
@@ -459,7 +481,7 @@ end;
 
 procedure TTestBulk.TestBulkValidationResultDeleteEndpoint;
 begin
-    ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
+    ZBMockResponse(200, BULK_DELETE_OK);
     ZbBulkValidationResultDelete(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_FILE_DELETE);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
@@ -486,7 +508,7 @@ end;
 
 procedure TTestBulk.TestAiScoringResultFetchEndpoint;
 begin
-    ZBMockResponse(200, BULK_RESULT_DELETED);
+    ZBMockResponse(200, RESULT_CONTENT_MOCK, OCTET_STREAM_TYPE);
     ZbAiScoringResultFetch(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_SCORING_RESULT);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then
@@ -495,7 +517,7 @@ end;
 
 procedure TTestBulk.TestAiScoringResultDeleteEndpoint;
 begin
-    ZBMockResponse(200, BULK_DELETE_NOT_FOUND);
+    ZBMockResponse(200, BULK_DELETE_OK);
     ZbAiScoringResultDelete(MOCK_FILE_ID);
     AssertEndpointCalled(ENDPOINT_SCORING_DELETE);
     if not ZbResponseMock.UrlCalled.Contains(BULK_URI) then

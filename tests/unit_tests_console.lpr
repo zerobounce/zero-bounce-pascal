@@ -7,7 +7,8 @@ uses
   cthreads,
 {$ENDIF}
   Classes, SysUtils, consoletestrunner,
-  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestPriority3, TestUtility, TestOffline;
+  TestGeneric, TestValidation, TestDeserialization, TestBulk, TestPriority3, TestUtility, TestOffline,
+  TestBulkJobs, TestWarmup;
 
 var
   App: TTestRunner;
