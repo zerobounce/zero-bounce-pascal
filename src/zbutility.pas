@@ -36,6 +36,7 @@ type
 
 const
     JSON_CONTENT_TYPE = 'application/json';
+    BULK_HOST = 'bulkapi.zerobounce.net';
     { Bulk getfile query parameter download_type (validation and scoring). }
     ZB_DOWNLOAD_TYPE_PHASE_1 = 'phase_1';
     ZB_DOWNLOAD_TYPE_PHASE_2 = 'phase_2';
@@ -83,6 +84,9 @@ var
     ZbResponseMock: TZbRequestResponse = (
         StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
     );
+    { BULK_HOST has no documented regional variant, so pairing it with a
+      regional base URL is worth one warning and no more. }
+    ZbBulkRegionWarned: Boolean = False;
 
 { Per-thread. One thread must not call ZBInitialize for a second key while another request is in flight on that same thread. }
 threadvar
@@ -95,6 +99,18 @@ threadvar
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     function EncodeParam(param: String): String;
     function RedactSecrets(const S: string): string;
+    { The key, or a clear error. A key with surrounding whitespace or control
+      characters would otherwise be quoted, unredacted, in a transport error. }
+    function ZbCheckedApiKey(const ApiKey: String): String;
+    { Raises unless the URL is https. Loopback is allowed so an offline test
+      can point the SDK at a local stub; nothing leaves the machine there. }
+    procedure ZbRequireHttpsUrl(const Url, Name: String);
+    { One path segment, url-encoded, or a clear error. A segment of '.' or '..'
+      would walk the request out of the endpoint it was meant for. }
+    function ZbPathSegment(const Value, Name: String): String;
+    { The URL, after checking it is https and warning once when a regional base
+      URL is paired with the single global bulk host. }
+    function ZbCheckedUrl(const Url: String): String;
     function ZbBodyLooksLikeHtml(const Body: String): Boolean;
     { Whether a JSON body says the call failed although the HTTP status was a
       success. The API sends "success" as a JSON false, "false" or "False". }
@@ -114,6 +130,13 @@ threadvar
       Tester needs Authorization: Bearer. }
     function ZBSendRequestWithHeader(Method, url, Body, ContentType,
         HeaderName, HeaderValue: String): TZbRequestResponse;
+    { As ZBSendRequestWithHeader, for a client that carries its own key: the
+      validation api_key is neither required nor sent. The Warmup API is a
+      separate product on its own host with an API-Key header. }
+    function ZBSendForeignKeyRequest(Method, url, Body, ContentType,
+        HeaderName, HeaderValue: String): TZbRequestResponse;
+    { Escapes a string for a JSON double-quoted value. }
+    function ZbJsonEscape(const Value: String): String;
     function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
     // performs a POST request with a multi-part form body
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
@@ -334,6 +357,14 @@ end;
     begin
         { LIVE: a "success": false field on an HTTP 200 is a failure, not a
           result. The API answers an unknown bulk file id that way. }
+        if (Response.StatusCode >= 300) and (Response.StatusCode < 400) then
+        begin
+            Error := ZbException.FromResponse(
+                'ZeroBounce returned a redirect, which this client does not follow.', Response
+            );
+            Error.MarkHttpError;
+            raise Error;
+        end;
         if ZbBodyLooksLikeHtml(Response.Payload) or (Response.StatusCode > 299) or
            ZbSuccessMeansFailure(Response.Payload) then
         begin
@@ -356,7 +387,8 @@ end;
             NewMessage := AMessage
         else
             NewMessage := ZbMessageFromBody(response.Payload, response.StatusCode);
-        Create(NewMessage);
+        { Transport errors quote the URL, which carries api_key. }
+        Create(RedactSecrets(NewMessage));
     end;
 
     procedure ZbException.MarkHttpError;
@@ -381,13 +413,12 @@ end;
 
     procedure ZBInitialize(ApiKey: string);
     begin
-        ZbApiKey := ApiKey;
-        ZbApiBaseURL := ZBApiURLToString(ZbApiURLDefault);
+        ZBInitialize(ApiKey, ZbApiURLDefault);
     end;
 
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     begin
-        ZbApiKey := ApiKey;
+        ZbApiKey := ZbCheckedApiKey(ApiKey);
         ZbApiBaseURL := ZBApiURLToString(ApiBaseURL);
     end;
 
@@ -411,10 +442,98 @@ end;
 
     function RedactSecrets(const S: string): string;
     begin
-        if ZbApiKey <> '' then
-            Result := StringReplace(S, ZbApiKey, 'REDACTED', [rfReplaceAll])
-        else
-            Result := S;
+        Result := S;
+        if ZbApiKey = '' then
+            Exit;
+        Result := StringReplace(Result, ZbApiKey, 'REDACTED', [rfReplaceAll]);
+        { The key also travels url-encoded, on the query string. }
+        if EncodeParam(ZbApiKey) <> ZbApiKey then
+            Result := StringReplace(Result, EncodeParam(ZbApiKey), 'REDACTED', [rfReplaceAll]);
+    end;
+
+    function ZbCheckedApiKey(const ApiKey: String): String;
+    var
+        I: Integer;
+    begin
+        { An empty key stays deferred to ZbRequireApiKey, which names the call
+          that initializes the SDK. }
+        if Trim(ApiKey) = '' then
+            Exit(ApiKey);
+        if ApiKey <> Trim(ApiKey) then
+            raise ZbException.Create('api_key has surrounding whitespace or control characters');
+        for I := 1 to Length(ApiKey) do
+            if (ApiKey[I] < #32) or (ApiKey[I] = #127) then
+                raise ZbException.Create('api_key has surrounding whitespace or control characters');
+        Result := ApiKey;
+    end;
+
+    procedure ZbRequireHttpsUrl(const Url, Name: String);
+    var
+        Lower: String;
+    begin
+        Lower := LowerCase(Trim(Url));
+        if Pos('https://', Lower) = 1 then
+            Exit;
+        { A local stub never leaves the machine, so plain http is allowed there
+          and nowhere else. }
+        if (Pos('http://127.0.0.1', Lower) = 1) or (Pos('http://localhost', Lower) = 1) or
+           (Pos('http://[::1]', Lower) = 1) then
+            Exit;
+        raise ZbException.Create(Concat(Name, ' must be an https:// URL'));
+    end;
+
+    function ZbPathSegment(const Value, Name: String): String;
+    var
+        Trimmed: String;
+    begin
+        Trimmed := Trim(Value);
+        if Trimmed = '' then
+            raise ZbException.Create(Concat('Empty parameter: ', Name));
+        { Everything else, slashes included, is percent-encoded and stays
+          inside the segment; '.' and '..' would walk the request elsewhere. }
+        if (Trimmed = '.') or (Trimmed = '..') then
+            raise ZbException.Create(Concat('Invalid parameter: ', Name));
+        Result := EncodePathSegment(Trimmed);
+    end;
+
+    function ZbHostOf(const Url: String): String;
+    var
+        Rest: String;
+        Slash: Integer;
+    begin
+        Rest := LowerCase(Trim(Url));
+        Slash := Pos('://', Rest);
+        if Slash > 0 then
+            Rest := Copy(Rest, Slash + 3, MaxInt);
+        Slash := Pos('/', Rest);
+        if Slash > 0 then
+            Rest := Copy(Rest, 1, Slash - 1);
+        Result := Rest;
+    end;
+
+    function ZbCheckedUrl(const Url: String): String;
+    var
+        Region: String;
+    begin
+        ZbRequireHttpsUrl(Url, 'url');
+        Result := Url;
+        if ZbBulkRegionWarned or (ZbHostOf(Url) <> BULK_HOST) then
+            Exit;
+        Region := '';
+        if Pos('api-eu.zerobounce.net', LowerCase(ZbApiBaseURL)) > 0 then
+            Region := 'EU'
+        else if Pos('api-us.zerobounce.net', LowerCase(ZbApiBaseURL)) > 0 then
+            Region := 'US';
+        if Region = '' then
+            Exit;
+        ZbBulkRegionWarned := True;
+        WriteLn(StdErr, Concat(
+            'ZeroBounce warning: the base URL is the ', Region, ' API, but this request goes to ',
+            BULK_HOST, '. ZeroBounce documents no regional host for bulk files, scoring files,',
+            ' email finder and domain search files, the list evaluator, S3/SFTP or the Inbox',
+            ' Placement Tester. Override BULK_URI, ZbBulkRootURL, ZbListEvaluatorURL and',
+            ' ZbInboxPlacementURL if ZeroBounce gave you regional ones.'
+        ));
     end;
 
     function ZBGetRequest(url: String): TZbRequestResponse;
@@ -429,6 +548,7 @@ end;
         error: ZbException;
     begin
         ZbRequireApiKey;
+        url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -445,6 +565,8 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            { A redirect could send the key to another host. }
+            Client.MaxRedirects := 0;
             ResponseStream := TStringStream.Create('');
             try
                 Client.HTTPMethod('GET', url, ResponseStream, [200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503]);
@@ -458,6 +580,8 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
+            { A redirect could send the key to another host. }
+            Client.HandleRedirects := False;
             try
               Response := Client.Get(url);
               Result.Payload := Response.ContentAsString();
@@ -485,6 +609,7 @@ end;
         error: ZbException;
     begin
         ZbRequireApiKey;
+        url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -500,6 +625,8 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            { A redirect could send the key to another host. }
+            Client.MaxRedirects := 0;
 
             Client.AddHeader('Content-Type', 'application/json; charset=UTF-8');
             Client.AddHeader('Accept', 'application/json');
@@ -514,6 +641,8 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { A redirect could send the key to another host. }
+            Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(JsonParam);
             try
               Client.CustomHeaders['Content-Type'] := 'application/json; charset=UTF-8';
@@ -546,7 +675,42 @@ end;
         Result := ZBSendRequestWithHeader(Method, url, Body, ContentType, '', '');
     end;
 
+    function ZbJsonEscape(const Value: String): String;
+    var
+        I: Integer;
+        Ch: Char;
+    begin
+        Result := '';
+        for I := 1 to Length(Value) do
+        begin
+            Ch := Value[I];
+            case Ch of
+                '\': Result := Result + '\\';
+                '"': Result := Result + '\"';
+                #8: Result := Result + '\b';
+                #9: Result := Result + '\t';
+                #10: Result := Result + '\n';
+                #12: Result := Result + '\f';
+                #13: Result := Result + '\r';
+            else
+                if Ch < #32 then
+                    Result := Result + Format('\u%.4x', [Ord(Ch)])
+                else
+                    Result := Result + Ch;
+            end;
+        end;
+    end;
+
     function ZBSendRequestWithHeader(Method, url, Body, ContentType,
+        HeaderName, HeaderValue: String): TZbRequestResponse;
+    begin
+        ZbRequireApiKey;
+        Result := ZBSendForeignKeyRequest(
+            Method, url, Body, ContentType, HeaderName, HeaderValue
+        );
+    end;
+
+    function ZBSendForeignKeyRequest(Method, url, Body, ContentType,
         HeaderName, HeaderValue: String): TZbRequestResponse;
     var
         {$IFDEF FPC}
@@ -558,7 +722,7 @@ end;
         Response: IHTTPResponse;
         {$ENDIF}
     begin
-        ZbRequireApiKey;
+        url := ZbCheckedUrl(url);
         ZbLastRequestMethod := Method;
         ZbLastRequestBody := Body;
         if HeaderName <> '' then
@@ -582,6 +746,8 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            { A redirect could send the key to another host. }
+            Client.MaxRedirects := 0;
             Client.AddHeader('Accept', 'application/json');
             if HeaderName <> '' then
                 Client.AddHeader(HeaderName, HeaderValue);
@@ -605,6 +771,8 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
+            { A redirect could send the key to another host. }
+            Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(Body);
             try
                 Client.CustomHeaders['Accept'] := 'application/json';
@@ -638,6 +806,7 @@ end;
         error: ZbException;
     begin
         ZbRequireApiKey;
+        url := ZbCheckedUrl(url);
         ZbLastRequestMethod := 'POST';
         ZbLastRequestBody := FormBody;
         if ZbResponseMock.StatusCode <> 0 then
@@ -655,6 +824,8 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            { A redirect could send the key to another host. }
+            Client.MaxRedirects := 0;
 
             Client.AddHeader('Content-Type', 'application/x-www-form-urlencoded');
             Client.AddHeader('Accept', 'application/json');
@@ -669,6 +840,8 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { A redirect could send the key to another host. }
+            Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(FormBody);
             try
               Client.CustomHeaders['Content-Type'] := 'application/x-www-form-urlencoded';
@@ -727,6 +900,7 @@ end;
         {$ENDIF}
     begin
         ZbRequireApiKey;
+        url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
         begin
             Result := ZbResponseMock;
@@ -743,6 +917,8 @@ end;
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
+            { A redirect could send the key to another host. }
+            Client.MaxRedirects := 0;
             ResponseStream := TStringStream.Create('');
 
             try
@@ -776,6 +952,8 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { A redirect could send the key to another host. }
+            Client.HandleRedirects := False;
             FileStream := TStringStream.Create(FileContent);
             MPForm := FormDataFromTString;
             try

@@ -434,12 +434,10 @@ function ZbGetListEvaluatorResult(FileId: String): String;
 var
     UrlToAccess: String;
 begin
-    if Trim(FileId) = '' then
-        raise ZbException.Create('Empty parameter: file_id');
     { The list evaluator has its own base URL, not a path built from BULK_URI,
       and the file id is one path segment, so a slash must stay encoded. }
     UrlToAccess := Concat(
-        ZbListEvaluatorURL, '/', EncodePathSegment(Trim(FileId)),
+        ZbListEvaluatorURL, '/', ZbPathSegment(FileId, 'file_id'),
         '/?api_key=', EncodeParam(ZbApiKey)
     );
     Result := P3RawJsonGet(UrlToAccess);
@@ -735,9 +733,7 @@ end;
 
 function P3InboxPlacementTestSegment(const TestId: String): String;
 begin
-    if Trim(TestId) = '' then
-        raise ZbException.Create('Empty parameter: test_id');
-    Result := EncodePathSegment(Trim(TestId));
+    Result := ZbPathSegment(TestId, 'test_id');
 end;
 
 function ZbInboxPlacementProviders: String;
