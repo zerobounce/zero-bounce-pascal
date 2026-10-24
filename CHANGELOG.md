@@ -12,11 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TZbValidateOptions` accepts `DomainInfo`, `GreylistProcessing` and `CallbackUrl`. A `-1` field is not sent; booleans go on the wire as the strings `true`/`false`. `CallbackUrl` is where the greylist retry posts its result, so it is rejected without `GreylistProcessing = 1`, and when blank, before any request is sent.
 - `TZbValidationResult` carries `DomainWebsiteExists`, `DomainRegistrantCompanyName` and `Message`. `Message` is the API's `Message` key, returned instead of a result while a greylist retry is still running.
 - The rest of the documented bulk surface: `ZbEmailFinderS3File`, `ZbDomainSearchS3File`, and the SFTP/FTP jobs `ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile` and `ZbExportSFTPFile`, sharing the new `TZbBulkFileJobOptions`. `ZbValidateSFTPFile`'s `FileName` is optional - leaving it empty uses the input bucket from your ZeroBounce settings - and `ZbExportSFTPFile` takes `export_path`, not the `export_bucket` `ZbExportS3File` sends.
-- The Inbox Placement Tester: the API key goes on the query string, bodies are camelCase JSON, and unset fields are left out.
-- **ZbUtility**: `ZbListEvaluatorURL` and `ZbInboxPlacementURL` (separate base URLs rather than paths built from `BULK_URI`), `ZBSendRequest`, `EncodePathSegment`, and `ZbLastRequestMethod` / `ZbLastRequestBody` for the offline tests.
+- The Inbox Placement Tester: an `Authorization: Bearer` key, camelCase JSON bodies, and unset fields left out.
+- **ZbWarmup**: a client for the [Warmup API](https://www.zerobounce.net/docs/warmup-api), a separate product with its own host, its own team-scoped key (`ZbWarmupInitialize`, sent in an `API-Key` header) and 26 endpoints. Every function returns the raw JSON body, or an empty string for the documented empty successes (HTTP 204 and an empty 200); `ZbWarmupDownloadSeeds` and `ZbWarmupDownloadStatistics` return CSV text and save it as well when given a path.
+- **ZbUtility**: `ZbListEvaluatorURL` and `ZbInboxPlacementURL` (separate base URLs rather than paths built from `BULK_URI`), `ZBSendRequest`, `ZBSendRequestWithHeader`, `ZBSendForeignKeyRequest`, `EncodePathSegment`, `ZbJsonEscape`, and `ZbLastRequestMethod` / `ZbLastRequestBody` / `ZbLastRequestHeader` for the offline tests.
+- **ZbUtility** safety rails: `ZbCheckedApiKey` rejects a key with surrounding whitespace or control characters, `ZbRequireHttpsUrl` allows only `https://` (and loopback, so an offline test can use a local stub), `ZbPathSegment` rejects a `.` or `..` id, redirects are never followed, and `RedactSecrets` keeps the key out of exception messages. A regional base URL paired with the single global bulk host warns once.
+- `live/live_api.lpr`, an opt-in live suite. It is its own program, outside `tests/`, so the offline suite never builds or runs it. Keys come from `ZEROBOUNCE_API_KEY` and `ZEROBOUNCE_WARMUP_API_KEY`; `ZEROBOUNCE_LIVE_SPEND=1` and `ZEROBOUNCE_LIVE_CHANGES=1` opt in to calls that spend credits or make reversible account changes.
 
 ### Changed
 
+- Verified against the live API. Where it disagrees with the docs, the API wins and the call site says so:
+  - `validatebatch` takes `timeout` as a JSON **string**. Sent as a number the API rejects the whole batch with the account-level "Invalid API Key or your account ran out of credits".
+  - The Inbox Placement Tester authenticates with `Authorization: Bearer`, not the `api_key` query parameter the rest of the API takes, and its listing is `GET /tests` (plural) - `/test` answers `Method "GET" not allowed`.
+  - Every S3/SFTP job requires both `file_name` and `return_url`, `ZbValidateSFTPFile` included, although the docs call its `file_name` optional. Both are checked before the request is sent.
+  - `ZbSendEvaluatedFile` takes the file id as a form field rather than a path segment.
+- A `"success": false` field on an HTTP 200 now raises instead of being returned as a result. `getfile` and `deletefile` report an unknown or deleted file id that way, and `ZbException.StatusCode` carries the HTTP status.
 - `ZbGetListEvaluatorResult` uses `ZbListEvaluatorURL`, encodes the file id as a single path segment, and rejects a blank id before a request is sent.
 - `ZbExportS3File`'s `ExportBucket` is optional, matching the documented endpoint: an empty string uses the export bucket from your ZeroBounce settings. A whitespace-only value is still rejected.
 
