@@ -33,8 +33,9 @@ type
         procedure TestGreylistMessageLandsOnTheResult;
         procedure TestListEvaluatorUsesItsOwnBaseUrlAndEncodesTheFileId;
         procedure TestListEvaluatorRejectsABlankFileId;
+        procedure TestSendEvaluatedFilePostsTheFileIdAsAFormField;
         procedure TestS3AndSftpJobsSendTheDocumentedFieldsOnly;
-        procedure TestValidateSftpFileNameIsOptional;
+        procedure TestEveryBulkFileJobRequiresFileNameAndReturnUrl;
         procedure TestExportsUseTheirOwnDestinationField;
         procedure TestBulkJobsRejectInvalidArguments;
         procedure TestInboxPlacementUsesItsOwnHostAndCamelCaseJson;
@@ -50,11 +51,13 @@ const
 procedure TTestBulkJobs.SetUp;
 begin
     inherited SetUp;
+    BULK_URI := 'https://bulkapi.zerobounce.net/v2';
     ZbBulkRootURL := 'https://bulkapi.zerobounce.net';
     ZbListEvaluatorURL := 'https://bulkapi.zerobounce.net/v2/listevaluator';
     ZbInboxPlacementURL := 'https://bulkapi.zerobounce.net/api/ipt';
     ZbLastRequestMethod := '';
     ZbLastRequestBody := '';
+    ZbLastRequestHeader := '';
 end;
 
 procedure TTestBulkJobs.MockOk(const Payload: String);
@@ -247,6 +250,37 @@ begin
     AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
 end;
 
+procedure TTestBulkJobs.TestSendEvaluatedFilePostsTheFileIdAsAFormField;
+var
+    Raised: Boolean;
+begin
+    MockOk(FILE_FEEDBACK_JSON);
+
+    { LIVE: send-evaluated-file takes the file id as a form field. Appended to
+      the path instead it answers 404, and the trailing slash is part of the
+      endpoint. }
+    ZbSendEvaluatedFile('fid-1');
+    AssertEquals('POST', ZbLastRequestMethod);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/v2/send-evaluated-file/',
+        ZbResponseMock.UrlCalled
+    );
+    AssertBodyField('file_id', 'fid-1');
+
+    ZbResponseMock.UrlCalled := '';
+    Raised := False;
+    try
+        ZbSendEvaluatedFile('  ');
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('file_id', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a blank file id should be rejected', Raised);
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+end;
+
 procedure TTestBulkJobs.TestS3AndSftpJobsSendTheDocumentedFieldsOnly;
 var
     Options: TZbBulkFileJobOptions;
@@ -255,6 +289,7 @@ begin
 
     Options := ZbDefaultBulkFileJobOptions;
     Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
     ZbEmailFinderS3File(Options);
 
     AssertEquals('POST', ZbLastRequestMethod);
@@ -263,15 +298,14 @@ begin
         'https://bulkapi.zerobounce.net/emailFinderS3file', ZbResponseMock.UrlCalled
     );
     AssertBodyField('file_name', 'lists/leads.csv');
+    AssertBodyField('return_url', 'https://example.com/done');
     AssertBodyField('has_header_row', 'true');
-    { Unset options stay off the request entirely. }
+    { Options that were never set stay off the request entirely. }
     RefuteBodyField('remove_duplicates');
-    RefuteBodyField('return_url');
 
     Options.HasHeaderRow := False;
     Options.RemoveDuplicatesSpecified := True;
     Options.RemoveDuplicates := True;
-    Options.ReturnUrl := 'https://example.com/done';
     ZbDomainSearchS3File(Options);
 
     AssertEquals(
@@ -279,36 +313,71 @@ begin
     );
     AssertBodyField('has_header_row', 'false');
     AssertBodyField('remove_duplicates', 'true');
-    AssertBodyField('return_url', 'https://example.com/done');
 
     Options := ZbDefaultBulkFileJobOptions;
     Options.FileName := 'my_file.txt';
+    Options.ReturnUrl := 'https://example.com/done';
     ZbScoreSFTPFile(Options);
     AssertEquals('https://bulkapi.zerobounce.net/scoreSFTPfile', ZbResponseMock.UrlCalled);
     ZbEmailFinderSFTPFile(Options);
     AssertEquals('https://bulkapi.zerobounce.net/emailFinderSFTPfile', ZbResponseMock.UrlCalled);
     ZbDomainSearchSFTPFile(Options);
     AssertEquals('https://bulkapi.zerobounce.net/domainSearchSFTPfile', ZbResponseMock.UrlCalled);
+    ZbValidateSFTPFile(Options);
+    AssertEquals('https://bulkapi.zerobounce.net/validateSFTPfile', ZbResponseMock.UrlCalled);
 end;
 
-procedure TTestBulkJobs.TestValidateSftpFileNameIsOptional;
+procedure TTestBulkJobs.TestEveryBulkFileJobRequiresFileNameAndReturnUrl;
 var
     Options: TZbBulkFileJobOptions;
+    Raised: Boolean;
+
+    procedure ExpectRejected(const Fragment: String);
+    begin
+        AssertTrue(Concat('expected a rejection mentioning ', Fragment), Raised);
+        AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+    end;
+
 begin
     MockOk(FILE_FEEDBACK_JSON);
 
-    { file_name is optional for validateSFTPfile alone: without it the input
-      bucket from the account's settings is used. }
+    { LIVE: the docs call file_name optional for validateSFTPfile, but the API
+      answers "Empty parameter: file_name" without it, and every job needs a
+      return_url as well. Both are checked before the request goes out. }
+    ZbResponseMock.UrlCalled := '';
     Options := ZbDefaultBulkFileJobOptions;
-    ZbValidateSFTPFile(Options);
+    Options.ReturnUrl := 'https://example.com/done';
+    Raised := False;
+    try
+        ZbValidateSFTPFile(Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('file_name', e.Message) > 0);
+        end;
+    end;
+    ExpectRejected('file_name');
 
-    AssertEquals('https://bulkapi.zerobounce.net/validateSFTPfile', ZbResponseMock.UrlCalled);
-    RefuteBodyField('file_name');
-    AssertBodyField('has_header_row', 'true');
-
+    ZbResponseMock.UrlCalled := '';
+    Options := ZbDefaultBulkFileJobOptions;
     Options.FileName := 'my_file.txt';
+    Raised := False;
+    try
+        ZbValidateSFTPFile(Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('return_url', e.Message) > 0);
+        end;
+    end;
+    ExpectRejected('return_url');
+
+    { With both present the job goes out and carries them. }
+    Options.ReturnUrl := 'https://example.com/done';
     ZbValidateSFTPFile(Options);
+    AssertEquals('https://bulkapi.zerobounce.net/validateSFTPfile', ZbResponseMock.UrlCalled);
     AssertBodyField('file_name', 'my_file.txt');
+    AssertBodyField('return_url', 'https://example.com/done');
 end;
 
 procedure TTestBulkJobs.TestExportsUseTheirOwnDestinationField;
@@ -359,7 +428,7 @@ begin
     end;
     ExpectRejected('file_name');
 
-    { An unset name is allowed for validateSFTPfile, but a blank one is not. }
+    { A blank name is rejected just like a missing one. }
     Options.FileName := '   ';
     Raised := False;
     try
@@ -407,8 +476,13 @@ begin
 
     ZbInboxPlacementProviders;
     AssertEndpointCalled('/api/ipt/providers');
-    { The API key goes on the query string here, not in the body. }
-    AssertQueryField('api_key', MOCK_API_KEY);
+    { LIVE: the key travels in an Authorization: Bearer header. Sent as an
+      api_key query parameter the request is rejected as unauthorized, and the
+      key would end up in whatever logs the query string. }
+    AssertEquals(
+        Concat('Authorization: Bearer ', MOCK_API_KEY), ZbLastRequestHeader
+    );
+    RefuteQueryField('api_key');
 
     ZbInboxPlacementTestTypes;
     AssertEndpointCalled('/api/ipt/test-types');
@@ -439,6 +513,9 @@ begin
     ListOptions.PageSizeSpecified := True;
     ListOptions.PageSize := 25;
     ZbListInboxPlacementTests(@ListOptions);
+    { LIVE: the listing is GET /tests (plural). /test is the single-test path
+      and answers 'Method "GET" not allowed'. }
+    AssertEndpointCalled('/api/ipt/tests?');
     AssertQueryField('status', 'finished');
     AssertQueryField('page', '1');
     AssertQueryField('pageSize', '25');

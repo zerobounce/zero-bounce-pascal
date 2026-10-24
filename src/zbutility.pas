@@ -76,6 +76,8 @@ var
     { What the last request actually sent. Offline tests assert on these. }
     ZbLastRequestMethod: string = '';
     ZbLastRequestBody: string = '';
+    { 'Name: Value' of the one extra header the last request carried, or ''. }
+    ZbLastRequestHeader: string = '';
     { FPC only: PEM CA bundle for TLS verification. When empty, SSL_CERT_FILE, system paths, and cacert.pem beside the exe are tried. }
     ZbCACertFile: string = '';
     ZbResponseMock: TZbRequestResponse = (
@@ -94,6 +96,9 @@ threadvar
     function EncodeParam(param: String): String;
     function RedactSecrets(const S: string): string;
     function ZbBodyLooksLikeHtml(const Body: String): Boolean;
+    { Whether a JSON body says the call failed although the HTTP status was a
+      success. The API sends "success" as a JSON false, "false" or "False". }
+    function ZbSuccessMeansFailure(const Body: String): Boolean;
     function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
@@ -105,6 +110,10 @@ threadvar
     { A request with an explicit method and an optional body, for the Inbox
       Placement Tester's PUT and DELETE. }
     function ZBSendRequest(Method, url, Body, ContentType: String): TZbRequestResponse;
+    { As ZBSendRequest, plus one extra request header. The Inbox Placement
+      Tester needs Authorization: Bearer. }
+    function ZBSendRequestWithHeader(Method, url, Body, ContentType,
+        HeaderName, HeaderValue: String): TZbRequestResponse;
     function ZBFormPostRequest(url: String; FormBody: String): TZbRequestResponse;
     // performs a POST request with a multi-part form body
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
@@ -261,6 +270,29 @@ end;
         end;
     end;
 
+    function ZbSuccessMeansFailure(const Body: String): Boolean;
+    var
+        Trimmed, Lowered: String;
+        Marker: Integer;
+    begin
+        Result := False;
+        Trimmed := Trim(Body);
+        if (Trimmed = '') or (Trimmed[1] <> '{') then
+            Exit;
+        Lowered := LowerCase(Trimmed);
+        Marker := Pos('"success"', Lowered);
+        if Marker = 0 then
+            Exit;
+        { Only the value that follows the key matters, and it is either a JSON
+          false or the string "false". }
+        Lowered := Copy(Lowered, Marker + 9, 20);
+        Marker := Pos(':', Lowered);
+        if Marker = 0 then
+            Exit;
+        Lowered := Trim(Copy(Lowered, Marker + 1, Length(Lowered) - Marker));
+        Result := (Copy(Lowered, 1, 5) = 'false') or (Copy(Lowered, 1, 7) = '"false"');
+    end;
+
     function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
     var
         Trimmed: String;
@@ -300,7 +332,10 @@ end;
     var
         Error: ZbException;
     begin
-        if ZbBodyLooksLikeHtml(Response.Payload) or (Response.StatusCode > 299) then
+        { LIVE: a "success": false field on an HTTP 200 is a failure, not a
+          result. The API answers an unknown bulk file id that way. }
+        if ZbBodyLooksLikeHtml(Response.Payload) or (Response.StatusCode > 299) or
+           ZbSuccessMeansFailure(Response.Payload) then
         begin
             Error := ZbException.FromResponse('', Response);
             Error.MarkHttpError;
@@ -507,6 +542,12 @@ end;
     end;
 
     function ZBSendRequest(Method, url, Body, ContentType: String): TZbRequestResponse;
+    begin
+        Result := ZBSendRequestWithHeader(Method, url, Body, ContentType, '', '');
+    end;
+
+    function ZBSendRequestWithHeader(Method, url, Body, ContentType,
+        HeaderName, HeaderValue: String): TZbRequestResponse;
     var
         {$IFDEF FPC}
         Client: TFPHTTPClient;
@@ -520,6 +561,10 @@ end;
         ZbRequireApiKey;
         ZbLastRequestMethod := Method;
         ZbLastRequestBody := Body;
+        if HeaderName <> '' then
+            ZbLastRequestHeader := Concat(HeaderName, ': ', HeaderValue)
+        else
+            ZbLastRequestHeader := '';
 
         if ZbResponseMock.StatusCode <> 0 then
         begin
@@ -538,6 +583,8 @@ end;
             Client.ConnectTimeout := 30000;
             Client.IOTimeout := 120000;
             Client.AddHeader('Accept', 'application/json');
+            if HeaderName <> '' then
+                Client.AddHeader(HeaderName, HeaderValue);
             if Body <> '' then
             begin
                 Client.AddHeader('Content-Type', ContentType);
@@ -561,6 +608,8 @@ end;
             BodyStream := TStringStream.Create(Body);
             try
                 Client.CustomHeaders['Accept'] := 'application/json';
+                if HeaderName <> '' then
+                    Client.CustomHeaders[HeaderName] := HeaderValue;
                 if Body <> '' then
                     Client.CustomHeaders['Content-Type'] := ContentType;
                 Response := Client.Execute(Method, url, BodyStream);

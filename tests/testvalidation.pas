@@ -147,6 +147,7 @@ end;
 
 procedure TTestValidation.TestBatchBodyEncoderWithOptions;
 var
+    Body: String;
     JsonObj: TZbJSon;
     Options: TZbValidateOptions;
 begin
@@ -155,8 +156,14 @@ begin
     Options.Timeout := 45;
     Options.ActivityData := 1;
     Options.VerifyPlus := 1;
-    JsonObj := TZbJSon.Create(ZbBatchRequestBodyFromEmails(EmailsAndIps1, Options));
-    AssertEquals('timeout', JsonObj.GetInteger('timeout'), 45);
+    Body := ZbBatchRequestBodyFromEmails(EmailsAndIps1, Options);
+    { LIVE: validatebatch takes timeout as a JSON *string*. Sent as a number
+      the API rejects the whole batch with the account-level "Invalid API Key
+      or your account ran out of credits", so the quotes are asserted on the
+      raw body and not through a coercing getter. }
+    AssertTrue(Body, Pos('"timeout": "45"', Body) > 0);
+    JsonObj := TZbJSon.Create(Body);
+    AssertEquals('timeout', JsonObj.GetString('timeout'), '45');
     AssertTrue('activity_data', JsonObj.GetBoolean('activity_data'));
     AssertTrue('verify_plus', JsonObj.GetBoolean('verify_plus'));
 end;

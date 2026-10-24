@@ -127,8 +127,11 @@ implementation
                 );
         end;
         Extras := '';
+        { LIVE: validatebatch takes timeout as a JSON *string*. Sent as a
+          number the API rejects the whole batch with the account-level
+          "Invalid API Key or your account ran out of credits". }
         if Options.Timeout >= 0 then
-            Extras := Extras + format(', "timeout": %d', [Options.Timeout]);
+            Extras := Extras + format(', "timeout": "%d"', [Options.Timeout]);
         if Options.ActivityData >= 0 then
             if Options.ActivityData = 0 then
                 Extras := Extras + ', "activity_data": false'

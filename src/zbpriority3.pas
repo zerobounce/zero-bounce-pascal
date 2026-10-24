@@ -103,7 +103,7 @@ function ZbDomainSearchResultDelete(FileId: String): TZBFileFeedback;
 
 function ZbSendListEvaluatorFile(FileContent: String; EmailAddressColumn: Integer): TZBFileFeedback;
 function ZbGetListEvaluatorResult(FileId: String): String;
-function ZbSendEvaluatedFile(FileContent: String): TZBFileFeedback;
+function ZbSendEvaluatedFile(FileId: String): TZBFileFeedback;
 
 function ZbAddFilter(const Rule, Target, Value: String): String;
 function ZbListFilters(UsePost: Boolean): String;
@@ -123,8 +123,10 @@ function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
   your ZeroBounce settings. }
 function ZbEmailFinderS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 function ZbDomainSearchS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
-{ This is the one job whose file_name the docs list as optional: leave
-  Options.FileName empty to use the input bucket from your settings. }
+{ LIVE: file_name and return_url are required on every S3/SFTP job, including
+  this one, although the docs list file_name as optional here. Without either
+  the API answers "Empty parameter: file_name" / "Empty parameter: return_url",
+  so both are checked before the request leaves. }
 function ZbValidateSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 function ZbScoreSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 function ZbEmailFinderSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
@@ -134,9 +136,11 @@ function ZbDomainSearchSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback
 function ZbExportSFTPFile(const FileId, ExportPath: String): TZBFileFeedback;
 function ZbDefaultBulkFileJobOptions: TZbBulkFileJobOptions;
 
-{ Inbox Placement Tester (/api/ipt). Its own host, the API key on the query
-  string, camelCase JSON bodies, and errors under a "detail" key. Spends the
-  account's inbox-test credits. }
+{ Inbox Placement Tester (/api/ipt). Its own host, camelCase JSON bodies, and
+  errors under a "detail" key. Spends the account's inbox-test credits.
+
+  LIVE: it authenticates with an Authorization: Bearer header, not the api_key
+  query parameter the rest of the API takes. }
 function ZbInboxPlacementProviders: String;
 function ZbInboxPlacementTestTypes: String;
 function ZbCreateInboxPlacementTest(Name: String;
@@ -441,13 +445,35 @@ begin
     Result := P3RawJsonGet(UrlToAccess);
 end;
 
-function ZbSendEvaluatedFile(FileContent: String): TZBFileFeedback;
+{ Submits a finished evaluation for validation. POST /v2/send-evaluated-file/
+
+  LIVE: this takes the list evaluator's file_id as a form field, not the file
+  upload the docs describe - an upload is rejected with
+  "file_id: This field is required". It returns a new validation job's file_id,
+  which answers "File cannot be found" for a short while after it is accepted. }
+function ZbSendEvaluatedFile(FileId: String): TZBFileFeedback;
 var
-    Form: TStrings;
+    Body: String;
+    response: TZbRequestResponse;
+    error: ZbException;
 begin
-    Form := TStringList.Create;
-    Form.AddPair('api_key', ZbApiKey);
-    Result := P3MultipartSubmit(Concat(BULK_URI, ENDPOINT_SEND_EVALUATED_FILE), FileContent, Form);
+    if Trim(FileId) = '' then
+        raise ZbException.Create('Empty parameter: file_id');
+
+    Body := Concat('api_key=', EncodeParam(ZbApiKey),
+                   '&file_id=', EncodeParam(Trim(FileId)));
+    response := ZBFormPostRequest(
+        Concat(BULK_URI, ENDPOINT_SEND_EVALUATED_FILE), Body
+    );
+    try
+        Result := ZbFileFeedbackFromJson(response.Payload);
+    except on e: Exception do
+        begin
+            error := ZbException.FromResponse(e.Message, response);
+            error.MarkJsonError;
+            raise error;
+        end;
+    end;
 end;
 
 function ZbAddFilter(const Rule, Target, Value: String): String;
@@ -590,27 +616,29 @@ end;
 { POSTs one of the six documented S3 / SFTP file jobs on the bulkapi root.
   Booleans go on the wire as the strings 'true'/'false', and an option the
   caller left unset is not sent at all. }
-function P3BulkRootFileJob(const Endpoint: String; Options: TZbBulkFileJobOptions;
-    FileNameRequired: Boolean): TZBFileFeedback;
+{ POSTs one of the six documented S3 / SFTP file jobs on the bulkapi root.
+
+  LIVE: file_name and return_url are required on every one of them,
+  validateSFTPfile included, although the docs list file_name as optional for
+  that one. Without either the API answers "This field is required". }
+function P3BulkRootFileJob(const Endpoint: String;
+    Options: TZbBulkFileJobOptions): TZBFileFeedback;
 var
     Body: String;
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    if FileNameRequired and (Trim(Options.FileName) = '') then
+    if Trim(Options.FileName) = '' then
         raise ZbException.Create('Empty parameter: file_name');
-    if (not FileNameRequired) and (Options.FileName <> '')
-        and (Trim(Options.FileName) = '') then
-        raise ZbException.Create('Empty parameter: file_name');
+    if Trim(Options.ReturnUrl) = '' then
+        raise ZbException.Create('Empty parameter: return_url');
 
     Body := Concat('api_key=', EncodeParam(ZbApiKey));
     Body := Concat(Body, '&has_header_row=', P3BoolField(Options.HasHeaderRow));
-    if Options.FileName <> '' then
-        Body := Concat(Body, '&file_name=', EncodeParam(Options.FileName));
+    Body := Concat(Body, '&file_name=', EncodeParam(Options.FileName));
+    Body := Concat(Body, '&return_url=', EncodeParam(Options.ReturnUrl));
     if Options.RemoveDuplicatesSpecified then
         Body := Concat(Body, '&remove_duplicates=', P3BoolField(Options.RemoveDuplicates));
-    if Options.ReturnUrl <> '' then
-        Body := Concat(Body, '&return_url=', EncodeParam(Options.ReturnUrl));
 
     response := ZBFormPostRequest(Concat(ZbBulkRootURL, Endpoint), Body);
     try
@@ -626,33 +654,33 @@ end;
 
 function ZbEmailFinderS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
-    Result := P3BulkRootFileJob('/emailFinderS3file', Options, True);
+    Result := P3BulkRootFileJob('/emailFinderS3file', Options);
 end;
 
 function ZbDomainSearchS3File(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
-    Result := P3BulkRootFileJob('/domainSearchS3file', Options, True);
+    Result := P3BulkRootFileJob('/domainSearchS3file', Options);
 end;
 
 function ZbValidateSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
     { The one job whose file_name the docs make optional. }
-    Result := P3BulkRootFileJob('/validateSFTPfile', Options, False);
+    Result := P3BulkRootFileJob('/validateSFTPfile', Options);
 end;
 
 function ZbScoreSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
-    Result := P3BulkRootFileJob('/scoreSFTPfile', Options, True);
+    Result := P3BulkRootFileJob('/scoreSFTPfile', Options);
 end;
 
 function ZbEmailFinderSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
-    Result := P3BulkRootFileJob('/emailFinderSFTPfile', Options, True);
+    Result := P3BulkRootFileJob('/emailFinderSFTPfile', Options);
 end;
 
 function ZbDomainSearchSFTPFile(Options: TZbBulkFileJobOptions): TZBFileFeedback;
 begin
-    Result := P3BulkRootFileJob('/domainSearchSFTPfile', Options, True);
+    Result := P3BulkRootFileJob('/domainSearchSFTPfile', Options);
 end;
 
 function ZbExportSFTPFile(const FileId, ExportPath: String): TZBFileFeedback;
@@ -690,12 +718,19 @@ end;
 
 function P3InboxPlacementRequest(const Method, Path, ExtraQuery, Body: String): String;
 var
-    UrlToAccess: String;
+    UrlToAccess, Query: String;
 begin
     UrlToAccess := Concat(ZbInboxPlacementURL, Path);
-    { The API key goes on the query string here, not in the body. }
-    UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey), ExtraQuery);
-    Result := ZBSendRequest(Method, UrlToAccess, Body, JSON_CONTENT_TYPE).Payload;
+    { LIVE: the Inbox Placement Tester authenticates with a Bearer header.
+      Sent as an api_key parameter the request is rejected as unauthorized,
+      and the key would end up in a query string that gets logged. }
+    Query := ExtraQuery;
+    if (Query <> '') and (Query[1] = '&') then
+        Query := Concat('?', Copy(Query, 2, Length(Query) - 1));
+    Result := ZBSendRequestWithHeader(
+        Method, Concat(UrlToAccess, Query), Body, JSON_CONTENT_TYPE,
+        'Authorization', Concat('Bearer ', ZbApiKey)
+    ).Payload;
 end;
 
 function P3InboxPlacementTestSegment(const TestId: String): String;
@@ -760,7 +795,9 @@ begin
         if Options^.PageSizeSpecified then
             Query := Concat(Query, '&pageSize=', IntToStr(Options^.PageSize));
     end;
-    Result := P3InboxPlacementRequest('GET', '/test', Query, '');
+    { LIVE: the listing is GET /tests (plural). /test is the single-test path
+      and answers 'Method "GET" not allowed'. }
+    Result := P3InboxPlacementRequest('GET', '/tests', Query, '');
 end;
 
 function ZbDeleteInboxPlacementTest(TestId: String): String;
