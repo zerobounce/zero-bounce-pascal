@@ -68,6 +68,8 @@ type
         SubStatusAllowed: Integer;
         SubStatusGold: Integer;
         SubStatusRoleBasedAcceptAll: Integer;
+        SubStatusLeadingPeriodRemoved: Integer;
+        SubStatusAliasAddress: Integer;
         StartDate: TDate;
         EndDate: TDate;
     end;
@@ -352,6 +354,8 @@ implementation
         Result.SubStatusAllowed :=                    JsonObj.GetInteger('sub_status_allowed');
         Result.SubStatusGold :=                       JsonObj.GetInteger('sub_status_gold');
         Result.SubStatusRoleBasedAcceptAll :=         JsonObj.GetInteger('sub_status_role_based_accept_all');
+        Result.SubStatusLeadingPeriodRemoved :=       JsonObj.GetInteger('sub_status_leading_period_removed');
+        Result.SubStatusAliasAddress :=               JsonObj.GetInteger('sub_status_alias_address');
 
         Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
         Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
