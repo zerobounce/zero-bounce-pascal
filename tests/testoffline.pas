@@ -307,6 +307,30 @@ begin
   CloseSocket(ListenSock);
 end;
 
+procedure WakeStubAccept(APort: Integer);
+{ Closing the listening socket does NOT reliably wake a thread blocked in
+  accept() on Linux: POSIX leaves the behaviour undefined and there the call
+  stays blocked until a connection actually arrives. That is why this suite
+  finished on a macOS host but hung forever in Docker and in CI, where the
+  job ran to GitHub's 6 hour limit and was cancelled. One throwaway loopback
+  connection makes accept() return so the loop can observe Terminated. }
+var
+  Sock: LongInt;
+  Addr: sockaddr_in;
+begin
+  if APort <= 0 then
+    Exit;
+  Sock := fpSocket(AF_INET, SOCK_STREAM, 0);
+  if Sock < 0 then
+    Exit;
+  Addr := Default(sockaddr_in);
+  Addr.sin_family := AF_INET;
+  Addr.sin_port := htons(APort);
+  Addr.sin_addr.s_addr := htonl($7F000001);
+  fpConnect(Sock, @Addr, SizeOf(Addr));
+  CloseSocket(Sock);
+end;
+
 procedure ClearRecorded;
 begin
   Gate.Enter;
@@ -786,7 +810,7 @@ finalization
   if Stub <> nil then
   begin
     Stub.Terminate;
-    CloseSocket(Stub.ListenSock);
+    WakeStubAccept(Stub.Port);
     Stub.WaitFor;
     Stub.Free;
   end;
