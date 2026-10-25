@@ -45,6 +45,7 @@ __recovery/
 
 # Executables, debugging and run-time builds
 tests/unit_tests
+tests/unit_tests_console
 /unit_tests_console
 debugging
 debugging.*
