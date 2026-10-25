@@ -40,6 +40,14 @@ type
         procedure TestBulkJobsRejectInvalidArguments;
         procedure TestInboxPlacementUsesItsOwnHostAndCamelCaseJson;
         procedure TestInboxPlacementRejectsBlankArguments;
+        procedure TestValidateS3FileSendsTheDocumentedFieldsOnly;
+        procedure TestScoreS3FileSendsTheDocumentedFieldsOnly;
+        procedure TestS3FileJobsRequireFileNameAndReturnUrl;
+        procedure TestS3FileJobErrorBodyReachesTheCaller;
+        procedure TestEmailFinderFileNeedsOneOfTheNameColumns;
+        procedure TestCreateInboxPlacementTestSendsProvidersAndSeeds;
+        procedure TestCreateInboxPlacementTestChecksItsArguments;
+        procedure TestListInboxPlacementTestsFiltersAndBounds;
     end;
 
 implementation
@@ -518,7 +526,10 @@ begin
     AssertEndpointCalled('/api/ipt/tests?');
     AssertQueryField('status', 'finished');
     AssertQueryField('page', '1');
-    AssertQueryField('pageSize', '25');
+    { LIVE: page_size, not pageSize. The camelCase spelling is accepted and
+      then silently ignored. }
+    AssertQueryField('page_size', '25');
+    RefuteQueryField('pageSize');
 
     ZbListInboxPlacementTests(nil);
     RefuteQueryField('status');
@@ -578,6 +589,482 @@ begin
     AssertTrue('a blank webhook url should be rejected', Raised);
 
     AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+end;
+
+{ Ops 31 and 32. LIVE: POST /validateS3file without return_url is answered
+  with 400 "Provided return URL is not permitted: None", so the field is
+  always sent and a missing one is refused before the call. The singular
+  remove_duplicate and the allow_phase_2 this used to send are not part of
+  the documented request and are gone. }
+procedure TTestBulkJobs.TestValidateS3FileSendsTheDocumentedFieldsOnly;
+var
+    Options: TZbValidateS3FileOptions;
+begin
+    MockOk(FILE_FEEDBACK_JSON);
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
+    ZbValidateS3File(Options);
+
+    AssertEquals('POST', ZbLastRequestMethod);
+    { The S3 jobs live on the bulkapi root, WITHOUT /v2. }
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/validateS3file', ZbResponseMock.UrlCalled
+    );
+    AssertBodyField('file_name', 'lists/leads.csv');
+    AssertBodyField('return_url', 'https://example.com/done');
+    { The key goes in the form body, not the query string. }
+    AssertBodyField('api_key', MOCK_API_KEY);
+    RefuteQueryField('api_key');
+    { Nothing the caller left unset goes out. }
+    RefuteBodyField('has_header_row');
+    RefuteBodyField('remove_duplicates');
+    RefuteBodyField('email_address_column');
+    RefuteBodyField('first_name_column');
+    RefuteBodyField('gender_column');
+    RefuteBodyField('ip_address_column');
+    { Neither of the two fields that were never part of the documented job. }
+    RefuteBodyField('remove_duplicate');
+    RefuteBodyField('allow_phase_2');
+
+    Options.HasHeaderRowSpecified := True;
+    Options.HasHeaderRow := False;
+    Options.RemoveDuplicatesSpecified := True;
+    Options.RemoveDuplicates := True;
+    Options.EmailAddressColumnSpecified := True;
+    Options.EmailAddressColumn := 1;
+    Options.FirstNameColumn := 2;
+    Options.LastNameColumn := 3;
+    Options.GenderColumn := 4;
+    Options.IpAddressColumn := 5;
+    ZbValidateS3File(Options);
+
+    AssertBodyField('has_header_row', 'false');
+    AssertBodyField('remove_duplicates', 'true');
+    AssertBodyField('email_address_column', '1');
+    AssertBodyField('first_name_column', '2');
+    AssertBodyField('last_name_column', '3');
+    AssertBodyField('gender_column', '4');
+    AssertBodyField('ip_address_column', '5');
+    { remove_duplicates is sent; the singular form is still not. }
+    RefuteBodyField('remove_duplicate');
+end;
+
+{ Op 32. The options record had no ReturnUrl at all, so return_url could never
+  be sent and the call could not succeed against the live API. }
+procedure TTestBulkJobs.TestScoreS3FileSendsTheDocumentedFieldsOnly;
+var
+    Options: TZbScoreS3FileOptions;
+    Feedback: TZBFileFeedback;
+begin
+    MockOk(FILE_FEEDBACK_JSON);
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
+    Options.RemoveDuplicatesSpecified := True;
+    Options.RemoveDuplicates := False;
+    Options.EmailAddressColumnSpecified := True;
+    Options.EmailAddressColumn := 2;
+    Feedback := ZbScoreS3File(Options);
+
+    AssertEquals('POST', ZbLastRequestMethod);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/scoreS3file', ZbResponseMock.UrlCalled
+    );
+    AssertBodyField('file_name', 'lists/leads.csv');
+    AssertBodyField('return_url', 'https://example.com/done');
+    AssertBodyField('remove_duplicates', 'false');
+    AssertBodyField('email_address_column', '2');
+    AssertBodyField('api_key', MOCK_API_KEY);
+    RefuteQueryField('api_key');
+    RefuteBodyField('remove_duplicate');
+    RefuteBodyField('has_header_row');
+
+    { The 200 body is parsed into the feedback record. }
+    AssertTrue(Feedback.Success);
+    AssertEquals('fid', Feedback.FileId);
+    AssertEquals('ok', Feedback.Message);
+end;
+
+procedure TTestBulkJobs.TestS3FileJobsRequireFileNameAndReturnUrl;
+var
+    ValidateOptions: TZbValidateS3FileOptions;
+    ScoreOptions: TZbScoreS3FileOptions;
+    Raised: Boolean;
+begin
+    MockOk(FILE_FEEDBACK_JSON);
+
+    { Same rail the six sibling jobs go through, and the same two messages. }
+    ZbResponseMock.UrlCalled := '';
+    FillChar(ValidateOptions, SizeOf(ValidateOptions), 0);
+    ValidateOptions.ReturnUrl := 'https://example.com/done';
+    Raised := False;
+    try
+        ZbValidateS3File(ValidateOptions);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('file_name', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a missing file_name should be rejected', Raised);
+
+    FillChar(ValidateOptions, SizeOf(ValidateOptions), 0);
+    ValidateOptions.FileName := 'lists/leads.csv';
+    Raised := False;
+    try
+        ZbValidateS3File(ValidateOptions);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('return_url', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a missing return_url should be rejected', Raised);
+
+    { A blank one is refused just like a missing one. }
+    ValidateOptions.ReturnUrl := '   ';
+    Raised := False;
+    try
+        ZbValidateS3File(ValidateOptions);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('return_url', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a blank return_url should be rejected', Raised);
+
+    FillChar(ScoreOptions, SizeOf(ScoreOptions), 0);
+    ScoreOptions.FileName := 'lists/leads.csv';
+    Raised := False;
+    try
+        ZbScoreS3File(ScoreOptions);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('return_url', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('scoreS3file should need a return_url too', Raised);
+
+    FillChar(ScoreOptions, SizeOf(ScoreOptions), 0);
+    ScoreOptions.ReturnUrl := 'https://example.com/done';
+    Raised := False;
+    try
+        ZbScoreS3File(ScoreOptions);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('file_name', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('scoreS3file should need a file_name too', Raised);
+
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+end;
+
+{ The error body the live API answers an S3 job with reaches the caller with
+  its status, rather than being parsed as a file feedback record. }
+procedure TTestBulkJobs.TestS3FileJobErrorBodyReachesTheCaller;
+var
+    Options: TZbValidateS3FileOptions;
+    Raised: Boolean;
+begin
+    ZBMockResponse(
+        400,
+        '{"error_message":"Provided return URL is not permitted: None"}',
+        JSON_CONTENT_TYPE
+    );
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
+    Raised := False;
+    try
+        ZbValidateS3File(Options);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertEquals(400, e.StatusCode);
+            AssertTrue(e.Payload, Pos('not permitted', e.Payload) > 0);
+        end;
+    end;
+    AssertTrue('an HTTP 400 should be raised', Raised);
+
+    { A 200 whose body is not the feedback JSON is a Json Error carrying the
+      body, not a half-filled record. }
+    ZBMockResponse(200, 'Access denied', 'text/plain');
+    Raised := False;
+    try
+        ZbValidateS3File(Options);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('Json Error', e.Message) > 0);
+            AssertEquals('Access denied', e.Payload);
+        end;
+    end;
+    AssertTrue('an unparseable 200 should be raised', Raised);
+end;
+
+{ Op 20. The docs make domain_column required and then one of the two name
+  columns; only the first was checked, so a file with neither went out and
+  came back rejected. }
+procedure TTestBulkJobs.TestEmailFinderFileNeedsOneOfTheNameColumns;
+var
+    Options: TZbEmailFinderSendFileOptions;
+    Raised: Boolean;
+begin
+    MockOk(FILE_FEEDBACK_JSON);
+    ZbResponseMock.UrlCalled := '';
+
+    FillChar(Options, SizeOf(Options), 0);
+    Raised := False;
+    try
+        ZbSendEmailFinderFile('a@example.com', 1, @Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('first_name_column', e.Message) > 0);
+            AssertTrue(e.Message, Pos('full_name_column', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('neither name column should be rejected', Raised);
+
+    { No options at all is the same case. }
+    Raised := False;
+    try
+        ZbSendEmailFinderFile('a@example.com', 1, nil);
+    except on e: Exception do
+        Raised := True;
+    end;
+    AssertTrue('a nil options pointer should be rejected', Raised);
+
+    { domain_column is still checked first. }
+    Options.FullNameColumn := 2;
+    Raised := False;
+    try
+        ZbSendEmailFinderFile('a@example.com', 0, @Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('domain_column', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a missing domain_column should be rejected', Raised);
+
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+
+    { Either name column on its own is enough. }
+    ZbSendEmailFinderFile('a@example.com', 1, @Options);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/email-finder/sendfile',
+        ZbResponseMock.UrlCalled
+    );
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FirstNameColumn := 3;
+    ZbSendEmailFinderFile('a@example.com', 1, @Options);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/email-finder/sendfile',
+        ZbResponseMock.UrlCalled
+    );
+end;
+
+{ Op 43. providerIds, seedIds and providers[] had no home in the options
+  record, so there was no way to choose the mailboxes a test runs against. }
+procedure TTestBulkJobs.TestCreateInboxPlacementTestSendsProvidersAndSeeds;
+var
+    Options: TZbCreateInboxPlacementTestOptions;
+begin
+    MockOk(OK_JSON);
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.TestTypeSpecified := True;
+    Options.TestType := 2;
+    Options.ProviderIds := TZbInboxPlacementIds.Create(7, 9);
+    Options.SeedIds := TZbInboxPlacementIds.Create(11);
+    SetLength(Options.Providers, 2);
+    Options.Providers[0].Id := 3;
+    Options.Providers[0].MaxSeedsSpecified := True;
+    Options.Providers[0].MaxSeeds := 5;
+    { maxSeeds is optional: without it the provider's own default applies. }
+    Options.Providers[1].Id := 4;
+    Options.WebhookUrl := 'https://example.com/ipt';
+
+    ZbCreateInboxPlacementTest('Launch', @Options);
+
+    AssertEquals('POST', ZbLastRequestMethod);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/api/ipt/test', ZbResponseMock.UrlCalled
+    );
+    { LIVE: the key travels in an Authorization: Bearer header, never the URL. }
+    AssertEquals(
+        Concat('Authorization: Bearer ', MOCK_API_KEY), ZbLastRequestHeader
+    );
+    RefuteQueryField('api_key');
+    AssertEquals(
+        '{"name":"Launch","testType":2,"providerIds":[7,9],"seedIds":[11],'
+        + '"providers":[{"id":3,"maxSeeds":5},{"id":4}],'
+        + '"webhookUrl":"https://example.com/ipt"}',
+        ZbLastRequestBody
+    );
+
+    { Empty arrays stay out of the body entirely. }
+    FillChar(Options, SizeOf(Options), 0);
+    ZbCreateInboxPlacementTest('Launch', @Options);
+    AssertEquals('{"name":"Launch"}', ZbLastRequestBody);
+end;
+
+procedure TTestBulkJobs.TestCreateInboxPlacementTestChecksItsArguments;
+var
+    Options: TZbCreateInboxPlacementTestOptions;
+    Raised: Boolean;
+begin
+    MockOk(OK_JSON);
+    ZbResponseMock.UrlCalled := '';
+
+    { name is capped at 64 characters. }
+    Raised := False;
+    try
+        ZbCreateInboxPlacementTest(StringOfChar('x', 65), nil);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('name', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a name over 64 characters should be rejected', Raised);
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.TestTypeSpecified := True;
+    Options.TestType := 4;
+    Raised := False;
+    try
+        ZbCreateInboxPlacementTest('Launch', @Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('testType', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a testType outside 1..3 should be rejected', Raised);
+
+    { Test type 1 is the one you send yourself, so senderEmail is required. }
+    Options.TestType := 1;
+    Raised := False;
+    try
+        ZbCreateInboxPlacementTest('Launch', @Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('senderEmail', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('testType 1 without a senderEmail should be rejected', Raised);
+
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+
+    { Exactly 64 characters is allowed, and so is type 1 with a sender. }
+    ZbCreateInboxPlacementTest(StringOfChar('x', 64), nil);
+    AssertEndpointCalled('/api/ipt/test');
+    Options.SenderEmail := 'news@example.com';
+    ZbCreateInboxPlacementTest('Launch', @Options);
+    AssertEquals(
+        '{"name":"Launch","testType":1,"senderEmail":"news@example.com"}',
+        ZbLastRequestBody
+    );
+
+    { Types 2 and 3 do not need one. }
+    FillChar(Options, SizeOf(Options), 0);
+    Options.TestTypeSpecified := True;
+    Options.TestType := 3;
+    ZbCreateInboxPlacementTest('Launch', @Options);
+    AssertEquals('{"name":"Launch","testType":3}', ZbLastRequestBody);
+end;
+
+{ Op 45. LIVE: the page size parameter is page_size; pageSize is accepted and
+  then silently ignored, which looks like a working filter until you count
+  the rows. createdAfter and createdBefore had no home in the record at all. }
+procedure TTestBulkJobs.TestListInboxPlacementTestsFiltersAndBounds;
+var
+    Options: TZbListInboxPlacementTestsOptions;
+    Raised: Boolean;
+begin
+    MockOk(OK_JSON);
+
+    FillChar(Options, SizeOf(Options), 0);
+    Options.Status := 'running';
+    Options.CreatedAfter := '2026-01-01T00:00:00Z';
+    Options.CreatedBefore := '2026-02-01T00:00:00Z';
+    Options.PageSpecified := True;
+    Options.Page := 2;
+    Options.PageSizeSpecified := True;
+    Options.PageSize := 100;
+    ZbListInboxPlacementTests(@Options);
+
+    AssertEquals('GET', ZbLastRequestMethod);
+    AssertEndpointCalled('/api/ipt/tests?');
+    AssertQueryField('status', 'running');
+    AssertQueryField('createdAfter', '2026-01-01T00:00:00Z');
+    AssertQueryField('createdBefore', '2026-02-01T00:00:00Z');
+    AssertQueryField('page', '2');
+    AssertQueryField('page_size', '100');
+    RefuteQueryField('pageSize');
+    RefuteQueryField('api_key');
+
+    { page_size is bounded at 1..100 on both ends. }
+    ZbResponseMock.UrlCalled := '';
+    Options.PageSize := 101;
+    Raised := False;
+    try
+        ZbListInboxPlacementTests(@Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('page_size', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('a page_size over 100 should be rejected', Raised);
+
+    Options.PageSize := 0;
+    Raised := False;
+    try
+        ZbListInboxPlacementTests(@Options);
+    except on e: Exception do
+        Raised := True;
+    end;
+    AssertTrue('a page_size below 1 should be rejected', Raised);
+
+    { status is one of the two documented states. }
+    Options.PageSize := 25;
+    Options.Status := 'pending';
+    Raised := False;
+    try
+        ZbListInboxPlacementTests(@Options);
+    except on e: Exception do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('status', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('an undocumented status should be rejected', Raised);
+
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+
+    Options.Status := 'finished';
+    ZbListInboxPlacementTests(@Options);
+    AssertQueryField('status', 'finished');
+    AssertQueryField('page_size', '25');
+
+    { Nothing set means an unfiltered listing. }
+    FillChar(Options, SizeOf(Options), 0);
+    ZbListInboxPlacementTests(@Options);
+    RefuteQueryField('status');
+    RefuteQueryField('createdAfter');
+    RefuteQueryField('page_size');
 end;
 
 initialization

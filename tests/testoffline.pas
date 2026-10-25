@@ -469,8 +469,21 @@ begin
   ZbFindEmailByDomain('example.com', 'Ada', 'M', 'Lovelace');
   Request := OnlyRequest;
   AssertEquals('/v2/guessformat', Request.Path);
+  AssertEquals('GET', Request.Method);
   AssertEquals('example.com', QueryValue(Request.Query, 'domain'));
   AssertEquals('', QueryValue(Request.Query, 'company_name'));
+  AssertEquals('Ada', QueryValue(Request.Query, 'first_name'));
+  ClearRecorded;
+  { The two-argument overload passes '' for the names it does not take, and a
+    blank first_name= is a blank field rather than an omitted one. }
+  ZbFindEmailByDomain('example.com', '');
+  Request := OnlyRequest;
+  AssertEquals('/v2/guessformat', Request.Path);
+  AssertEquals('example.com', QueryValue(Request.Query, 'domain'));
+  AssertTrue(
+    'first_name should be absent: ' + Request.Query,
+    Pos('first_name', Request.Query) = 0
+  );
   ClearRecorded;
   ZbDomainSearchByCompanyName('ZeroBounce');
   AssertEquals('ZeroBounce', QueryValue(OnlyRequest.Query, 'company_name'));
@@ -479,9 +492,13 @@ begin
   FillChar(Finder, SizeOf(Finder), 0);
   Finder.HasHeaderRowSpecified := True;
   Finder.HasHeaderRow := False;
+  { One of the two name columns is required. }
+  Finder.FirstNameColumn := 2;
   ZbSendEmailFinderFile('domain', 1, @Finder);
   Request := OnlyRequest;
+  AssertEquals('POST', Request.Method);
   AssertEquals('/email-finder/sendfile', Request.Path);
+  AssertTrue(Pos('first_name_column', Request.Body) > 0);
   AssertTrue(Pos('has_header_row', Request.Body) > 0);
   AssertTrue(Pos('false', Request.Body) > 0);
   ClearRecorded;
@@ -516,6 +533,7 @@ begin
   ClearRecorded;
   FillChar(S3, SizeOf(S3), 0);
   S3.FileName := 'inbox.csv';
+  S3.ReturnUrl := 'https://example.com/done';
   S3.EmailAddressColumnSpecified := True;
   S3.EmailAddressColumn := 0;
   S3.HasHeaderRowSpecified := True;
@@ -528,6 +546,7 @@ begin
   ClearRecorded;
   FillChar(Score, SizeOf(Score), 0);
   Score.FileName := 'inbox.csv';
+  Score.ReturnUrl := 'https://example.com/done';
   ZbScoreS3File(Score);
   AssertEquals('/scoreS3file', OnlyRequest.Path);
   ClearRecorded;
@@ -573,6 +592,8 @@ begin
   end;
   FillChar(S3, SizeOf(S3), 0);
   S3.FileName := 'inbox.csv';
+  { Both are required, and this case is about the key, not the arguments. }
+  S3.ReturnUrl := 'https://example.com/done';
   try
     ZbValidateS3File(S3);
     Fail('missing key was sent');

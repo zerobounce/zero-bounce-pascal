@@ -97,6 +97,13 @@ threadvar
     procedure ZBSetApiKey ( ApiKey : string );  deprecated 'Use ZBInitialize procedures';
     procedure ZBInitialize(ApiKey: string); overload;
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
+    { An explicit Main API base URL, for a region the three-value enum does not
+      name or for a local stub. BULK_URI, ZbBulkRootURL, ZbListEvaluatorURL and
+      ZbInboxPlacementURL are already plain overridable vars; this is the Main
+      API's equivalent, so pointing it elsewhere no longer means assigning the
+      ZbApiBaseURL threadvar by hand. A trailing slash is dropped, since every
+      endpoint constant already starts with one. }
+    procedure ZBInitialize(ApiKey: string; ApiBaseURL: String); overload;
     function EncodeParam(param: String): String;
     function RedactSecrets(const S: string): string;
     { The key, or a clear error. A key with surrounding whitespace or control
@@ -420,6 +427,24 @@ end;
     begin
         ZbApiKey := ZbCheckedApiKey(ApiKey);
         ZbApiBaseURL := ZBApiURLToString(ApiBaseURL);
+    end;
+
+    procedure ZBInitialize(ApiKey: string; ApiBaseURL: String); overload;
+    var
+        Normalized: String;
+    begin
+        Normalized := Trim(ApiBaseURL);
+        if Normalized = '' then
+            raise ZbException.Create('Empty parameter: api_base_url');
+        { The same rail every request URL goes through: https, or loopback so
+          an offline test can point the SDK at a local stub. }
+        ZbRequireHttpsUrl(Normalized, 'api_base_url');
+        { Every endpoint constant starts with a slash, so a trailing one here
+          would build '//getcredits'. }
+        while (Normalized <> '') and (Normalized[Length(Normalized)] = '/') do
+            Delete(Normalized, Length(Normalized), 1);
+        ZbApiKey := ZbCheckedApiKey(ApiKey);
+        ZbApiBaseURL := Normalized;
     end;
 
     function EncodeParam(param: String): String;

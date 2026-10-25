@@ -8,6 +8,15 @@ uses
     Classes, SysUtils,
     ZbStructures, ZbUtility;
 
+const
+    { Inbox Placement Tester request limits, from the documented request shape. }
+    ZB_IPT_NAME_MAX_LENGTH = 64;
+    ZB_IPT_PAGE_SIZE_MIN = 1;
+    ZB_IPT_PAGE_SIZE_MAX = 100;
+    { The two documented test list states. }
+    ZB_IPT_STATUS_RUNNING = 'running';
+    ZB_IPT_STATUS_FINISHED = 'finished';
+
 type
     TZbEmailFinderSendFileOptions = record
         FirstNameColumn: Integer;
@@ -23,14 +32,15 @@ type
         HasHeaderRowSpecified: Boolean;
     end;
 
+    { LIVE: ReturnUrl is required. POST /validateS3file without return_url is
+      answered with HTTP 400 and the error message "Provided return URL is not
+      permitted: None", so the job is rejected here before it is sent. }
     TZbValidateS3FileOptions = record
         FileName: String;
         HasHeaderRowSpecified: Boolean;
         HasHeaderRow: Boolean;
         RemoveDuplicatesSpecified: Boolean;
         RemoveDuplicates: Boolean;
-        RemoveDuplicateSpecified: Boolean;
-        RemoveDuplicate: Boolean;
         EmailAddressColumnSpecified: Boolean;
         EmailAddressColumn: Integer;
         ReturnUrl: String;
@@ -38,20 +48,19 @@ type
         LastNameColumn: Integer;
         GenderColumn: Integer;
         IpAddressColumn: Integer;
-        AllowPhase2Specified: Boolean;
-        AllowPhase2: Boolean;
     end;
 
+    { LIVE: ReturnUrl is required here too. scoreS3file is the same job on the
+      same host and answers the same 400 without it. }
     TZbScoreS3FileOptions = record
         FileName: String;
         HasHeaderRowSpecified: Boolean;
         HasHeaderRow: Boolean;
         RemoveDuplicatesSpecified: Boolean;
         RemoveDuplicates: Boolean;
-        RemoveDuplicateSpecified: Boolean;
-        RemoveDuplicate: Boolean;
         EmailAddressColumnSpecified: Boolean;
         EmailAddressColumn: Integer;
+        ReturnUrl: String;
     end;
 
     { The documented fields shared by the six S3 and SFTP/FTP file jobs.
@@ -67,18 +76,39 @@ type
         ReturnUrl: String;
     end;
 
+    { One entry of the create-test "providers" list: a provider id and, when
+      set, a cap on how many of that provider's seeds the test may use. }
+    TZbInboxPlacementProvider = record
+        Id: Integer;
+        MaxSeedsSpecified: Boolean;
+        MaxSeeds: Integer;
+    end;
+    TZbInboxPlacementProviders = array of TZbInboxPlacementProvider;
+    TZbInboxPlacementIds = array of Integer;
+
     { The optional fields of a new Inbox Placement test. Only what is set is sent. }
     TZbCreateInboxPlacementTestOptions = record
         TestTypeSpecified: Boolean;
         TestType: Integer;
         SenderEmail: String;
         WebhookUrl: String;
+        { Which mailboxes the test uses: whole providers, individual seeds, or
+          providers with a per-provider seed cap. An empty array is left out
+          of the body and the account default applies. }
+        ProviderIds: TZbInboxPlacementIds;
+        SeedIds: TZbInboxPlacementIds;
+        Providers: TZbInboxPlacementProviders;
     end;
     PTZbCreateInboxPlacementTestOptions = ^TZbCreateInboxPlacementTestOptions;
 
     { The documented filters of the Inbox Placement test list. }
     TZbListInboxPlacementTestsOptions = record
+        { 'running' or 'finished'; anything else is refused before sending. }
         Status: String;
+        { Timestamps, sent as given. Note the spelling: these two stay
+          camelCase while the page size is page_size. }
+        CreatedAfter: String;
+        CreatedBefore: String;
         PageSpecified: Boolean;
         Page: Integer;
         PageSizeSpecified: Boolean;
@@ -110,6 +140,10 @@ function ZbListFilters(UsePost: Boolean): String;
 function ZbDeleteFilter(const Rule, Target, Value: String): String;
 
 function ZbListS3Files(const Bucket, Search: String): String;
+{ LIVE: both of these require file_name and return_url, exactly like the six
+  jobs that go through P3BulkRootFileJob. They keep their own option records
+  because they also carry documented columns the shared record has no room
+  for: email_address_column here, plus the name, gender and ip columns. }
 function ZbValidateS3File(Options: TZbValidateS3FileOptions): TZBFileFeedback;
 function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
 function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
@@ -184,6 +218,18 @@ const
     begin
         if Specified then
             Form.AddPair(Key, StrBool(Value));
+    end;
+
+    { LIVE: every S3 and SFTP file job requires both file_name and return_url,
+      whatever the docs say about either being optional. P3BulkRootFileJob and
+      the two S3 jobs that carry extra documented columns all come through
+      here, so the rule has one home. }
+    procedure P3RequireFileJobFields(const FileName, ReturnUrl: String);
+    begin
+        if Trim(FileName) = '' then
+            raise ZbException.Create('Empty parameter: file_name');
+        if Trim(ReturnUrl) = '' then
+            raise ZbException.Create('Empty parameter: return_url');
     end;
 
     function P3MultipartSubmit(const Url: String; FileContent: String; FormData: TStrings): TZBFileFeedback;
@@ -366,6 +412,13 @@ function ZbSendEmailFinderFile(FileContent: String; DomainColumn: Integer;
 begin
     if DomainColumn < 1 then
         raise ZbException.Create('Empty parameter: domain_column');
+    { The docs make one of the two name columns required: with neither, the
+      job has nothing to build a local part from. }
+    if (Options = nil) or
+       ((Options^.FirstNameColumn < 1) and (Options^.FullNameColumn < 1)) then
+        raise ZbException.Create(
+            'Empty parameter: first_name_column or full_name_column'
+        );
     Result := P3MultipartSubmit(
         Concat(ZbBulkRootURL, ENDPOINT_EMAIL_FINDER_SEND),
         FileContent,
@@ -530,17 +583,15 @@ function ZbValidateS3File(Options: TZbValidateS3FileOptions): TZBFileFeedback;
 var
     Form: TStrings;
 begin
-    if Trim(Options.FileName) = '' then
-        raise ZbException.Create('Empty parameter: file_name');
+    P3RequireFileJobFields(Options.FileName, Options.ReturnUrl);
     Form := TStringList.Create;
     Form.AddPair('file_name', Options.FileName);
+    { Not conditional: the API rejects the job without it. }
+    Form.AddPair('return_url', Options.ReturnUrl);
     PutOptionalBool(Form, 'has_header_row', Options.HasHeaderRowSpecified, Options.HasHeaderRow);
     PutOptionalBool(Form, 'remove_duplicates', Options.RemoveDuplicatesSpecified, Options.RemoveDuplicates);
-    PutOptionalBool(Form, 'remove_duplicate', Options.RemoveDuplicateSpecified, Options.RemoveDuplicate);
     if Options.EmailAddressColumnSpecified then
         Form.AddPair('email_address_column', IntToStr(Options.EmailAddressColumn));
-    if Options.ReturnUrl <> '' then
-        Form.AddPair('return_url', Options.ReturnUrl);
     if Options.FirstNameColumn > 0 then
         Form.AddPair('first_name_column', IntToStr(Options.FirstNameColumn));
     if Options.LastNameColumn > 0 then
@@ -549,8 +600,6 @@ begin
         Form.AddPair('gender_column', IntToStr(Options.GenderColumn));
     if Options.IpAddressColumn > 0 then
         Form.AddPair('ip_address_column', IntToStr(Options.IpAddressColumn));
-    if Options.AllowPhase2Specified then
-        Form.AddPair('allow_phase_2', StrBool(Options.AllowPhase2));
     Form.AddPair('api_key', ZbApiKey);
     Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_VALIDATE_S3), Form);
 end;
@@ -559,13 +608,12 @@ function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
 var
     Form: TStrings;
 begin
-    if Trim(Options.FileName) = '' then
-        raise ZbException.Create('Empty parameter: file_name');
+    P3RequireFileJobFields(Options.FileName, Options.ReturnUrl);
     Form := TStringList.Create;
     Form.AddPair('file_name', Options.FileName);
+    Form.AddPair('return_url', Options.ReturnUrl);
     PutOptionalBool(Form, 'has_header_row', Options.HasHeaderRowSpecified, Options.HasHeaderRow);
     PutOptionalBool(Form, 'remove_duplicates', Options.RemoveDuplicatesSpecified, Options.RemoveDuplicates);
-    PutOptionalBool(Form, 'remove_duplicate', Options.RemoveDuplicateSpecified, Options.RemoveDuplicate);
     if Options.EmailAddressColumnSpecified then
         Form.AddPair('email_address_column', IntToStr(Options.EmailAddressColumn));
     Form.AddPair('api_key', ZbApiKey);
@@ -626,10 +674,7 @@ var
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    if Trim(Options.FileName) = '' then
-        raise ZbException.Create('Empty parameter: file_name');
-    if Trim(Options.ReturnUrl) = '' then
-        raise ZbException.Create('Empty parameter: return_url');
+    P3RequireFileJobFields(Options.FileName, Options.ReturnUrl);
 
     Body := Concat('api_key=', EncodeParam(ZbApiKey));
     Body := Concat(Body, '&has_header_row=', P3BoolField(Options.HasHeaderRow));
@@ -714,6 +759,37 @@ begin
     Result := StringReplace(Result, '"', '\"', [rfReplaceAll]);
 end;
 
+function P3JsonIntArray(const Values: TZbInboxPlacementIds): String;
+var
+    I: Integer;
+begin
+    Result := '[';
+    for I := Low(Values) to High(Values) do
+    begin
+        if I > Low(Values) then
+            Result := Concat(Result, ',');
+        Result := Concat(Result, IntToStr(Values[I]));
+    end;
+    Result := Concat(Result, ']');
+end;
+
+function P3JsonProviders(const Values: TZbInboxPlacementProviders): String;
+var
+    I: Integer;
+begin
+    Result := '[';
+    for I := Low(Values) to High(Values) do
+    begin
+        if I > Low(Values) then
+            Result := Concat(Result, ',');
+        Result := Concat(Result, '{"id":', IntToStr(Values[I].Id));
+        if Values[I].MaxSeedsSpecified then
+            Result := Concat(Result, ',"maxSeeds":', IntToStr(Values[I].MaxSeeds));
+        Result := Concat(Result, '}');
+    end;
+    Result := Concat(Result, ']');
+end;
+
 function P3InboxPlacementRequest(const Method, Path, ExtraQuery, Body: String): String;
 var
     UrlToAccess, Query: String;
@@ -750,9 +826,29 @@ function ZbCreateInboxPlacementTest(Name: String;
     Options: PTZbCreateInboxPlacementTestOptions): String;
 var
     Body: String;
+    I: Integer;
 begin
     if Trim(Name) = '' then
         raise ZbException.Create('Empty parameter: name');
+    if Length(Name) > ZB_IPT_NAME_MAX_LENGTH then
+        raise ZbException.Create(Format(
+            'Invalid parameter: name must be at most %d characters',
+            [ZB_IPT_NAME_MAX_LENGTH]
+        ));
+    if Options <> nil then
+    begin
+        if Options^.TestTypeSpecified and
+           ((Options^.TestType < 1) or (Options^.TestType > 3)) then
+            raise ZbException.Create('Invalid parameter: testType must be 1, 2 or 3');
+        { Test type 1 is the one where you send the campaign yourself, so the
+          API has to be told which address it will arrive from. }
+        if Options^.TestTypeSpecified and (Options^.TestType = 1) and
+           (Trim(Options^.SenderEmail) = '') then
+            raise ZbException.Create('Empty parameter: senderEmail');
+        for I := Low(Options^.Providers) to High(Options^.Providers) do
+            if Options^.Providers[I].Id < 1 then
+                raise ZbException.Create('Empty parameter: providers.id');
+    end;
 
     { camelCase JSON, with unset fields left out. }
     Body := Concat('{"name":"', P3JsonEscapeValue(Name), '"');
@@ -762,6 +858,12 @@ begin
             Body := Concat(Body, ',"testType":', IntToStr(Options^.TestType));
         if Options^.SenderEmail <> '' then
             Body := Concat(Body, ',"senderEmail":"', P3JsonEscapeValue(Options^.SenderEmail), '"');
+        if Length(Options^.ProviderIds) > 0 then
+            Body := Concat(Body, ',"providerIds":', P3JsonIntArray(Options^.ProviderIds));
+        if Length(Options^.SeedIds) > 0 then
+            Body := Concat(Body, ',"seedIds":', P3JsonIntArray(Options^.SeedIds));
+        if Length(Options^.Providers) > 0 then
+            Body := Concat(Body, ',"providers":', P3JsonProviders(Options^.Providers));
         if Options^.WebhookUrl <> '' then
             Body := Concat(Body, ',"webhookUrl":"', P3JsonEscapeValue(Options^.WebhookUrl), '"');
     end;
@@ -779,17 +881,44 @@ end;
 
 function ZbListInboxPlacementTests(Options: PTZbListInboxPlacementTestsOptions): String;
 var
-    Query: String;
+    Query, Status: String;
 begin
     Query := '';
     if Options <> nil then
     begin
-        if Options^.Status <> '' then
-            Query := Concat(Query, '&status=', EncodeParam(Options^.Status));
+        Status := Trim(Options^.Status);
+        if Status <> '' then
+        begin
+            { The only two documented states. Anything else comes back as a
+              validation error after the call has already been spent. }
+            if (LowerCase(Status) <> ZB_IPT_STATUS_RUNNING) and
+               (LowerCase(Status) <> ZB_IPT_STATUS_FINISHED) then
+                raise ZbException.Create(Concat(
+                    'Invalid parameter: status must be ',
+                    ZB_IPT_STATUS_RUNNING, ' or ', ZB_IPT_STATUS_FINISHED
+                ));
+            Query := Concat(Query, '&status=', EncodeParam(Status));
+        end;
+        { These two keep their camelCase spelling; the page size does not. }
+        if Options^.CreatedAfter <> '' then
+            Query := Concat(Query, '&createdAfter=', EncodeParam(Options^.CreatedAfter));
+        if Options^.CreatedBefore <> '' then
+            Query := Concat(Query, '&createdBefore=', EncodeParam(Options^.CreatedBefore));
         if Options^.PageSpecified then
             Query := Concat(Query, '&page=', IntToStr(Options^.Page));
         if Options^.PageSizeSpecified then
-            Query := Concat(Query, '&pageSize=', IntToStr(Options^.PageSize));
+        begin
+            if (Options^.PageSize < ZB_IPT_PAGE_SIZE_MIN) or
+               (Options^.PageSize > ZB_IPT_PAGE_SIZE_MAX) then
+                raise ZbException.Create(Format(
+                    'Invalid parameter: page_size must be between %d and %d',
+                    [ZB_IPT_PAGE_SIZE_MIN, ZB_IPT_PAGE_SIZE_MAX]
+                ));
+            { LIVE: the parameter is page_size. Spelled pageSize it is
+              silently ignored and the default page size comes back, which
+              looks like the filter working until you count the rows. }
+            Query := Concat(Query, '&page_size=', IntToStr(Options^.PageSize));
+        end;
     end;
     { LIVE: the listing is GET /tests (plural). /test is the single-test path
       and answers 'Method "GET" not allowed'. }

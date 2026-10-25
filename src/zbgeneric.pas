@@ -180,8 +180,11 @@ implementation
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
-        UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
-
+        { first_name is optional on guessformat. The two-argument overloads
+          pass '' for the names the caller did not give, and sending
+          '&first_name=' is a blank field, not an omitted one. }
+        if FirstName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
         if MiddleName <> '' then
             UrlToAccess := Concat(UrlToAccess, '&middle_name=', EncodeParam(MiddleName));
         if LastName <> '' then
@@ -218,8 +221,11 @@ implementation
         UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
-        UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
-
+        { first_name is optional on guessformat. The two-argument overloads
+          pass '' for the names the caller did not give, and sending
+          '&first_name=' is a blank field, not an omitted one. }
+        if FirstName <> '' then
+            UrlToAccess := Concat(UrlToAccess, '&first_name=', EncodeParam(FirstName));
         if MiddleName <> '' then
             UrlToAccess := Concat(UrlToAccess, '&middle_name=', EncodeParam(MiddleName));
         if LastName <> '' then

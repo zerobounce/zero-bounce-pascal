@@ -29,6 +29,8 @@ type
       procedure TestFindMailValidStatusPayload;
       procedure TestDomainSearchInvalidStatusPayload;
       procedure TestDomainSearchValidStatusPayload;
+      procedure TestFindMailOmitsAnEmptyFirstName;
+      procedure TestFindMailErrorBodyReachesTheCaller;
    end;
 
 
@@ -199,6 +201,61 @@ begin
    AssertDomainSearchValidStatusPayload(Response);
 end;
 
+
+{ guessformat takes first_name as an optional parameter, and the overloads
+  that do not take every name pass '' for the rest. '&first_name=' is a blank
+  value, not an omitted parameter, so it has to stay off the query. }
+procedure TTestGeneric.TestFindMailOmitsAnEmptyFirstName;
+begin
+   ZBMockResponse(200, MOCK_FIND_MAIL_STATUS_VALID);
+
+   ZbFindEmailByDomain('example.com', '');
+   AssertEndpointCalled(ENDPOINT_EMAIL_FINDER);
+   AssertTrue(
+      'domain should be sent: ' + ZbResponseMock.UrlCalled,
+      Pos('&domain=example.com', ZbResponseMock.UrlCalled) > 0
+   );
+   AssertFalse(
+      'an empty first_name should not be sent: ' + ZbResponseMock.UrlCalled,
+      Pos('first_name', ZbResponseMock.UrlCalled) > 0
+   );
+
+   { The same for the company-name routine, which had the same bug. }
+   ZbFindEmailByCompanyName('ZeroBounce', '');
+   AssertFalse(
+      'an empty first_name should not be sent: ' + ZbResponseMock.UrlCalled,
+      Pos('first_name', ZbResponseMock.UrlCalled) > 0
+   );
+
+   { A name that was given still travels, url-encoded. }
+   ZbFindEmailByDomain('example.com', 'Ada Mae', '', 'Lovelace');
+   AssertTrue(
+      'first_name should be sent: ' + ZbResponseMock.UrlCalled,
+      Pos('&first_name=' + EncodeParam('Ada Mae'), ZbResponseMock.UrlCalled) > 0
+   );
+   AssertTrue(
+      'last_name should be sent: ' + ZbResponseMock.UrlCalled,
+      Pos('&last_name=Lovelace', ZbResponseMock.UrlCalled) > 0
+   );
+end;
+
+procedure TTestGeneric.TestFindMailErrorBodyReachesTheCaller;
+var
+   Raised: Boolean;
+begin
+   ZBMockResponse(400, '{"error":"Invalid API key or your account ran out of credits"}');
+   Raised := False;
+   try
+      ZbFindEmailByDomain('example.com', 'Ada');
+   except on E: ZbException do
+      begin
+         Raised := True;
+         AssertEquals(400, E.StatusCode);
+         AssertTrue(E.Payload, Pos('ran out of credits', E.Payload) > 0);
+      end;
+   end;
+   AssertTrue('an HTTP 400 should be raised, not parsed', Raised);
+end;
 
 initialization
    RegisterTest(TTestGeneric);
