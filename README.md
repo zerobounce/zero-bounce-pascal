@@ -22,6 +22,11 @@ The methods implemented in this library can raise `ZbException`.
         ```
             // ApiURL can be ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU
             ZBInitialize('YOUR__API__KEY', ZbApiURLDefault)
+
+            // or an explicit base URL, for a region the enum does not name
+            // or for a local stub. https only (loopback excepted), and a
+            // trailing slash is dropped.
+            ZBInitialize('YOUR__API__KEY', 'https://api-au.zerobounce.net/v2')
         ```
     - `ZbException` - exception containing data about the response context
 - __ZbGeneric__ - contains general purpose methods
@@ -52,11 +57,13 @@ The methods implemented in this library can raise `ZbException`.
     - For getfile, if the response body is JSON error data (including some HTTP 200 cases), `TZBBulkResponse.HasContent` is false and `Feedback` is filled; otherwise `HasContent` is true and `Content` holds the file text. Helper: `ZbGetFileJsonIndicatesError` in __ZbStructures__.
 - __ZbPriority3__ - real-time AI scoring, filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester
     - `ZbScoreEmail` / `ZbScoreEmailPost` (return `TZbScoreEmailResult`) - real-time AI scoring over GET or POST
-    - Bulk email finder and domain search, on the bulk root (`https://bulkapi.zerobounce.net`, **no** `/v2`): `ZbSendEmailFinderFile`, `ZbEmailFinderFileStatus`, `ZbEmailFinderResultFetch`, `ZbEmailFinderResultDelete`, and the matching `ZbSendDomainSearchFile` / `ZbDomainSearch...` functions
+    - Bulk email finder and domain search, on the bulk root (`https://bulkapi.zerobounce.net`, **no** `/v2`): `ZbSendEmailFinderFile`, `ZbEmailFinderFileStatus`, `ZbEmailFinderResultFetch`, `ZbEmailFinderResultDelete`, and the matching `ZbSendDomainSearchFile` / `ZbDomainSearch...` functions. `ZbSendEmailFinderFile` needs `DomainColumn` **and** one of `FirstNameColumn` / `FullNameColumn`; with neither name column the job has nothing to build a local part from, so it is refused before the upload
     - List evaluator: `ZbSendListEvaluatorFile`, `ZbGetListEvaluatorResult` (its own base URL, `ZbListEvaluatorURL`), and `ZbSendEvaluatedFile(FileId)` - the file id goes out as a **form field**, not as a path segment
     - Filters: `ZbAddFilter(Rule, Target, Value)`, `ZbListFilters(UsePost)`, `ZbDeleteFilter(Rule, Target, Value)`. `Rule` is `allow` or `block`; `Target` is `email`, `domain`, `mx` or `tld`. Both are checked before the request is sent.
-    - S3 / SFTP jobs: `ZbListS3Files`, `ZbValidateS3File`, `ZbScoreS3File`, `ZbExportS3File`, `ZbEmailFinderS3File`, `ZbDomainSearchS3File`, `ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile`, `ZbExportSFTPFile`. `TZbBulkFileJobOptions` requires **both** `FileName` and `ReturnUrl` — the live API rejects a job without either, `validateSFTPfile` included, although the docs call its `file_name` optional. `ZbExportSFTPFile` sends `export_path`, not the `export_bucket` that `ZbExportS3File` sends.
+    - S3 / SFTP jobs: `ZbListS3Files`, `ZbValidateS3File`, `ZbScoreS3File`, `ZbExportS3File`, `ZbEmailFinderS3File`, `ZbDomainSearchS3File`, `ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile`, `ZbExportSFTPFile`. `TZbBulkFileJobOptions` requires **both** `FileName` and `ReturnUrl` — the live API rejects a job without either, `validateSFTPfile` included, although the docs call its `file_name` optional. `ZbExportSFTPFile` sends `export_path`, not the `export_bucket` that `ZbExportS3File` sends. `TZbValidateS3FileOptions` and `TZbScoreS3FileOptions` require `FileName` and `ReturnUrl` for the same reason; they keep their own records because they also carry `EmailAddressColumn` and, for validate, the name, gender and IP columns.
     - Inbox Placement Tester (its own host, `ZbInboxPlacementURL`): `ZbInboxPlacementProviders`, `ZbInboxPlacementTestTypes`, `ZbCreateInboxPlacementTest`, `ZbInboxPlacementTest`, `ZbListInboxPlacementTests`, `ZbDeleteInboxPlacementTest`, `ZbInboxPlacementWebhook`, `ZbSetInboxPlacementWebhook`. It authenticates with an `Authorization: Bearer` header, takes camelCase JSON bodies, and lists tests from `GET /tests`. These calls spend the account's inbox-test credits.
+        - `ZbCreateInboxPlacementTest(Name, Options)` - `Name` is capped at 64 characters, `TestType` is 1, 2 or 3, and type 1 (the one you send yourself) needs a `SenderEmail`. Pick the mailboxes with `ProviderIds`, `SeedIds` or `Providers` (an array of `{ Id, MaxSeeds }`); an empty array is left out of the body and the account default applies
+        - `ZbListInboxPlacementTests(Options)` - `Status` is `running` or `finished`, `PageSize` is 1-100, and `CreatedAfter` / `CreatedBefore` filter by time. The page size goes out as **`page_size`**: spelled `pageSize` the API accepts it and then silently ignores it, so the filter looks like it worked until you count the rows
 - __ZbWarmup__ - the [Warmup API](https://www.zerobounce.net/docs/warmup-api), a separate product with its own host and its own team-scoped key
     - `ZbWarmupInitialize('YOUR__WARMUP__API__KEY')` - the key goes out in an `API-Key` header. It is **not** the validation key, and `ZBInitialize` stays for that one.
     - Every function returns the raw JSON body, or an empty string for the documented empty successes (HTTP 204 and an empty 200).

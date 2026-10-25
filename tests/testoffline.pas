@@ -307,6 +307,30 @@ begin
   CloseSocket(ListenSock);
 end;
 
+procedure WakeStubAccept(APort: Integer);
+{ Closing the listening socket does NOT reliably wake a thread blocked in
+  accept() on Linux: POSIX leaves the behaviour undefined and there the call
+  stays blocked until a connection actually arrives. That is why this suite
+  finished on a macOS host but hung forever in Docker and in CI, where the
+  job ran to GitHub's 6 hour limit and was cancelled. One throwaway loopback
+  connection makes accept() return so the loop can observe Terminated. }
+var
+  Sock: LongInt;
+  Addr: sockaddr_in;
+begin
+  if APort <= 0 then
+    Exit;
+  Sock := fpSocket(AF_INET, SOCK_STREAM, 0);
+  if Sock < 0 then
+    Exit;
+  Addr := Default(sockaddr_in);
+  Addr.sin_family := AF_INET;
+  Addr.sin_port := htons(APort);
+  Addr.sin_addr.s_addr := htonl($7F000001);
+  fpConnect(Sock, @Addr, SizeOf(Addr));
+  CloseSocket(Sock);
+end;
+
 procedure ClearRecorded;
 begin
   Gate.Enter;
@@ -469,8 +493,21 @@ begin
   ZbFindEmailByDomain('example.com', 'Ada', 'M', 'Lovelace');
   Request := OnlyRequest;
   AssertEquals('/v2/guessformat', Request.Path);
+  AssertEquals('GET', Request.Method);
   AssertEquals('example.com', QueryValue(Request.Query, 'domain'));
   AssertEquals('', QueryValue(Request.Query, 'company_name'));
+  AssertEquals('Ada', QueryValue(Request.Query, 'first_name'));
+  ClearRecorded;
+  { The two-argument overload passes '' for the names it does not take, and a
+    blank first_name= is a blank field rather than an omitted one. }
+  ZbFindEmailByDomain('example.com', '');
+  Request := OnlyRequest;
+  AssertEquals('/v2/guessformat', Request.Path);
+  AssertEquals('example.com', QueryValue(Request.Query, 'domain'));
+  AssertTrue(
+    'first_name should be absent: ' + Request.Query,
+    Pos('first_name', Request.Query) = 0
+  );
   ClearRecorded;
   ZbDomainSearchByCompanyName('ZeroBounce');
   AssertEquals('ZeroBounce', QueryValue(OnlyRequest.Query, 'company_name'));
@@ -479,9 +516,13 @@ begin
   FillChar(Finder, SizeOf(Finder), 0);
   Finder.HasHeaderRowSpecified := True;
   Finder.HasHeaderRow := False;
+  { One of the two name columns is required. }
+  Finder.FirstNameColumn := 2;
   ZbSendEmailFinderFile('domain', 1, @Finder);
   Request := OnlyRequest;
+  AssertEquals('POST', Request.Method);
   AssertEquals('/email-finder/sendfile', Request.Path);
+  AssertTrue(Pos('first_name_column', Request.Body) > 0);
   AssertTrue(Pos('has_header_row', Request.Body) > 0);
   AssertTrue(Pos('false', Request.Body) > 0);
   ClearRecorded;
@@ -516,6 +557,7 @@ begin
   ClearRecorded;
   FillChar(S3, SizeOf(S3), 0);
   S3.FileName := 'inbox.csv';
+  S3.ReturnUrl := 'https://example.com/done';
   S3.EmailAddressColumnSpecified := True;
   S3.EmailAddressColumn := 0;
   S3.HasHeaderRowSpecified := True;
@@ -528,6 +570,7 @@ begin
   ClearRecorded;
   FillChar(Score, SizeOf(Score), 0);
   Score.FileName := 'inbox.csv';
+  Score.ReturnUrl := 'https://example.com/done';
   ZbScoreS3File(Score);
   AssertEquals('/scoreS3file', OnlyRequest.Path);
   ClearRecorded;
@@ -573,6 +616,8 @@ begin
   end;
   FillChar(S3, SizeOf(S3), 0);
   S3.FileName := 'inbox.csv';
+  { Both are required, and this case is about the key, not the arguments. }
+  S3.ReturnUrl := 'https://example.com/done';
   try
     ZbValidateS3File(S3);
     Fail('missing key was sent');
@@ -765,7 +810,7 @@ finalization
   if Stub <> nil then
   begin
     Stub.Terminate;
-    CloseSocket(Stub.ListenSock);
+    WakeStubAccept(Stub.Port);
     Stub.WaitFor;
     Stub.Free;
   end;
