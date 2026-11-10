@@ -14,14 +14,19 @@ var
 begin
     try
         ZBInitialize('YOUR__API__KEY');
-        Response := ZbDomainSearchByDomain('example.com', 'John', 'Doe');
+        // or ZbDomainSearchByCompanyName('Example Inc')
+        Response := ZbDomainSearchByDomain('example.com');
+
+        WriteLn('Domain: ', Response.Domain);
+        WriteLn('Format: ', Response.Format, ' (', Response.Confidence, ')');
 
         // more info
         if Length(Response.OtherDomainFormats) > 0 then
-          WriteLn('Domain formats:');
+          WriteLn('Other domain formats:');
         for IIndex := 0 to Length(Response.OtherDomainFormats) - 1 do
         begin
-          WriteLn(Response.OtherDomainFormats[IIndex].Format);
+          WriteLn(Response.OtherDomainFormats[IIndex].Format, ' (',
+            Response.OtherDomainFormats[IIndex].Confidence, ')');
         end;
 
     except on e: Exception do

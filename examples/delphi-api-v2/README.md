@@ -1,21 +1,20 @@
-# Delphi API v2 — minimal Indy console example
+# Delphi API v2 — minimal console example
 
 This folder contains the **legacy minimal example** formerly in the standalone `zerobounce-delphi-api-v2` repository, merged into zero-bounce-pascal for a single place to maintain all Pascal/Delphi SDK code.
 
-**v2.0.0** — Console example for validating a single email with the [Zero Bounce API v2](https://www.zerobounce.net/docs/), using **Indy** (IdHTTP, IdSSLOpenSSL) and `System.JSON` — no forms, no VCL UI.
+**v2.0.0** — Console example for validating a single email with the [Zero Bounce API v2](https://www.zerobounce.net/docs/), using Delphi's built-in `System.Net.HttpClient` and `System.JSON` — no forms, no VCL UI. Since v2.2.0 it no longer uses Indy, so no OpenSSL DLLs are needed: HTTPS goes through the operating system's TLS stack.
 
 ## When to use this
 
-- You want a **minimal, self-contained** single-email validation example with **Indy** (no dependency on the full ZeroBounce package).
+- You want a **minimal, self-contained** single-email validation example (no dependency on the full ZeroBounce package).
 - For the **full SDK** (all endpoints, batch, bulk file, scoring, find email, domain search), use the main library: see the [root README](../../README.md) and `examples/delphi/` or `examples/fpc/`.
 
 ## Runnable example
 
 Open and build **`ValidateEmailExample.dpr`** in this folder. Requirements:
 
-- Delphi (XE6 or later with `System.JSON`) or Free Pascal with Indy
-- [Indy](https://www.indyproject.org/) (IdHTTP, IdSSLOpenSSL) — included in recent Delphi installs
-- OpenSSL DLLs next to the executable for HTTPS, e.g. from [Indy OpenSSL binaries](https://indy.fulgan.com/SSL/)
+- Delphi XE8 or later (`System.Net.HttpClient` first shipped in XE8). Free Pascal is not supported by this example: it has no `System.Net.HttpClient`. For Free Pascal, use the SDK and `examples/fpc/`.
+- No Indy and no OpenSSL DLLs
 
 ### Run
 
@@ -40,7 +39,7 @@ Output: `Valid: <status>` or `Invalid: <status>` (and optional `sub_status`).
 
 ## Unit tests
 
-Build and run **`TestValidateEmail.dpr`** (no Indy or API key required). It tests:
+Build and run **`TestValidateEmail.dpr`** (no network access or API key required). It tests:
 
 - **UrlEncode** — empty, alphanumeric, `@`, full email, spaces, dots, hyphens
 - **IsValidStatus** — `valid` / `invalid` / `unknown` (case-insensitive), catch-all, spamtrap, status with sub_status

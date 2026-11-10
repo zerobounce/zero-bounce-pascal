@@ -7,12 +7,13 @@ interface
 uses
    Classes, SysUtils, fpcunit, testregistry,
    // ZeroBounce was installed in Lazarus and imported via Package > Package links
-   BaseTest, MockValues, ZbGeneric, ZbStructures, ZbUtility;
+   BaseTest, MockValues, ZbGeneric, ZbStructures, ZbUtility, ZbValidation, ZbPriority3;
 
 type
 
    TTestGeneric= class(TBaseTestCase)
    protected
+      procedure AssertDeadKey(const Name, Expected: String; E: ZbException);
       procedure AssertFindMailValidStatusPayload(Response: TZbFindEmailResponse);
       procedure AssertDomainSearchValidStatusPayload(Response: TZbDomainSearchResponse);
    published
@@ -31,6 +32,15 @@ type
       procedure TestDomainSearchValidStatusPayload;
       procedure TestFindMailOmitsAnEmptyFirstName;
       procedure TestFindMailErrorBodyReachesTheCaller;
+      procedure TestDeadKeyValidateIsAnError;
+      procedure TestDeadKeyActivityIsAnError;
+      procedure TestDeadKeyApiUsageIsAnError;
+      procedure TestDeadKeyFindEmailIsAnError;
+      procedure TestDeadKeyDomainSearchIsAnError;
+      procedure TestDeadKeyFiltersAreAnError;
+      procedure TestDeadKeyCreditsAreMinusOne;
+      procedure TestGreylistStillInProgressValidateIsAResult;
+      procedure TestFilterMessageSuccessIsAResult;
    end;
 
 
@@ -257,7 +267,163 @@ begin
    AssertTrue('an HTTP 400 should be raised, not parsed', Raised);
 end;
 
+{ LIVE (2026-11-11): what an invalid or drained key gets back, each with an
+  HTTP 200 and no "success" field. Every call must raise with the API's own
+  message instead of returning an empty result. }
+const
+   DRAINED = 'Invalid API key or your account ran out of credits';
+   DEAD_KEY_ERROR = '{"error":"Invalid API key or your account ran out of credits"}';
+   DEAD_KEY_MESSAGE = '{"Message":"Invalid API key or your account ran out of credits"}';
+   DEAD_KEY_CAPITAL_ERROR = '{  "Error": "Invalid API key or your account ran out of credits"}';
+
+procedure TTestGeneric.AssertDeadKey(const Name, Expected: String; E: ZbException);
+begin
+   AssertTrue(Name + ': ' + E.Message, Pos(Expected, E.Message) > 0);
+   AssertEquals(Name + ' status', 200, E.StatusCode);
+end;
+
+procedure TTestGeneric.TestDeadKeyValidateIsAnError;
+var
+   Options: TZbValidateOptions;
+begin
+   ZBMockResponse(200, DEAD_KEY_ERROR);
+   try
+      ZbValidateEmail('a@example.com');
+      Fail('validate: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('validate', DRAINED, e);
+   end;
+   Options := ZbDefaultValidateOptions;
+   Options.UsePost := 1;
+   ZBMockResponse(200, DEAD_KEY_ERROR);
+   try
+      ZbValidateEmail('a@example.com', '', Options);
+      Fail('validate POST: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('validate POST', DRAINED, e);
+   end;
+end;
+
+procedure TTestGeneric.TestDeadKeyActivityIsAnError;
+begin
+   ZBMockResponse(200, DEAD_KEY_ERROR);
+   try
+      ZbActivityData('a@example.com');
+      Fail('activity: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('activity', DRAINED, e);
+   end;
+end;
+
+procedure TTestGeneric.TestDeadKeyApiUsageIsAnError;
+begin
+   ZBMockResponse(200, '{"error":"Invalid API key"}');
+   try
+      ZbGetApiUsage;
+      Fail('api usage: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('api usage', 'Invalid API key', e);
+   end;
+end;
+
+procedure TTestGeneric.TestDeadKeyFindEmailIsAnError;
+begin
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      ZbFindEmailByDomain('example.com', 'john');
+      Fail('find email: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('find email', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      ZbFindEmailByCompanyName('Example', 'john');
+      Fail('find email by company: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('find email by company', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      {$WARN SYMBOL_DEPRECATED OFF}
+      ZbFindEmail('example.com', 'john', 'doe');
+      {$WARN SYMBOL_DEPRECATED ON}
+      Fail('find email (deprecated): a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('find email (deprecated)', DRAINED, e);
+   end;
+end;
+
+procedure TTestGeneric.TestDeadKeyDomainSearchIsAnError;
+begin
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      ZbDomainSearchByDomain('example.com');
+      Fail('domain search: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('domain search', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      ZbDomainSearchByCompanyName('Example');
+      Fail('domain search by company: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('domain search by company', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_MESSAGE);
+   try
+      {$WARN SYMBOL_DEPRECATED OFF}
+      ZbDomainSearch('example.com');
+      {$WARN SYMBOL_DEPRECATED ON}
+      Fail('domain search (deprecated): a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('domain search (deprecated)', DRAINED, e);
+   end;
+end;
+
+procedure TTestGeneric.TestDeadKeyFiltersAreAnError;
+begin
+   ZBMockResponse(200, DEAD_KEY_CAPITAL_ERROR);
+   try
+      ZbAddFilter('allow', 'email', 'x@example.com');
+      Fail('add filter: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('add filter', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_CAPITAL_ERROR);
+   try
+      ZbDeleteFilter('allow', 'email', 'x@example.com');
+      Fail('delete filter: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('delete filter', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_CAPITAL_ERROR);
+   try
+      ZbListFilters(False);
+      Fail('list filters: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('list filters', DRAINED, e);
+   end;
+   ZBMockResponse(200, DEAD_KEY_CAPITAL_ERROR);
+   try
+      ZbListFilters(True);
+      Fail('list filters POST: a dead key returned a result');
+   except on e: ZbException do AssertDeadKey('list filters POST', DRAINED, e);
+   end;
+end;
+
+{ -1 is the documented credit balance of an invalid key, not an error. }
+procedure TTestGeneric.TestDeadKeyCreditsAreMinusOne;
+begin
+   ZBMockResponse(200, '{"Credits":"-1"}');
+   AssertEquals(-1, ZbGetCredits);
+end;
+
+{ The documented answer to a repeated greylist_processing validate is a result
+  whose only field is Message. The error-body checks must leave it alone. }
+procedure TTestGeneric.TestGreylistStillInProgressValidateIsAResult;
+var
+   Validated: TZbValidationResult;
+begin
+   ZBMockResponse(200, '{"Message":"Greylist validation still in progress. Please try again later."}');
+   Validated := ZbValidateEmail('a@example.com');
+   AssertEquals('Greylist validation still in progress. Please try again later.', Validated.Message);
+end;
+
+{ A filter change answers with a bare Message on success. }
+procedure TTestGeneric.TestFilterMessageSuccessIsAResult;
+begin
+   ZBMockResponse(200, '{"Message":"Filter has been added."}');
+   AssertTrue(Pos('Filter has been added.', ZbAddFilter('allow', 'email', 'x@example.com')) > 0);
+end;
+
+
 initialization
    RegisterTest(TTestGeneric);
 end.
-

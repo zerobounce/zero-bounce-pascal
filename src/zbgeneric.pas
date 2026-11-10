@@ -191,6 +191,7 @@ implementation
             UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
 
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfMessageOnly(response);
         try
             Result := TZbFindEmailResponseFromJson(response.Payload);
         except on e: Exception do
@@ -232,6 +233,7 @@ implementation
             UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
 
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfMessageOnly(response);
         try
             Result := TZbFindEmailResponseFromJson(response.Payload);
         except on e: Exception do
@@ -264,6 +266,7 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfMessageOnly(response);
         try
             Result := TZbDomainSearchResponseFromJson(response.Payload);
         except on e: Exception do
@@ -286,6 +289,7 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
 
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfMessageOnly(response);
         try
             Result := TZbDomainSearchResponseFromJson(response.Payload);
         except on e: Exception do
@@ -315,6 +319,7 @@ implementation
             UrlToAccess := Concat(UrlToAccess, '&last_name=', EncodeParam(LastName));
 
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfMessageOnly(response);
         try
             Result := TZbFindEmailResponseFromJson(response.Payload);
 		except on e: Exception do

@@ -13,7 +13,7 @@ interface
 
 uses
     Classes, SysUtils, fpcunit, testregistry,
-    BaseTest, ZbPriority3, ZbStructures, ZbUtility, ZbValidation;
+    BaseTest, ZbPriority3, ZbStructures, ZbUtility, ZbValidation, ZbGeneric;
 
 type
 
@@ -48,6 +48,10 @@ type
         procedure TestCreateInboxPlacementTestSendsProvidersAndSeeds;
         procedure TestCreateInboxPlacementTestChecksItsArguments;
         procedure TestListInboxPlacementTestsFiltersAndBounds;
+        procedure TestListEvaluatorFlowFollowsZbListEvaluatorURL;
+        procedure TestFormPostSuccessFalseRaises;
+        procedure TestFormPostHtmlOn200Raises;
+        procedure TestFormPostHttpErrorCarriesTheApiMessage;
     end;
 
 implementation
@@ -1065,6 +1069,192 @@ begin
     RefuteQueryField('status');
     RefuteQueryField('createdAfter');
     RefuteQueryField('page_size');
+end;
+
+{ The upload, the result and send-evaluated-file all follow
+  ZbListEvaluatorURL. Built from BULK_URI instead, two of the three legs went
+  to a different host from the third whenever only it was overridden. }
+procedure TTestBulkJobs.TestListEvaluatorFlowFollowsZbListEvaluatorURL;
+begin
+    { The defaults are the documented endpoints. }
+    MockOk(FILE_FEEDBACK_JSON);
+    ZbSendListEvaluatorFile('email' + LineEnding + 'a@example.com', 1);
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/v2/listevaluator/', ZbResponseMock.UrlCalled
+    );
+    ZbSendEvaluatedFile('fid-1');
+    AssertEquals(
+        'https://bulkapi.zerobounce.net/v2/send-evaluated-file/', ZbResponseMock.UrlCalled
+    );
+
+    BULK_URI := 'https://bulk.example.test/v2';
+    ZbListEvaluatorURL := 'https://le.example.test/v9/listevaluator';
+    ZbSendListEvaluatorFile('email' + LineEnding + 'a@example.com', 1);
+    AssertEquals('upload', 'https://le.example.test/v9/listevaluator/', ZbResponseMock.UrlCalled);
+    ZbGetListEvaluatorResult('fid-1');
+    AssertTrue(
+        ZbResponseMock.UrlCalled,
+        Pos('https://le.example.test/v9/listevaluator/fid-1/?', ZbResponseMock.UrlCalled) = 1
+    );
+    ZbSendEvaluatedFile('fid-1');
+    AssertEquals(
+        'send-evaluated-file', 'https://le.example.test/v9/send-evaluated-file/',
+        ZbResponseMock.UrlCalled
+    );
+
+    { A trailing slash on the override changes nothing. }
+    ZbListEvaluatorURL := 'https://le.example.test/v9/listevaluator/';
+    ZbSendListEvaluatorFile('email' + LineEnding + 'a@example.com', 1);
+    AssertEquals('https://le.example.test/v9/listevaluator/', ZbResponseMock.UrlCalled);
+    ZbSendEvaluatedFile('fid-1');
+    AssertEquals('https://le.example.test/v9/send-evaluated-file/', ZbResponseMock.UrlCalled);
+end;
+
+{ Calls a routine and reports whether it raised a ZbException. }
+type
+    TZbCall = procedure;
+
+var
+    LastRaisedMessage: String;
+    LastRaisedStatus: Integer;
+
+function RaisesZb(Call: TZbCall): Boolean;
+begin
+    Result := False;
+    LastRaisedMessage := '';
+    LastRaisedStatus := 0;
+    try
+        Call;
+    except on e: ZbException do
+        begin
+            Result := True;
+            LastRaisedMessage := e.Message;
+            LastRaisedStatus := e.StatusCode;
+        end;
+    end;
+end;
+
+function JobOptions: TZbBulkFileJobOptions;
+begin
+    Result := ZbDefaultBulkFileJobOptions;
+    Result.FileName := 'lists/leads.csv';
+    Result.ReturnUrl := 'https://example.com/done';
+end;
+
+procedure CallValidateS3File;
+var
+    Options: TZbValidateS3FileOptions;
+begin
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
+    ZbValidateS3File(Options);
+end;
+
+procedure CallScoreS3File;
+var
+    Options: TZbScoreS3FileOptions;
+begin
+    FillChar(Options, SizeOf(Options), 0);
+    Options.FileName := 'lists/leads.csv';
+    Options.ReturnUrl := 'https://example.com/done';
+    ZbScoreS3File(Options);
+end;
+
+procedure CallExportS3File; begin ZbExportS3File('fid-1', ''); end;
+procedure CallValidateSFTPFile; begin ZbValidateSFTPFile(JobOptions); end;
+procedure CallScoreSFTPFile; begin ZbScoreSFTPFile(JobOptions); end;
+procedure CallEmailFinderS3File; begin ZbEmailFinderS3File(JobOptions); end;
+procedure CallDomainSearchSFTPFile; begin ZbDomainSearchSFTPFile(JobOptions); end;
+procedure CallExportSFTPFile; begin ZbExportSFTPFile('fid-1', ''); end;
+procedure CallSendEvaluatedFile; begin ZbSendEvaluatedFile('fid-1'); end;
+procedure CallScoreEmailPost; begin ZbScoreEmailPost('a@example.com'); end;
+procedure CallAddFilter; begin ZbAddFilter('allow', 'email', 'a@example.com'); end;
+procedure CallDeleteFilter; begin ZbDeleteFilter('allow', 'email', 'a@example.com'); end;
+procedure CallListFiltersPost; begin ZbListFilters(True); end;
+procedure CallListFiltersGet; begin ZbListFilters(False); end;
+
+{ A form POST goes through the same body checks as a GET: "success": false on
+  an HTTP 200 is a failure, not a result. }
+procedure TTestBulkJobs.TestFormPostSuccessFalseRaises;
+const
+    Calls: array[0..9] of TZbCall = (
+        @CallValidateS3File, @CallScoreS3File, @CallExportS3File,
+        @CallValidateSFTPFile, @CallScoreSFTPFile, @CallEmailFinderS3File,
+        @CallDomainSearchSFTPFile, @CallExportSFTPFile, @CallSendEvaluatedFile,
+        @CallScoreEmailPost
+    );
+    Names: array[0..9] of String = (
+        'ZbValidateS3File', 'ZbScoreS3File', 'ZbExportS3File',
+        'ZbValidateSFTPFile', 'ZbScoreSFTPFile', 'ZbEmailFinderS3File',
+        'ZbDomainSearchSFTPFile', 'ZbExportSFTPFile', 'ZbSendEvaluatedFile',
+        'ZbScoreEmailPost'
+    );
+var
+    I: Integer;
+begin
+    for I := Low(Calls) to High(Calls) do
+    begin
+        MockOk('{"success": false, "message": "File cannot be found."}');
+        AssertTrue(Names[I] + ' should raise on "success": false', RaisesZb(Calls[I]));
+        AssertEquals(Names[I] + ' status', 200, LastRaisedStatus);
+        AssertTrue(LastRaisedMessage, Pos('File cannot be found.', LastRaisedMessage) > 0);
+    end;
+end;
+
+{ An HTML page is never an API response, whatever the status. }
+procedure TTestBulkJobs.TestFormPostHtmlOn200Raises;
+const
+    PAGE = '<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>x</body></html>';
+    Calls: array[0..4] of TZbCall = (
+        @CallAddFilter, @CallDeleteFilter, @CallListFiltersPost, @CallListFiltersGet,
+        @CallSendEvaluatedFile
+    );
+    Names: array[0..4] of String = (
+        'ZbAddFilter', 'ZbDeleteFilter', 'ZbListFilters(True)', 'ZbListFilters(False)',
+        'ZbSendEvaluatedFile'
+    );
+var
+    I: Integer;
+begin
+    for I := Low(Calls) to High(Calls) do
+    begin
+        ZBMockResponse(200, PAGE, 'text/html; charset=UTF-8');
+        AssertTrue(Names[I] + ' should raise on an HTML page', RaisesZb(Calls[I]));
+        AssertTrue(LastRaisedMessage, Pos('<html', LowerCase(LastRaisedMessage)) = 0);
+        AssertTrue(LastRaisedMessage, Pos('Just a moment...', LastRaisedMessage) > 0);
+    end;
+end;
+
+{ An HTTP error on a form POST carries the API's message, as a GET's does,
+  rather than a bare "Request failed" with the message only on Payload. }
+procedure TTestBulkJobs.TestFormPostHttpErrorCarriesTheApiMessage;
+const
+    Calls: array[0..4] of TZbCall = (
+        @CallValidateS3File, @CallValidateSFTPFile, @CallAddFilter,
+        @CallSendEvaluatedFile, @CallScoreEmailPost
+    );
+var
+    I: Integer;
+begin
+    for I := Low(Calls) to High(Calls) do
+    begin
+        ZBMockResponse(
+            400, '{"error_message":"Provided return URL is not permitted: None"}',
+            JSON_CONTENT_TYPE
+        );
+        AssertTrue('an HTTP 400 should raise', RaisesZb(Calls[I]));
+        AssertEquals(400, LastRaisedStatus);
+        AssertTrue(
+            LastRaisedMessage,
+            Pos('Provided return URL is not permitted: None', LastRaisedMessage) > 0
+        );
+        AssertTrue(LastRaisedMessage, Pos('Request failed', LastRaisedMessage) = 0);
+    end;
+
+    ZBMockResponse(500, 'Error: Error: upstream timed out', 'text/plain');
+    AssertTrue('an HTTP 500 should raise', RaisesZb(@CallAddFilter));
+    AssertEquals('Http Error: upstream timed out', LastRaisedMessage);
 end;
 
 initialization

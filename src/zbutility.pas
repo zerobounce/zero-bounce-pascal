@@ -34,6 +34,9 @@ type
 
     ZbApiURL = (ZbApiURLDefault, ZbApiURLUSA, ZbApiURLEU);
 
+    { DER-encoded X.509 certificates. }
+    TZbDerCertificates = array of RawByteString;
+
 const
     JSON_CONTENT_TYPE = 'application/json';
     BULK_HOST = 'bulkapi.zerobounce.net';
@@ -79,7 +82,12 @@ var
     ZbLastRequestBody: string = '';
     { 'Name: Value' of the one extra header the last request carried, or ''. }
     ZbLastRequestHeader: string = '';
-    { FPC only: PEM CA bundle for TLS verification. When empty, SSL_CERT_FILE, system paths, and cacert.pem beside the exe are tried. }
+    { FPC only: full path of a PEM CA bundle for TLS verification. When empty,
+      the SSL_CERT_FILE environment variable, then (not on Windows) the usual
+      Unix bundle paths, then cacert.pem beside the executable, and finally
+      (Windows only) the certificates of the Windows "ROOT" system store are
+      used. A path that does not exist raises rather than falling back.
+      Delphi uses the operating system's TLS stack and ignores this. }
     ZbCACertFile: string = '';
     ZbResponseMock: TZbRequestResponse = (
         StatusCode: 0; Payload: ''; ContentType: ''; UrlCalled: ''
@@ -149,8 +157,23 @@ threadvar
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse; overload;
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
     procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
+    {$IFDEF FPC}
+    { The DER certificates of the Windows "ROOT" system store; empty when it
+      cannot be read, and on every other platform. With no CA bundle found,
+      FPC builds on Windows verify the server against these. }
+    function ZbWindowsRootCertificates: TZbDerCertificates;
+    { Adds the certificates to the trust store of an OpenSSL connection that
+      has not yet shaken hands; returns how many were added. Ones OpenSSL
+      cannot parse are skipped. }
+    function ZbTrustDerCertificates(Ssl: PSSL; const DerCerts: TZbDerCertificates): Integer;
+    {$ENDIF}
     procedure Register;
 implementation
+
+uses
+    { ZbStructures holds the JSON wrapper. Using it here, in the
+      implementation section, keeps the two units' interfaces independent. }
+    ZbStructures{$IFDEF FPC}, ctypes{$ENDIF};
 
 {$IFDEF FPC}
 type
@@ -160,13 +183,62 @@ type
         procedure VerifyCertificate(Sender: TObject; var Allow: Boolean);
     end;
 
+    { An OpenSSL handler whose trust anchors are DER certificates handed to
+      it - on Windows, the system "ROOT" store - instead of a PEM file. Peer
+      and host name verification are exactly those of the file-based path. }
+    TZbSystemStoreSocketHandler = class(TOpenSSLSocketHandler)
+    public
+        DerCerts: TZbDerCertificates;
+    protected
+        function InitContext(NeedCertificate: Boolean): Boolean; override;
+    end;
+
     TZbSslGetPeerCert = function(ssl: PSSL): PX509; cdecl;
     TZbX509CheckHost = function(x: PX509; chk: PAnsiChar; chklen: PtrUInt; flags: Cardinal; peername: Pointer): Integer; cdecl;
+    TZbSslGetSslCtx = function(ssl: PSSL): PSSL_CTX; cdecl;
+    TZbSslCtxGetCertStore = function(ctx: PSSL_CTX): Pointer; cdecl;
+    TZbD2iX509 = function(px: PPX509; pin: PPByte; len: clong): PX509; cdecl;
+    TZbX509StoreAddCert = function(store: Pointer; x: PX509): cint; cdecl;
+
+{$PUSH}{$PACKRECORDS C}
+    { CERT_CONTEXT, from wincrypt.h. }
+    PZbCertContext = ^TZbCertContext;
+    TZbCertContext = record
+        dwCertEncodingType: Cardinal;
+        pbCertEncoded: PByte;
+        cbCertEncoded: Cardinal;
+        pCertInfo: Pointer;
+        hCertStore: Pointer;
+    end;
+{$POP}
+    TZbCertOpenSystemStoreW = function(hProv: PtrUInt; szSubsystemProtocol: PWideChar): Pointer;
+        {$IFDEF MSWINDOWS}stdcall{$ELSE}cdecl{$ENDIF};
+    TZbCertEnumCertificatesInStore = function(hCertStore: Pointer; pPrevCertContext: PZbCertContext): PZbCertContext;
+        {$IFDEF MSWINDOWS}stdcall{$ELSE}cdecl{$ENDIF};
+    TZbCertCloseStore = function(hCertStore: Pointer; dwFlags: Cardinal): LongBool;
+        {$IFDEF MSWINDOWS}stdcall{$ELSE}cdecl{$ENDIF};
+
+const
+    ZB_X509_ASN_ENCODING = 1;
 
 var
     ZbTlsVerifier: TZbTlsVerifier = nil;
 
+function ZbNoCABundleMessage: string;
+begin
+    Result := 'No CA certificate bundle found to verify the TLS connection. ' +
+        'Download a PEM bundle (for example https://curl.se/ca/cacert.pem) and either ' +
+        'save it as cacert.pem beside the executable, assign its full path to ' +
+        'ZbCACertFile (unit ZbUtility) before the first request, or set the ' +
+        'SSL_CERT_FILE environment variable to that path.';
+    {$IFDEF MSWINDOWS}
+    Result := Result + ' The Windows "ROOT" certificate store was tried as well and ' +
+        'yielded no certificates.';
+    {$ENDIF}
+end;
+
 function ZbFindCACertFile: string;
+{$IFNDEF MSWINDOWS}
 const
     Candidates: array[0..3] of string = (
         '/etc/ssl/certs/ca-certificates.crt',
@@ -176,35 +248,175 @@ const
     );
 var
     I: Integer;
+{$ENDIF}
 begin
+    { An explicit choice that points nowhere is an error, not a cue to fall
+      back to something else. }
     Result := ZbCACertFile;
+    if (Result <> '') and not FileExists(Result) then
+        raise ZbException.Create('ZbCACertFile names a CA bundle that does not exist: ' + Result);
     if Result = '' then
+    begin
         Result := GetEnvironmentVariable('SSL_CERT_FILE');
+        if (Result <> '') and not FileExists(Result) then
+            raise ZbException.Create('SSL_CERT_FILE names a CA bundle that does not exist: ' + Result);
+    end;
     if Result <> '' then
         Exit;
+    {$IFNDEF MSWINDOWS}
     for I := Low(Candidates) to High(Candidates) do
         if FileExists(Candidates[I]) then
             Exit(Candidates[I]);
+    {$ENDIF}
     Result := ExtractFilePath(ParamStr(0)) + 'cacert.pem';
     if not FileExists(Result) then
         Result := '';
+end;
+
+function ZbWindowsRootCertificates: TZbDerCertificates;
+var
+    Lib: TLibHandle;
+    OpenStore: TZbCertOpenSystemStoreW;
+    EnumCerts: TZbCertEnumCertificatesInStore;
+    CloseStore: TZbCertCloseStore;
+    Store: Pointer;
+    Ctx: PZbCertContext;
+    StoreName: UnicodeString;
+    Der: RawByteString;
+    Count: Integer;
+begin
+    Result := nil;
+    { crypt32 is a Windows KnownDLL, so it is always the system copy. Loaded
+      dynamically, nothing here is linked on other platforms, where the load
+      simply fails. }
+    Lib := LoadLibrary('crypt32.dll');
+    if Lib = NilHandle then
+        Exit;
+    try
+        OpenStore := TZbCertOpenSystemStoreW(GetProcedureAddress(Lib, 'CertOpenSystemStoreW'));
+        EnumCerts := TZbCertEnumCertificatesInStore(GetProcedureAddress(Lib, 'CertEnumCertificatesInStore'));
+        CloseStore := TZbCertCloseStore(GetProcedureAddress(Lib, 'CertCloseStore'));
+        if not Assigned(OpenStore) or not Assigned(EnumCerts) or not Assigned(CloseStore) then
+            Exit;
+        StoreName := 'ROOT';
+        Store := OpenStore(0, PWideChar(StoreName));
+        if Store = nil then
+            Exit;
+        try
+            Count := 0;
+            { Each call frees the context it is given, so the loop leaks
+              nothing when it runs to the end. }
+            Ctx := EnumCerts(Store, nil);
+            while Ctx <> nil do
+            begin
+                if ((Ctx^.dwCertEncodingType and ZB_X509_ASN_ENCODING) <> 0) and
+                   (Ctx^.pbCertEncoded <> nil) and (Ctx^.cbCertEncoded > 0) then
+                begin
+                    Der := '';
+                    SetLength(Der, Ctx^.cbCertEncoded);
+                    Move(Ctx^.pbCertEncoded^, Der[1], Ctx^.cbCertEncoded);
+                    SetLength(Result, Count + 1);
+                    Result[Count] := Der;
+                    Inc(Count);
+                end;
+                Ctx := EnumCerts(Store, Ctx);
+            end;
+        finally
+            CloseStore(Store, 0);
+        end;
+    finally
+        UnloadLibrary(Lib);
+    end;
+end;
+
+function ZbTrustDerCertificates(Ssl: PSSL; const DerCerts: TZbDerCertificates): Integer;
+var
+    GetCtx: TZbSslGetSslCtx;
+    GetStore: TZbSslCtxGetCertStore;
+    D2i: TZbD2iX509;
+    AddCert: TZbX509StoreAddCert;
+    Store: Pointer;
+    Cert: PX509;
+    Cursor: PByte;
+    I: Integer;
+begin
+    Result := 0;
+    if (Ssl = nil) or (Length(DerCerts) = 0) then
+        Exit;
+    GetCtx := TZbSslGetSslCtx(GetProcedureAddress(SSLLibHandle, 'SSL_get_SSL_CTX'));
+    GetStore := TZbSslCtxGetCertStore(GetProcedureAddress(SSLLibHandle, 'SSL_CTX_get_cert_store'));
+    D2i := TZbD2iX509(GetProcedureAddress(SSLUtilHandle, 'd2i_X509'));
+    AddCert := TZbX509StoreAddCert(GetProcedureAddress(SSLUtilHandle, 'X509_STORE_add_cert'));
+    if not Assigned(GetCtx) or not Assigned(GetStore) or not Assigned(D2i) or not Assigned(AddCert) then
+        Exit;
+    { The SSL object verifies against its context's store, so certificates
+      added there before the handshake are the trust anchors it uses. }
+    Store := GetStore(GetCtx(Ssl));
+    if Store = nil then
+        Exit;
+    for I := 0 to High(DerCerts) do
+    begin
+        if DerCerts[I] = '' then
+            Continue;
+        Cursor := PByte(PAnsiChar(DerCerts[I]));
+        Cert := D2i(nil, @Cursor, Length(DerCerts[I]));
+        if Cert = nil then
+            Continue;
+        try
+            { The store takes its own reference. A duplicate is not an error
+              worth failing the request over. }
+            if AddCert(Store, Cert) = 1 then
+                Inc(Result);
+        finally
+            X509Free(Cert);
+        end;
+    end;
+    { Whatever a rejected certificate left on the error queue must not be
+      read later as the cause of an unrelated failure. }
+    ErrClearError;
+end;
+
+function TZbSystemStoreSocketHandler.InitContext(NeedCertificate: Boolean): Boolean;
+begin
+    Result := inherited InitContext(NeedCertificate);
+    if not Result then
+        Exit;
+    if ZbTrustDerCertificates(SSL.SSL, DerCerts) = 0 then
+        raise ZbException.Create(ZbNoCABundleMessage);
 end;
 
 procedure TZbTlsVerifier.GetSocketHandler(Sender: TObject; const UseSSL: Boolean; out AHandler: TSocketHandler);
 var
     Handler: TSSLSocketHandler;
     CAFile: string;
+    {$IFDEF MSWINDOWS}
+    SystemRoots: TZbDerCertificates;
+    {$ENDIF}
 begin
     AHandler := nil;
     if not UseSSL then
         Exit;
     CAFile := ZbFindCACertFile;
-    if CAFile = '' then
-        raise ZbException.Create('No CA certificate bundle found to verify the TLS connection. ' +
-            'Set ZbCACertFile or the SSL_CERT_FILE environment variable.');
-    Handler := TSSLSocketHandler.GetDefaultHandler;
+    if CAFile <> '' then
+    begin
+        Handler := TSSLSocketHandler.GetDefaultHandler;
+        Handler.CertificateData.CertCA.FileName := CAFile;
+    end
+    else
+    begin
+        {$IFDEF MSWINDOWS}
+        { No bundle was configured: trust what Windows trusts, as Delphi's
+          THTTPClient does. Verification itself is unchanged. }
+        SystemRoots := ZbWindowsRootCertificates;
+        if Length(SystemRoots) = 0 then
+            raise ZbException.Create(ZbNoCABundleMessage);
+        Handler := TZbSystemStoreSocketHandler.Create;
+        TZbSystemStoreSocketHandler(Handler).DerCerts := SystemRoots;
+        {$ELSE}
+        raise ZbException.Create(ZbNoCABundleMessage);
+        {$ENDIF}
+    end;
     Handler.VerifyPeerCert := True;
-    Handler.CertificateData.CertCA.FileName := CAFile;
     Handler.OnVerifyCertificate := VerifyCertificate;
     AHandler := Handler;
 end;
@@ -361,6 +573,7 @@ end;
     procedure ZbFinishResponse(const Response: TZbRequestResponse);
     var
         Error: ZbException;
+        ErrorText: String;
     begin
         { LIVE: a "success": false field on an HTTP 200 is a failure, not a
           result. The API answers an unknown bulk file id that way. }
@@ -376,6 +589,17 @@ end;
            ZbSuccessMeansFailure(Response.Payload) then
         begin
             Error := ZbException.FromResponse('', Response);
+            Error.MarkHttpError;
+            raise Error;
+        end;
+        (* LIVE: so is an error with no "success" field at all. An invalid or
+          drained key answers validate, activity and getapiusage with
+          {"error": ...}, and the filters with {"Error": ...}, on an HTTP 200;
+          parsed, that used to come back as an empty result. *)
+        ErrorText := ZbErrorOnlyMessage(Response.Payload);
+        if ErrorText <> '' then
+        begin
+            Error := ZbException.FromResponse(ErrorText, Response);
             Error.MarkHttpError;
             raise Error;
         end;
@@ -494,15 +718,81 @@ end;
 
     procedure ZbRequireHttpsUrl(const Url, Name: String);
     var
-        Lower: String;
+        Lower, Scheme, Authority, Host, Port: String;
+        Marker, I: Integer;
     begin
         Lower := LowerCase(Trim(Url));
-        if Pos('https://', Lower) = 1 then
+        Marker := Pos('://', Lower);
+        if Marker < 2 then
+            raise ZbException.Create(Concat(Name, ' must be an https:// URL'));
+        Scheme := Copy(Lower, 1, Marker - 1);
+        if (Scheme <> 'https') and (Scheme <> 'http') then
+            raise ZbException.Create(Concat(Name, ' must be an https:// URL'));
+
+        { The authority is taken to run to the first '/'. URL parsers disagree
+          about where '?', '#' and '\' end it - FPC's ParseURI cuts the query
+          at the last '?', so in 'http://localhost?a@evil.example/x?b' it
+          sees user 'localhost?a' at host evil.example - so none of them is
+          accepted before the path, and every parser then agrees on the host. }
+        Authority := Copy(Lower, Marker + 3, MaxInt);
+        I := Pos('/', Authority);
+        if I > 0 then
+            Authority := Copy(Authority, 1, I - 1);
+        if Authority = '' then
+            raise ZbException.Create(Concat(Name, ' must be an https:// URL with a host'));
+        { 'http://127.0.0.1@evil.example' is a request to evil.example, and
+          no ZeroBounce URL carries credentials. }
+        if Pos('@', Authority) > 0 then
+            raise ZbException.Create(Concat(Name, ' must not contain user information (user@host)'));
+        for I := 1 to Length(Authority) do
+            if (Authority[I] <= ' ') or (Authority[I] = #127) or
+               (Authority[I] in ['?', '#', '\']) then
+                raise ZbException.Create(Concat(Name, ' has an invalid host'));
+
+        if Authority[1] = '[' then
+        begin
+            Marker := Pos(']', Authority);
+            if Marker = 0 then
+                raise ZbException.Create(Concat(Name, ' has an invalid host'));
+            Host := Copy(Authority, 1, Marker);
+            Port := Copy(Authority, Marker + 1, MaxInt);
+            if Port <> '' then
+            begin
+                if Port[1] <> ':' then
+                    raise ZbException.Create(Concat(Name, ' has an invalid host'));
+                Delete(Port, 1, 1);
+            end;
+        end
+        else
+        begin
+            Marker := Pos(':', Authority);
+            if Marker = 0 then
+            begin
+                Host := Authority;
+                Port := '';
+            end
+            else
+            begin
+                Host := Copy(Authority, 1, Marker - 1);
+                Port := Copy(Authority, Marker + 1, MaxInt);
+            end;
+        end;
+        if (Host = '') or (Host = '[]') then
+            raise ZbException.Create(Concat(Name, ' must be an https:// URL with a host'));
+        if (Length(Port) > 5) then
+            raise ZbException.Create(Concat(Name, ' has an invalid port'));
+        for I := 1 to Length(Port) do
+            if not (Port[I] in ['0'..'9']) then
+                raise ZbException.Create(Concat(Name, ' has an invalid port'));
+        if (Port <> '') and (StrToInt(Port) > 65535) then
+            raise ZbException.Create(Concat(Name, ' has an invalid port'));
+
+        if Scheme = 'https' then
             Exit;
         { A local stub never leaves the machine, so plain http is allowed there
-          and nowhere else. }
-        if (Pos('http://127.0.0.1', Lower) = 1) or (Pos('http://localhost', Lower) = 1) or
-           (Pos('http://[::1]', Lower) = 1) then
+          and nowhere else: the host has to be exactly a loopback name, not
+          merely start with one ('http://localhost.evil.example'). }
+        if (Host = '127.0.0.1') or (Host = 'localhost') or (Host = '[::1]') then
             Exit;
         raise ZbException.Create(Concat(Name, ' must be an https:// URL'));
     end;
@@ -605,6 +895,10 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
+            { The same limits as the FPC branch: 30 s to connect, 120 s for
+              the response. Both are in milliseconds. }
+            Client.ConnectionTimeout := 30000;
+            Client.ResponseTimeout := 120000;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             try
@@ -666,6 +960,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { The same limits as the FPC branch: 30 s to connect, 120 s for
+              the response. Both are in milliseconds. }
+            Client.ConnectionTimeout := 30000;
+            Client.ResponseTimeout := 120000;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(JsonParam);
@@ -796,6 +1094,10 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
+            { The same limits as the FPC branch: 30 s to connect, 120 s for
+              the response. Both are in milliseconds. }
+            Client.ConnectionTimeout := 30000;
+            Client.ResponseTimeout := 120000;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(Body);
@@ -828,7 +1130,6 @@ end;
         BodyStream: TStream;
         Response: IHTTPResponse;
         {$ENDIF}
-        error: ZbException;
     begin
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
@@ -865,6 +1166,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { The same limits as the FPC branch: 30 s to connect, 120 s for
+              the response. Both are in milliseconds. }
+            Client.ConnectionTimeout := 30000;
+            Client.ResponseTimeout := 120000;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(FormBody);
@@ -883,12 +1188,12 @@ end;
             {$ENDIF}
         end;
 
-        if Result.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', Result);
-            error.MarkHttpError;
-            raise error;
-        end;
+        (* The same checks as every other request: an HTTP error carries the
+           API's message, and an HTML page, a "success": false body or, LIVE,
+           an error-only body such as the {"error": ...} / {"Error": ...} an
+           invalid or drained key gets from validate or the filters on an
+           HTTP 200, raises instead of being returned as a result. *)
+        ZbFinishResponse(Result);
     end;
 
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse;
@@ -977,6 +1282,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
+            { The same limits as the FPC branch: 30 s to connect, 120 s for
+              the response. Both are in milliseconds. }
+            Client.ConnectionTimeout := 30000;
+            Client.ResponseTimeout := 120000;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             FileStream := TStringStream.Create(FileContent);

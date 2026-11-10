@@ -5,8 +5,8 @@ unit TestUtility;
 interface
 
 uses
-  Classes, SysUtils, fpcunit, testregistry,
-  BaseTest, ZbUtility;
+  Classes, SysUtils, fpcunit, testregistry, base64, openssl, fpopenssl, sslbase,
+  BaseTest, ZbUtility, ZbGeneric;
 
 type
   TTestUtility = class(TBaseTestCase)
@@ -18,6 +18,12 @@ type
     procedure TestZBInitializeWithRegionSetsBaseURL;
     procedure TestZBInitializeWithAnExplicitBaseURL;
     procedure TestZBInitializeRejectsABadBaseURL;
+    procedure TestRequireHttpsUrlRejectsLoopbackLookalikes;
+    procedure TestRequireHttpsUrlAllowsLoopbackWithPortsAndPaths;
+    procedure TestZBInitializeRejectsLoopbackLookalikes;
+    procedure TestRequestToALoopbackLookalikeIsNeverSent;
+    procedure TestMissingCACertFileIsAClearError;
+    procedure TestTrustDerCertificatesAddsParsableCertificates;
   end;
 
 implementation
@@ -121,6 +127,229 @@ begin
   AssertEquals(
     'base URL unchanged', 'https://api.zerobounce.net/v2', ZbApiBaseURL
   );
+end;
+
+function UrlRejected(const Url: String): Boolean;
+begin
+  Result := False;
+  try
+    ZbRequireHttpsUrl(Url, 'url');
+  except on E: ZbException do
+    Result := True;
+  end;
+end;
+
+{ Plain http is for a local stub only, so the host must be exactly a loopback
+  name. A prefix match let all of these through, and every one of them sends
+  the request - api_key included - to evil.example or another host. }
+procedure TTestUtility.TestRequireHttpsUrlRejectsLoopbackLookalikes;
+const
+  Bad: array[0..20] of String = (
+    'http://localhost.evil.example/v2',
+    'http://127.0.0.1@evil.example/v2',
+    'http://localhost@evil.example/v2',
+    'http://[::1]@evil.example/v2',
+    'http://127.0.0.1:8080@evil.example/v2',
+    'http://localhost:pw@evil.example/v2',
+    'http://127.0.0.1.evil.example/v2',
+    'http://127.0.0.1.nip.io/v2',
+    'http://[::1].evil.example/v2',
+    'http://[::1]evil.example/v2',
+    'http://localhostevil.example/v2',
+    'http://localhost%2eevil.example/v2',
+    'http://localhost\@evil.example/v2',
+    'http://evil.example/v2?h=http://localhost',
+    'http://127.0.0.1:99999/v2',
+    'http://127.0.0.1:80x/v2',
+    'http:///v2',
+    { FPC's ParseURI cuts the query at the last '?', so this one is user
+      'localhost?a=b' at host evil.example there. }
+    'http://localhost?a=b@evil.example/x?k=v',
+    'http://localhost#@evil.example/v2',
+    'http://localhost\.evil.example/v2',
+    'ftp://localhost/v2'
+  );
+var
+  Url: String;
+begin
+  for Url in Bad do
+    AssertTrue(Url + ' should be rejected', UrlRejected(Url));
+  { Credentials have no place in an https URL either. }
+  AssertTrue('https userinfo', UrlRejected('https://user:pass@api.zerobounce.net/v2'));
+  AssertTrue('https userinfo, no password', UrlRejected('https://api.zerobounce.net@evil.example/v2'));
+end;
+
+procedure TTestUtility.TestRequireHttpsUrlAllowsLoopbackWithPortsAndPaths;
+const
+  Good: array[0..13] of String = (
+    'https://api.zerobounce.net/v2',
+    'https://api.zerobounce.net:443/v2/validate?api_key=k&email=a%40example.com',
+    'https://api.zerobounce.net/v2/validate?email=a@example.com',
+    'https://bulkapi.zerobounce.net/v2/listevaluator/a%20b/?api_key=k',
+    'HTTPS://API.ZEROBOUNCE.NET/v2',
+    'http://127.0.0.1',
+    'http://127.0.0.1/',
+    'http://127.0.0.1:8080/v2',
+    'http://127.0.0.1:8080/v2/validate?email=a@example.com',
+    'http://localhost',
+    'http://localhost:3000/v2/',
+    'http://LOCALHOST:3000/v2',
+    'http://[::1]',
+    'http://[::1]:8080/v2?x=1'
+  );
+var
+  Url: String;
+begin
+  for Url in Good do
+    AssertFalse(Url + ' should be allowed', UrlRejected(Url));
+end;
+
+procedure TTestUtility.TestZBInitializeRejectsLoopbackLookalikes;
+var
+  Raised: Boolean;
+begin
+  ZBInitialize('test_key', ZbApiURLDefault);
+  Raised := False;
+  try
+    ZBInitialize('test_key', 'http://localhost.evil.example/v2');
+  except on E: ZbException do
+    Raised := True;
+  end;
+  AssertTrue('a loopback-prefixed host should be rejected', Raised);
+
+  Raised := False;
+  try
+    ZBInitialize('test_key', 'http://127.0.0.1@evil.example/v2');
+  except on E: ZbException do
+    begin
+      Raised := True;
+      AssertTrue(E.Message, Pos('user information', E.Message) > 0);
+    end;
+  end;
+  AssertTrue('userinfo should be rejected', Raised);
+  AssertEquals(
+    'base URL unchanged', 'https://api.zerobounce.net/v2', ZbApiBaseURL
+  );
+
+  ZBInitialize('test_key', 'http://[::1]:8080/v2/');
+  AssertEquals('IPv6 loopback with a port', 'http://[::1]:8080/v2', ZbApiBaseURL);
+  ZBInitialize('test_key', 'http://localhost:3000/v2');
+  AssertEquals('localhost with a port', 'http://localhost:3000/v2', ZbApiBaseURL);
+  ZBInitialize('test_key', ZbApiURLDefault);
+end;
+
+{ The same rail guards every request, so a base URL assigned by hand cannot
+  get round ZBInitialize's check. }
+procedure TTestUtility.TestRequestToALoopbackLookalikeIsNeverSent;
+var
+  Raised: Boolean;
+begin
+  ZBMockResponse(200, '{"Credits": "7"}');
+  ZbResponseMock.UrlCalled := '';
+  ZbApiBaseURL := 'http://127.0.0.1@evil.example/v2';
+  Raised := False;
+  try
+    try
+      ZbGetCredits;
+    except on E: ZbException do
+      Raised := True;
+    end;
+  finally
+    ZbApiBaseURL := 'https://api.zerobounce.net/v2';
+  end;
+  AssertTrue('the request should be refused', Raised);
+  AssertEquals('no request should have been made', '', ZbResponseMock.UrlCalled);
+end;
+
+{ An explicit bundle that does not exist must say so, not fail later with a
+  connection error that never names it. No connection is attempted: the
+  handler is chosen before the socket is opened. }
+procedure TTestUtility.TestMissingCACertFileIsAClearError;
+var
+  Raised: Boolean;
+  Saved: String;
+begin
+  ZbResponseMock := cDefaultMock;
+  Saved := ZbCACertFile;
+  ZbCACertFile := '/nonexistent/zb-test/cacert.pem';
+  Raised := False;
+  try
+    try
+      ZBGetRequest('https://127.0.0.1:9/v2/getcredits?api_key=x');
+    except on E: Exception do
+      begin
+        Raised := True;
+        AssertTrue(E.Message, Pos('ZbCACertFile', E.Message) > 0);
+        AssertTrue(E.Message, Pos('/nonexistent/zb-test/cacert.pem', E.Message) > 0);
+      end;
+    end;
+  finally
+    ZbCACertFile := Saved;
+  end;
+  AssertTrue('a missing CA bundle should be raised', Raised);
+end;
+
+{ The OpenSSL half of the Windows system-store path, which is the same code
+  on every platform: certificates handed over as DER become trust anchors of
+  the connection, and anything OpenSSL cannot parse is skipped. }
+procedure TTestUtility.TestTrustDerCertificatesAddsParsableCertificates;
+const
+  BUNDLE = '/etc/ssl/certs/ca-certificates.crt';
+  BEGIN_MARK = '-----BEGIN CERTIFICATE-----';
+  END_MARK = '-----END CERTIFICATE-----';
+var
+  Pem: TStringList;
+  Text, Body: String;
+  Ders: TZbDerCertificates;
+  StartAt, EndAt, Found: Integer;
+  Ctx: TSSLContext;
+  Conn: TSSL;
+begin
+  {$IFNDEF MSWINDOWS}
+  AssertEquals('no system store off Windows', 0, Length(ZbWindowsRootCertificates));
+  {$ENDIF}
+  if not FileExists(BUNDLE) then
+    Ignore('no system CA bundle at ' + BUNDLE);
+  Pem := TStringList.Create;
+  try
+    Pem.LoadFromFile(BUNDLE);
+    Text := Pem.Text;
+  finally
+    Pem.Free;
+  end;
+  Ders := nil;
+  Found := 0;
+  StartAt := Pos(BEGIN_MARK, Text);
+  while (StartAt > 0) and (Found < 2) do
+  begin
+    EndAt := Pos(END_MARK, Copy(Text, StartAt, MaxInt));
+    AssertTrue('unterminated PEM block', EndAt > 0);
+    Body := Copy(Text, StartAt + Length(BEGIN_MARK), EndAt - Length(BEGIN_MARK) - 1);
+    Body := StringReplace(StringReplace(Body, #13, '', [rfReplaceAll]), #10, '', [rfReplaceAll]);
+    SetLength(Ders, Length(Ders) + 1);
+    Ders[High(Ders)] := DecodeStringBase64(Body);
+    Inc(Found);
+    Text := Copy(Text, StartAt + EndAt, MaxInt);
+    StartAt := Pos(BEGIN_MARK, Text);
+  end;
+  AssertEquals('two certificates read from ' + BUNDLE, 2, Found);
+  SetLength(Ders, Length(Ders) + 2);
+  Ders[High(Ders) - 1] := 'not a certificate';
+  Ders[High(Ders)] := '';
+
+  AssertTrue('OpenSSL loads', InitSSLInterface);
+  Ctx := TSSLContext.Create(stAny);
+  try
+    Conn := TSSL.Create(Ctx);
+    try
+      AssertEquals('nothing to add', 0, ZbTrustDerCertificates(Conn.SSL, nil));
+      AssertEquals('the two parsable certificates', 2, ZbTrustDerCertificates(Conn.SSL, Ders));
+    finally
+      Conn.Free;
+    end;
+  finally
+    Ctx.Free;
+  end;
 end;
 
 initialization

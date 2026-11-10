@@ -30,6 +30,10 @@ type
         function GetInteger(Key: String): Integer;
         function GetBoolean(Key: String): Boolean;
         function GetArray(Key: String; OUT JArray: TJSONArray): Boolean;
+        { The trimmed value when it is a JSON string, or ''. }
+        function GetText(Key: String): String;
+        function KeyCount: Integer;
+        function KeyAt(Index: Integer): String;
     end;
 
     TApiUsage = Record
@@ -182,6 +186,20 @@ function ZbFileFeedbackFromJson(JsonContent: string): TZbFileFeedback;
 function ZbFileStatusFromJson(JsonContent: string): TZbFileStatus;
 { True when getfile body is a JSON error/status object (incl. HTTP 200), aligned with other ZB SDKs. }
 function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
+(* The API's own message when a JSON body is an error with no "success" field
+  to gate on: a non-empty "error", "error_message" or "Error" string, or ''.
+  LIVE: an invalid or drained key answers validate, activity and getapiusage
+  with {"error": ...}, and the filters with {"Error": ...}, on an HTTP 200. *)
+function ZbErrorOnlyMessage(const Body: String): String;
+{ Whether a JSON body is nothing but a message: an object with no "success"
+  field whose keys are all message keys, at least one a non-empty string. }
+function ZbMessageOnlyBody(const Body: String): Boolean;
+(* For a call whose result is never a bare message - the email finder and
+  domain search - raises on a message-only body. LIVE: guessformat answers an
+  invalid or drained key with an HTTP 200 and {"Message": "..."}. Not for
+  validate, which answers a repeated greylist_processing request with
+  {"Message": "Greylist validation still in progress..."}, a result. *)
+procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
@@ -194,6 +212,138 @@ implementation
     begin
     end;
 
+
+    function TZbJson.GetText(Key: String): String;
+    var
+        JValue: TZbJSONValue;
+    begin
+        Result := '';
+        JValue := GetValue(Key);
+        if JValue = nil then
+            Exit;
+        {$IFDEF FPC}
+        if JValue.JSONType <> jtString then
+            Exit;
+        Result := Trim(JValue.AsString);
+        {$ELSE}
+        if not (JValue is TJSONString) then
+            Exit;
+        Result := Trim(TJSONString(JValue).Value);
+        {$ENDIF}
+    end;
+
+    function TZbJson.KeyCount: Integer;
+    begin
+        Result := FJSONObject.Count;
+    end;
+
+    function TZbJson.KeyAt(Index: Integer): String;
+    begin
+        {$IFDEF FPC}
+        Result := FJSONObject.Names[Index];
+        {$ELSE}
+        Result := FJSONObject.Pairs[Index].JsonString.Value;
+        {$ENDIF}
+    end;
+
+    { The parsed object, or nil when the body is not a JSON object or carries
+      a "success" field (which ZbSuccessMeansFailure already judges). }
+    function ZbObjectWithoutSuccess(const Body: String): TZbJson;
+    var
+        Trimmed: String;
+    begin
+        Result := nil;
+        Trimmed := Trim(Body);
+        if (Trimmed = '') or (Trimmed[1] <> '{') then
+            Exit;
+        try
+            Result := TZbJson.Create(Trimmed);
+        except
+            Result := nil;
+            Exit;
+        end;
+        if (Result.FJSONObject = nil) or (Result.GetValue('success') <> nil) then
+            FreeAndNil(Result);
+    end;
+
+    function ZbErrorOnlyMessage(const Body: String): String;
+    const
+        ERROR_KEYS: array[0..2] of String = ('error', 'error_message', 'Error');
+    var
+        J: TZbJson;
+        I: Integer;
+    begin
+        Result := '';
+        J := ZbObjectWithoutSuccess(Body);
+        if J = nil then
+            Exit;
+        try
+            for I := Low(ERROR_KEYS) to High(ERROR_KEYS) do
+            begin
+                Result := J.GetText(ERROR_KEYS[I]);
+                if Result <> '' then
+                    Exit;
+            end;
+        finally
+            J.Free;
+        end;
+    end;
+
+    function ZbMessageOnlyBody(const Body: String): Boolean;
+    const
+        MESSAGE_KEYS: array[0..5] of String = ('error', 'message', 'error_message', 'Message', 'Error', 'detail');
+    var
+        J: TZbJson;
+        I, K: Integer;
+        Known, HasText: Boolean;
+    begin
+        Result := False;
+        J := ZbObjectWithoutSuccess(Body);
+        if J = nil then
+            Exit;
+        try
+            HasText := False;
+            for I := 0 to J.KeyCount - 1 do
+            begin
+                Known := False;
+                for K := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
+                    if J.KeyAt(I) = MESSAGE_KEYS[K] then
+                        Known := True;
+                if not Known then
+                    Exit;
+                if J.GetText(J.KeyAt(I)) <> '' then
+                    HasText := True;
+            end;
+            Result := HasText;
+        finally
+            J.Free;
+        end;
+    end;
+
+    procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
+    const
+        MESSAGE_KEYS: array[0..5] of String = ('Message', 'message', 'error', 'error_message', 'Error', 'detail');
+    var
+        J: TZbJson;
+        Text: String;
+        I: Integer;
+        Error: ZbException;
+    begin
+        if not ZbMessageOnlyBody(Response.Payload) then
+            Exit;
+        Text := '';
+        J := TZbJson.Create(Trim(Response.Payload));
+        try
+            for I := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
+                if Text = '' then
+                    Text := J.GetText(MESSAGE_KEYS[I]);
+        finally
+            J.Free;
+        end;
+        Error := ZbException.FromResponse(Text, Response);
+        Error.MarkHttpError;
+        raise Error;
+    end;
 
     constructor TZbJson.Create(JsonContent: String);
     begin

@@ -31,3 +31,12 @@ jobs:
 
       - name: Run tests
         run: ./unit_tests_console --all
+
+      - name: Build FPC examples
+        run: |
+          mkdir -p "$RUNNER_TEMP/examples"
+          for f in examples/fpc/*.lpr; do
+            echo "::group::$f"
+            fpc -Fu./src -Mobjfpc -viwn "$f" -FE"$RUNNER_TEMP/examples" || exit 1
+            echo "::endgroup::"
+          done

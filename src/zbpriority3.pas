@@ -199,8 +199,9 @@ const
     ENDPOINT_DOMAIN_SEARCH_STATUS = '/domain-search/filestatus';
     ENDPOINT_DOMAIN_SEARCH_RESULT = '/domain-search/getfile';
     ENDPOINT_DOMAIN_SEARCH_DELETE = '/domain-search/deletefile';
-    ENDPOINT_LIST_EVALUATOR_SEND = '/listevaluator/';
-    ENDPOINT_SEND_EVALUATED_FILE = '/send-evaluated-file/';
+    { Resolved against ZbListEvaluatorURL's parent: by default
+      https://bulkapi.zerobounce.net/v2/send-evaluated-file/ }
+    SEND_EVALUATED_FILE_SEGMENT = 'send-evaluated-file/';
     ENDPOINT_VALIDATE_S3 = '/validateS3file';
     ENDPOINT_SCORE_S3 = '/scoreS3file';
     ENDPOINT_EXPORT_S3 = '/exportS3file';
@@ -218,6 +219,40 @@ const
     begin
         if Specified then
             Form.AddPair(Key, StrBool(Value));
+    end;
+
+    { ZbListEvaluatorURL without a trailing slash. }
+    function P3ListEvaluatorBase: String;
+    begin
+        Result := ZbListEvaluatorURL;
+        while (Result <> '') and (Result[Length(Result)] = '/') do
+            Delete(Result, Length(Result), 1);
+    end;
+
+    { send-evaluated-file is the third leg of the list evaluator flow and sits
+      one path segment above ZbListEvaluatorURL, so it is resolved against
+      that base rather than built from BULK_URI, which would send it to a
+      different host than the upload and the result whenever only
+      ZbListEvaluatorURL is overridden. }
+    function P3SendEvaluatedFileUrl: String;
+    var
+        Base: String;
+        I, HostStart: Integer;
+    begin
+        Base := P3ListEvaluatorBase;
+        HostStart := Pos('://', Base);
+        if HostStart > 0 then
+            HostStart := HostStart + 3
+        else
+            HostStart := 1;
+        I := Length(Base);
+        while (I >= HostStart) and (Base[I] <> '/') do
+            Dec(I);
+        if I < HostStart then
+            { No path at all: the segment goes right after the host. }
+            Result := Concat(Base, '/', SEND_EVALUATED_FILE_SEGMENT)
+        else
+            Result := Concat(Copy(Base, 1, I), SEND_EVALUATED_FILE_SEGMENT);
     end;
 
     { LIVE: every S3 and SFTP file job requires both file_name and return_url,
@@ -242,12 +277,8 @@ const
         finally
             FormData.Free;
         end;
-        if response.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', response);
-            error.MarkHttpError;
-            raise error;
-        end;
+        { An HTTP error has already been raised, with the API's message, by
+          the request itself. }
         try
             Result := ZbFileFeedbackFromJson(response.Payload);
         except on e: Exception do
@@ -274,12 +305,8 @@ const
         end;
         Form.Free;
         response := ZBFormPostRequest(Url, Body);
-        if response.StatusCode > 299 then
-        begin
-            error := ZbException.FromResponse('Request failed', response);
-            error.MarkHttpError;
-            raise error;
-        end;
+        { An HTTP error has already been raised, with the API's message, by
+          the request itself. }
         try
             Result := ZbFileFeedbackFromJson(response.Payload);
         except on e: Exception do
@@ -480,7 +507,9 @@ begin
     Form := TStringList.Create;
     Form.AddPair('api_key', ZbApiKey);
     Form.AddPair('email_address_column', IntToStr(EmailAddressColumn));
-    Result := P3MultipartSubmit(Concat(BULK_URI, ENDPOINT_LIST_EVALUATOR_SEND), FileContent, Form);
+    { The upload, the result and send-evaluated-file all hang off
+      ZbListEvaluatorURL, so overriding it moves the whole flow. }
+    Result := P3MultipartSubmit(Concat(P3ListEvaluatorBase, '/'), FileContent, Form);
 end;
 
 function ZbGetListEvaluatorResult(FileId: String): String;
@@ -490,7 +519,7 @@ begin
     { The list evaluator has its own base URL, not a path built from BULK_URI,
       and the file id is one path segment, so a slash must stay encoded. }
     UrlToAccess := Concat(
-        ZbListEvaluatorURL, '/', ZbPathSegment(FileId, 'file_id'),
+        P3ListEvaluatorBase, '/', ZbPathSegment(FileId, 'file_id'),
         '/?api_key=', EncodeParam(ZbApiKey)
     );
     Result := P3RawJsonGet(UrlToAccess);
@@ -513,9 +542,7 @@ begin
 
     Body := Concat('api_key=', EncodeParam(ZbApiKey),
                    '&file_id=', EncodeParam(Trim(FileId)));
-    response := ZBFormPostRequest(
-        Concat(BULK_URI, ENDPOINT_SEND_EVALUATED_FILE), Body
-    );
+    response := ZBFormPostRequest(P3SendEvaluatedFileUrl, Body);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do

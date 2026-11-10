@@ -7,75 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-11
+
+### Upgrading from 2.1.3
+
+Read the **Breaking** entries under Changed before upgrading. In short: call `ZBInitialize` on every thread that makes requests; FPC builds need a CA bundle (or, on Windows, a readable system root store) because TLS is now verified; `BULK_URI` is a variable, not a constant; and `ZbException.Message` no longer carries the URL, status code and payload.
+
 ### Added
 
-- `ZBInitialize(ApiKey, BaseUrl: String)`, an overload taking an explicit Main API base URL. The enum names three regions; anything else - another region, or a local stub - previously meant assigning the `ZbApiBaseURL` threadvar by hand, while `BULK_URI`, `ZbBulkRootURL`, `ZbListEvaluatorURL` and `ZbInboxPlacementURL` were already plain overridable vars. The URL goes through the same rail as every request URL (`https`, or loopback), and a trailing slash is dropped.
-- `TZbScoreS3FileOptions.ReturnUrl`. The record had no such field, so `scoreS3file`'s required `return_url` could not be sent at all and the call could not succeed against the live API.
-- `TZbCreateInboxPlacementTestOptions` carries `ProviderIds`, `SeedIds` and `Providers` (`TZbInboxPlacementProvider`: an `Id` and an optional `MaxSeeds`), so a new Inbox Placement test can choose the mailboxes it runs against. An empty array is left out of the body and the account default applies.
-- `TZbListInboxPlacementTestsOptions` carries `CreatedAfter` and `CreatedBefore`, which were absent from the record entirely.
-- `TZbValidateOptions` accepts `DomainInfo`, `GreylistProcessing` and `CallbackUrl`. A `-1` field is not sent; booleans go on the wire as the strings `true`/`false`. `CallbackUrl` is where the greylist retry posts its result, so it is rejected without `GreylistProcessing = 1`, and when blank, before any request is sent.
-- `TZbValidationResult` carries `DomainWebsiteExists`, `DomainRegistrantCompanyName` and `Message`. `Message` is the API's `Message` key, returned instead of a result while a greylist retry is still running.
-- The rest of the documented bulk surface: `ZbEmailFinderS3File`, `ZbDomainSearchS3File`, and the SFTP/FTP jobs `ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile` and `ZbExportSFTPFile`, sharing the new `TZbBulkFileJobOptions`. `ZbValidateSFTPFile`'s `FileName` is optional - leaving it empty uses the input bucket from your ZeroBounce settings - and `ZbExportSFTPFile` takes `export_path`, not the `export_bucket` `ZbExportS3File` sends.
-- The Inbox Placement Tester: an `Authorization: Bearer` key, camelCase JSON bodies, and unset fields left out.
+- `ZBInitialize(ApiKey, BaseUrl: String)`, an overload taking an explicit Main API base URL. The enum names three regions; anything else - another region, or a local stub - meant assigning `ZbApiBaseURL` by hand. The URL goes through the same check as every request URL (see the safety rails below), and a trailing slash is dropped.
+- `TZbValidateOptions` and the `ZbValidateEmail` / `ZbBatchValidateEmails` overloads that take it. A `-1` field is not sent; booleans go on the wire as `true`/`false`.
+  - `ZbValidateEmail` honours every field: `Timeout` (3-60 s), `ActivityData`, `VerifyPlus`, `DomainInfo`, `GreylistProcessing`, `CallbackUrl` and `UsePost` (form-encoded `POST /validate`). `CallbackUrl` is where the greylist retry posts its result, so it is rejected, before any request is sent, without `GreylistProcessing = 1` and when blank.
+  - `ZbBatchValidateEmails` sends only `Timeout` (10-120 s; LIVE: as a JSON **string** - sent as a number the API rejects the whole batch with the account-level "Invalid API Key or your account ran out of credits"), `ActivityData` and `VerifyPlus`. It ignores `DomainInfo`, `GreylistProcessing`, `CallbackUrl` and `UsePost`: none of them is sent or checked, and the batch is always a JSON `POST /validatebatch`.
+- `TZbValidationResult` reads `ActiveInDays`, `ActiveFirstSeen`, `DomainWebsiteExists`, `DomainRegistrantCompanyName` and `Message`. `Message` is the API's `Message` key, returned instead of a result while a greylist retry is still running.
+- `ZbScoreEmail` (`GET /v2/scoring`) and `ZbScoreEmailPost` (form-encoded `POST /v2/scoring`).
+- **ZbPriority3**, a new unit:
+  - Bulk email finder (`ZbSendEmailFinderFile`, `ZbEmailFinderFileStatus`, `ZbEmailFinderResultFetch`, `ZbEmailFinderResultDelete`) and bulk domain search (`ZbSendDomainSearchFile`, `ZbDomainSearchFileStatus`, `ZbDomainSearchResultFetch`, `ZbDomainSearchResultDelete`). `has_header_row` is sent whenever it is set, `false` included. `ZbSendEmailFinderFile` requires `DomainColumn` and one of `FirstNameColumn` / `FullNameColumn`, the two name columns the docs make one of required.
+  - List evaluator (`ZbSendListEvaluatorFile`, `ZbGetListEvaluatorResult`, `ZbSendEvaluatedFile`). All three are built from `ZbListEvaluatorURL`: the upload is `ZbListEvaluatorURL/`, the result `ZbListEvaluatorURL/{file_id}/`, and `send-evaluated-file/` sits beside it (by default `https://bulkapi.zerobounce.net/v2/send-evaluated-file/`), so overriding that one variable moves the whole flow. The result's file id is encoded as a single path segment and a blank id is rejected before a request is sent. LIVE: `ZbSendEvaluatedFile` takes the file id as a form field rather than the file upload the docs describe.
+  - Filters (`ZbAddFilter`, `ZbListFilters`, `ZbDeleteFilter`).
+  - S3 bulk (`ZbValidateS3File`, `ZbScoreS3File`, `ZbExportS3File`, `ZbListS3Files`, `ZbEmailFinderS3File`, `ZbDomainSearchS3File`) and the SFTP/FTP jobs (`ZbValidateSFTPFile`, `ZbScoreSFTPFile`, `ZbEmailFinderSFTPFile`, `ZbDomainSearchSFTPFile`, `ZbExportSFTPFile`), the last six sharing `TZbBulkFileJobOptions`. LIVE: every one of these jobs requires both `file_name` and `return_url` - `ZbValidateSFTPFile` included, although the docs call its `file_name` optional - so `FileName` and `ReturnUrl` are checked before the request is sent; without a return URL the API answers HTTP 400 "Provided return URL is not permitted: None". `ZbExportS3File`'s `ExportBucket` and `ZbExportSFTPFile`'s `ExportPath` are optional (empty uses the one from your ZeroBounce settings); `ZbExportSFTPFile` sends `export_path`, not `export_bucket`.
+  - The Inbox Placement Tester (`ZbInboxPlacementProviders`, `ZbInboxPlacementTestTypes`, `ZbCreateInboxPlacementTest`, `ZbInboxPlacementTest`, `ZbListInboxPlacementTests`, `ZbDeleteInboxPlacementTest`, `ZbInboxPlacementWebhook`, `ZbSetInboxPlacementWebhook`), with camelCase JSON bodies and unset fields left out. LIVE: it authenticates with `Authorization: Bearer`, not the `api_key` query parameter, and its listing is `GET /tests` (plural); `/test` answers `Method "GET" not allowed`. `TZbCreateInboxPlacementTestOptions` carries `ProviderIds`, `SeedIds` and `Providers` (`TZbInboxPlacementProvider`: an `Id` and an optional `MaxSeeds`); an empty array is left out and the account default applies. `ZbCreateInboxPlacementTest` checks `Name` (at most 64 characters), `TestType` (1-3) and a `SenderEmail` for type 1 before spending an inbox-test credit. `TZbListInboxPlacementTestsOptions` carries `Status`, `CreatedAfter`, `CreatedBefore`, `Page` and `PageSize`; `Status` (`running` / `finished`) and `PageSize` (1-100) are checked before the call. LIVE: the page size is sent as `page_size`; spelled `pageSize` the API silently ignores it.
 - **ZbWarmup**: a client for the [Warmup API](https://www.zerobounce.net/docs/warmup-api), a separate product with its own host, its own team-scoped key (`ZbWarmupInitialize`, sent in an `API-Key` header) and 26 endpoints. Every function returns the raw JSON body, or an empty string for the documented empty successes (HTTP 204 and an empty 200); `ZbWarmupDownloadSeeds` and `ZbWarmupDownloadStatistics` return CSV text and save it as well when given a path.
-- **ZbUtility**: `ZbListEvaluatorURL` and `ZbInboxPlacementURL` (separate base URLs rather than paths built from `BULK_URI`), `ZBSendRequest`, `ZBSendRequestWithHeader`, `ZBSendForeignKeyRequest`, `EncodePathSegment`, `ZbJsonEscape`, and `ZbLastRequestMethod` / `ZbLastRequestBody` / `ZbLastRequestHeader` for the offline tests.
-- **ZbUtility** safety rails: `ZbCheckedApiKey` rejects a key with surrounding whitespace or control characters, `ZbRequireHttpsUrl` allows only `https://` (and loopback, so an offline test can use a local stub), `ZbPathSegment` rejects a `.` or `..` id, redirects are never followed, and `RedactSecrets` keeps the key out of exception messages. A regional base URL paired with the single global bulk host warns once.
+- **ZbUtility**: the base URL variables `ZbBulkRootURL`, `ZbListEvaluatorURL` and `ZbInboxPlacementURL` (alongside `BULK_URI`, now a variable - see Changed) and the `BULK_HOST` constant; `ZBFormPostRequest`, `ZBSendRequest`, `ZBSendRequestWithHeader`, `ZBSendForeignKeyRequest`, `EncodePathSegment`, `ZbJsonEscape`; the response checks `ZbBodyLooksLikeHtml`, `ZbSuccessMeansFailure` and `ZbMessageFromBody`; and `ZbLastRequestMethod` / `ZbLastRequestBody` / `ZbLastRequestHeader` for the offline tests.
+- **ZbUtility** safety rails: `ZbCheckedApiKey` rejects a key with surrounding whitespace or control characters; `ZbRequireHttpsUrl` parses the URL's scheme, user information, host and port and allows only `https://`, or plain `http://` when the host is exactly `127.0.0.1`, `localhost` or `[::1]` (any port and path) so an offline test can use a local stub - a URL with user information (`user@host`), or with `?`, `#` or `\` before the path, is refused; `ZbPathSegment` rejects a `.` or `..` id; `ZbCheckedUrl` applies the URL check to every request; redirects are never followed; and `RedactSecrets` keeps the key out of exception messages. A regional base URL paired with the single global bulk host warns once on stderr.
+- **ZbUtility**, FPC only: `ZbCACertFile`, the CA bundle used to verify TLS (see the CA-bundle entry under Changed), and `ZbWindowsRootCertificates` / `ZbTrustDerCertificates` / `TZbDerCertificates`, which load the Windows "ROOT" system store into an OpenSSL connection.
 - `live/live_api.lpr`, an opt-in live suite. It is its own program, outside `tests/`, so the offline suite never builds or runs it. Keys come from `ZEROBOUNCE_API_KEY` and `ZEROBOUNCE_WARMUP_API_KEY`; `ZEROBOUNCE_LIVE_SPEND=1` and `ZEROBOUNCE_LIVE_CHANGES=1` opt in to calls that spend credits or make reversible account changes.
 
 ### Changed
 
-- Verified against the live API. Where it disagrees with the docs, the API wins and the call site says so:
-  - `validatebatch` takes `timeout` as a JSON **string**. Sent as a number the API rejects the whole batch with the account-level "Invalid API Key or your account ran out of credits".
-  - The Inbox Placement Tester authenticates with `Authorization: Bearer`, not the `api_key` query parameter the rest of the API takes, and its listing is `GET /tests` (plural) - `/test` answers `Method "GET" not allowed`.
-  - Every S3/SFTP job requires both `file_name` and `return_url`, `ZbValidateSFTPFile` included, although the docs call its `file_name` optional. Both are checked before the request is sent.
-  - `ZbSendEvaluatedFile` takes the file id as a form field rather than a path segment.
-- A `"success": false` field on an HTTP 200 now raises instead of being returned as a result. `getfile` and `deletefile` report an unknown or deleted file id that way, and `ZbException.StatusCode` carries the HTTP status.
-- `ZbGetListEvaluatorResult` uses `ZbListEvaluatorURL`, encodes the file id as a single path segment, and rejects a blank id before a request is sent.
-- `ZbExportS3File`'s `ExportBucket` is optional, matching the documented endpoint: an empty string uses the export bucket from your ZeroBounce settings. A whitespace-only value is still rejected.
+- **Breaking:** `ZbApiKey` and `ZbApiBaseURL` are per thread (`threadvar`). In 2.1.3 they were global, so an app that calls `ZBInitialize` on the main thread and makes requests from worker threads now gets `ZeroBounce is not initialized. Please call ZBInitialize(api_key) first` on those threads. Call `ZBInitialize` on each thread that makes requests.
+- **Breaking:** `BULK_URI` is now a typed variable instead of a constant, so tests can point it at a local stub. Code that uses it in a constant expression (`const MyUrl = BULK_URI + '/sendfile';`) no longer compiles; use a variable or the new `BULK_HOST` constant (`'bulkapi.zerobounce.net'`).
+- **Breaking:** FPC builds now verify the server's TLS certificate and host name (2.1.3 did not verify at all), which needs trusted CA certificates. They come from `ZbCACertFile`, else the `SSL_CERT_FILE` environment variable, else (not on Windows) the usual Unix bundle paths (`/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`, `/etc/ssl/ca-bundle.pem`, `/etc/ssl/cert.pem`), else `cacert.pem` beside the executable, else - on Windows only - the Windows "ROOT" system certificate store. When none of these yields a certificate, every request raises a `ZbException` saying how to provide one, and a `ZbCACertFile` or `SSL_CERT_FILE` that names a missing file raises rather than falling back. Verification is never switched off. To supply a bundle yourself, download one (for example https://curl.se/ca/cacert.pem) and either save it as `cacert.pem` beside the executable or set `ZbCACertFile := 'C:\path\to\cacert.pem';` before the first request. Delphi builds use the operating system's TLS stack and are unaffected.
+- `ZbException.Message` is now just the error, with the key redacted. In 2.1.3 it was the message followed by `Url:`, the URL (key included), `Status code:` and `Payload:` blocks; read `ZbException.StatusCode` and `ZbException.Payload` instead, which are unchanged. On an HTTP error the message is the API's own (a JSON error body as sent, or a non-JSON body with a repeated `Error:` / `[Error]:` prefix removed), prefixed with `Http Error: `, for GETs, JSON and form POSTs alike. FPC builds raise a `ZbException` carrying the status for every HTTP error; in 2.1.3 a GET with any status other than 200 raised fphttpclient's `EHTTPClient` ("Unexpected response status code") instead.
+- `ZBInitialize` raises a `ZbException` when the key has surrounding whitespace or control characters, instead of sending it.
+- **Breaking** for code that checked the returned record: a `"success": false` field on an HTTP 200 now raises instead of being returned as a result, with `ZbException.StatusCode` 200. `getfile` and `deletefile` report an unknown or deleted file id that way. This applies to every request path - GET, JSON POST, multipart upload and form POST.
+- A redirect (HTTP 3xx) raises `ZbException` ("ZeroBounce returned a redirect, which this client does not follow.") instead of being followed, so the key cannot be sent on to another host. This is new for Delphi, whose `THTTPClient` followed redirects in 2.1.3; FPC builds already raised on one.
+- API requests have a 30-second connect timeout and a 120-second read timeout (FPC: `ConnectTimeout` / `IOTimeout`; Delphi: `ConnectionTimeout` / `ResponseTimeout`). 2.1.3 set none.
+- Query values, including the API key and email address, are percent-encoded.
+- The standalone example `examples/delphi-api-v2/ValidateEmailExample.dpr` uses Delphi's `System.Net.HttpClient` instead of Indy (`IdHTTP`/`IdSSLOpenSSL`), so it needs Delphi XE8 or later but no OpenSSL DLLs, and it no longer builds with Free Pascal. Its README and the root README now say so. The SDK itself is unaffected.
 
 ### Fixed
 
-- `ZbValidateS3File` and `ZbScoreS3File` now require `FileName` and `ReturnUrl`, through the same check as the six sibling jobs. LIVE: `POST /validateS3file` without a `return_url` is answered with HTTP 400 and "Provided return URL is not permitted: None". `ZbValidateS3File` sent `return_url` only when it happened to be non-empty and never required it, and `ZbScoreS3File` could not send it at all - so the code contradicted both this file and `AGENTS.md`, which already said every S3/SFTP job requires both.
-- `ZbValidateS3File` no longer sends the singular `remove_duplicate` beside `remove_duplicates`, nor `allow_phase_2`, and `ZbScoreS3File` no longer sends `remove_duplicate`. Neither is part of the documented request. **Breaking:** the fields that fed them (`RemoveDuplicate`, `RemoveDuplicateSpecified`, `AllowPhase2`, `AllowPhase2Specified`) are gone from `TZbValidateS3FileOptions` and `TZbScoreS3FileOptions`; a field that is silently never sent is the same trap as the missing `ReturnUrl` above, so it fails to compile rather than failing at runtime. The bulk `sendfile` endpoint's own `remove_duplicate` is a different parameter on a different endpoint and is unchanged.
-- `ZbListInboxPlacementTests` sends `page_size`. LIVE: spelled `pageSize` the API accepts the request and silently ignores the parameter, so the default page size comes back and the filter looks like it worked until you count the rows. `PageSize` is bounded to 1-100 and `Status` to `running` / `finished` before the call is made.
-- `ZbCreateInboxPlacementTest` checks its arguments before spending an inbox-test credit: `Name` at most 64 characters, `TestType` in 1-3, and a `SenderEmail` when `TestType` is 1.
-- `ZbSendEmailFinderFile` requires one of `FirstNameColumn` / `FullNameColumn` as well as `DomainColumn`. The docs make one of the two name columns required; only `domain_column` was checked, so a file with neither went out and came back rejected.
-- `ZbFindEmailByDomain` and `ZbFindEmailByCompanyName` omit `first_name` when it is empty. Both appended `&first_name=` unconditionally, so the two-argument overloads - which pass `''` for the names they do not take - sent a blank field rather than omitting the parameter. The deprecated `ZbFindEmail` had always guarded it, so the newer routines had regressed against the one they replaced.
+- An invalid or drained API key now raises a `ZbException` carrying the API's message, with `StatusCode` 200. The API answers one with an HTTP 200 and no `success` field: `{"error": "Invalid API key or your account ran out of credits"}` from validate and activity, `{"error": "Invalid API key"}` from getapiusage, and `{"Message": ...}` from the email finder and domain search. In 2.1.3 `ZbValidateEmail` and `ZbGetApiUsage` raised a misleading `Json Error: Invalid date/timestamp ...`, `ZbDomainSearchByDomain` and `ZbDomainSearchByCompanyName` raised `Json Error: Field "other_domain_formats" not found ...`, `ZbFindEmailByDomain` and `ZbFindEmailByCompanyName` returned a result with an empty email, and `ZbActivityData` returned -1. `message`, `Message` and `detail` decide failure only for the email finder and domain search, because successful responses use them too (a repeated `greylist_processing` validate answers `{"Message": "Greylist validation still in progress. Please try again later."}`, which is a result). `ZbGetCredits` still returns -1 for an invalid key, as documented.
+- `ZbFindEmailByDomain` and `ZbFindEmailByCompanyName` omit `first_name` when it is empty. Both appended `&first_name=` unconditionally, so the overloads that pass `''` for the names they do not take sent a blank field. The deprecated `ZbFindEmail` had always guarded it.
 - The api-usage response now reads `sub_status_leading_period_removed` and `sub_status_alias_address`, two counters the API returns that were silently discarded.
-
 - A validation response without `processed_at` no longer raises. A greylist retry that is still running answers with `Message` and no date; `ProcessedAt` is left at zero instead.
-
-
-### Added
-
-- `ZbValidateEmail` and `ZbBatchValidateEmails` take `TZbValidateOptions`: `Timeout`, `ActivityData`, `VerifyPlus`, and `UsePost` (form-encoded `POST /validate`).
-- `TZbValidationResult` reads `ActiveInDays` and `ActiveFirstSeen`.
-- `ZbScoreEmail` (`GET /v2/scoring`) and `ZbScoreEmailPost` (form-encoded `POST /v2/scoring`).
-- Bulk email finder (`ZbSendEmailFinderFile`, `ZbEmailFinderFileStatus`, `ZbEmailFinderResultFetch`, `ZbEmailFinderResultDelete`).
-- Bulk domain search (`ZbSendDomainSearchFile`, `ZbDomainSearchFileStatus`, `ZbDomainSearchResultFetch`, `ZbDomainSearchResultDelete`).
-- List evaluator (`ZbSendListEvaluatorFile`, `ZbGetListEvaluatorResult`, `ZbSendEvaluatedFile`).
-- Filters (`ZbAddFilter`, `ZbListFilters`, `ZbDeleteFilter`).
-- S3 bulk (`ZbValidateS3File`, `ZbScoreS3File`, `ZbExportS3File`, `ZbListS3Files`).
-
-### Changed
-
-- API requests time out after 120 seconds.
-- Query values, including the API key and file id, are percent-encoded.
-- `ZbApiKey` and `ZbApiBaseURL` are per thread. Call `ZBInitialize` on each thread that makes requests.
-
-### Fixed
-
 - A 403 HTML "Access denied" page is raised as a short error. An HTML page with status 200 is an error as well, including bulk `getfile`, instead of file content.
-- Empty and non-JSON bodies are a short error. A repeated `Error:` / `[Error]:` prefix is removed.
+- An HTTP error status (400 and above) whose body is empty or not JSON raises a short message, with a repeated `Error:` / `[Error]:` prefix removed. An empty body on HTTP 200 raises `Empty response from ZeroBounce (HTTP 200)`; any other non-JSON body on HTTP 200 still raises a `Json Error` with the JSON parser's message (the body is on `Payload`).
 - `ZbBatchValidateEmails` raises when the batch has an account-level error (HTTP 200, error for address `all`, such as an invalid API key or no credits). An error for one address stays on the returned batch.
-- Bulk email finder and domain search send `has_header_row` when it is set to false.
-- `ZbBatchValidateEmails` sends an empty IP address as JSON `null`.
+- `ZbBatchValidateEmails` sends an empty IP address as JSON `null`, and escapes the email, IP and key for JSON.
 - Requests are not sent when `ZBInitialize` was given an empty API key.
+- The domain search examples (`examples/fpc/ExampleDomainSearch.lpr`, `examples/delphi/ExampleDomainSearch.dpr`) compile. Since 2.0.0 they have called `ZbDomainSearchByDomain('example.com', 'John', 'Doe')`, but the function takes only the domain; they now pass the domain alone and print the format and confidence the API returns. CI now compiles every FPC example.
 
 ### Security
 
+- FPC builds verify TLS certificates and host names (see the CA-bundle entry under Changed); 2.1.3 accepted any certificate, so the `api_key` in request URLs could be read by a man in the middle.
+- Plain `http://` is accepted only for an exact loopback host, and a URL with user information is refused, so neither `ZBInitialize` nor a hand-set base URL can send the key to another host over plain HTTP (`http://localhost.evil.example`, `http://127.0.0.1@evil.example`).
+- Redirects are not followed, so the key is never forwarded to another host.
 - Query parameters are percent-encoded, so a value cannot rewrite the request URL.
-- Exception messages no longer include the raw HTML access-denied page. The response body remains on `ZbException.Payload`.
+- Exception messages no longer include the request URL (which carries the key) or the raw HTML access-denied page. The response body remains on `ZbException.Payload`.
 
 ## [2.1.2] - 2026-06-10
 
@@ -121,7 +111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Full Pascal/Delphi SDK: validation, batch, bulk, AI scoring, find email, domain search, credits, API usage, and activity data.
 
-[Unreleased]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.1.3...HEAD
+[Unreleased]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.1.3...v2.2.0
 [2.1.2]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.1.0...v2.1.2
 [2.1.0]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.0.11...v2.1.0
 [2.0.11]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.0.0...v2.0.11
