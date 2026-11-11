@@ -164,7 +164,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_VALIDATE);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_VALIDATE);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         UrlToAccess := Concat(UrlToAccess, '&ip_address=', EncodeParam(IpAddress));
@@ -236,7 +236,7 @@ implementation
                     FormBody := Concat(FormBody, '&greylist_processing=true');
             if Options.CallbackUrl <> '' then
                 FormBody := Concat(FormBody, '&callback_url=', EncodeParam(Options.CallbackUrl));
-            response := ZBFormPostRequest(Concat(ZbApiBaseURL, ENDPOINT_VALIDATE), FormBody);
+            response := ZBFormPostRequest(Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_VALIDATE), FormBody);
         end
         else
             response := ZBGetRequest(UrlToAccess);
@@ -275,7 +275,7 @@ implementation
     begin
         if (Options.Timeout >= 0) and ((Options.Timeout < 10) or (Options.Timeout > 120)) then
             raise ZbException.Create('Invalid parameter: timeout (must be between 10 and 120 seconds)');
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_BATCH_VALIDATE);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_BATCH_VALIDATE);
         JsonBody := ZbBatchRequestBodyFromEmails(Emails, Options);
         response := ZBPostRequest(UrlToAccess, JsonBody);
 

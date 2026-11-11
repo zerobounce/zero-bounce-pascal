@@ -95,6 +95,10 @@ var
     { BULK_HOST has no documented regional variant, so pairing it with a
       regional base URL is worth one warning and no more. }
     ZbBulkRegionWarned: Boolean = False;
+    { Limits on every request, in milliseconds: connecting, and waiting for
+      the response. Neither is ever switched off. }
+    ZbConnectTimeoutMs: Integer = 30000;
+    ZbReadTimeoutMs: Integer = 120000;
 
 { Per-thread. One thread must not call ZBInitialize for a second key while another request is in flight on that same thread. }
 threadvar
@@ -112,6 +116,11 @@ threadvar
       ZbApiBaseURL threadvar by hand. A trailing slash is dropped, since every
       endpoint constant already starts with one. }
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: String); overload;
+    { The base URL with any trailing slashes dropped. Every endpoint path
+      starts with one, so 'https://host/v2/' would otherwise build
+      'https://host/v2//validate'. Applied wherever a base URL variable is
+      used, since a caller may set any of them directly. }
+    function ZbBaseUrl(const Url: String): String;
     function EncodeParam(param: String): String;
     function RedactSecrets(const S: string): string;
     { The key, or a clear error. A key with surrounding whitespace or control
@@ -639,7 +648,16 @@ end;
 
     procedure ZBSetApiKey ( ApiKey : string );
     begin
-        ZbApiKey := ApiKey;
+        { The same check as ZBInitialize: a dirty key is refused and the key
+          already set stays. }
+        ZbApiKey := ZbCheckedApiKey(ApiKey);
+    end;
+
+    function ZbBaseUrl(const Url: String): String;
+    begin
+        Result := Trim(Url);
+        while (Result <> '') and (Result[Length(Result)] = '/') do
+            Delete(Result, Length(Result), 1);
     end;
 
     procedure ZBInitialize(ApiKey: string);
@@ -665,8 +683,7 @@ end;
         ZbRequireHttpsUrl(Normalized, 'api_base_url');
         { Every endpoint constant starts with a slash, so a trailing one here
           would build '//getcredits'. }
-        while (Normalized <> '') and (Normalized[Length(Normalized)] = '/') do
-            Delete(Normalized, Length(Normalized), 1);
+        Normalized := ZbBaseUrl(Normalized);
         ZbApiKey := ZbCheckedApiKey(ApiKey);
         ZbApiBaseURL := Normalized;
     end;
@@ -878,13 +895,17 @@ end;
 
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
-            Client.ConnectTimeout := 30000;
-            Client.IOTimeout := 120000;
+            Client.ConnectTimeout := ZbConnectTimeoutMs;
+            Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
             ResponseStream := TStringStream.Create('');
             try
-                Client.HTTPMethod('GET', url, ResponseStream, [200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503]);
+                { Every status is let through to ZbFinishResponse, which turns a
+                  redirect or an error into a ZbException carrying the status.
+                  A list here made fphttpclient raise its own exception, with
+                  no status, for anything not on it - a 302 included. }
+                Client.HTTPMethod('GET', url, ResponseStream, []);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
@@ -895,10 +916,10 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
-            { The same limits as the FPC branch: 30 s to connect, 120 s for
-              the response. Both are in milliseconds. }
-            Client.ConnectionTimeout := 30000;
-            Client.ResponseTimeout := 120000;
+            { The same limits as the FPC branch: ZbConnectTimeoutMs to
+              connect, ZbReadTimeoutMs for the response. }
+            Client.ConnectionTimeout := ZbConnectTimeoutMs;
+            Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             try
@@ -942,8 +963,8 @@ end;
 
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
-            Client.ConnectTimeout := 30000;
-            Client.IOTimeout := 120000;
+            Client.ConnectTimeout := ZbConnectTimeoutMs;
+            Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
 
@@ -960,10 +981,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
-            { The same limits as the FPC branch: 30 s to connect, 120 s for
-              the response. Both are in milliseconds. }
-            Client.ConnectionTimeout := 30000;
-            Client.ResponseTimeout := 120000;
+            { The same limits as the FPC branch: ZbConnectTimeoutMs to
+              connect, ZbReadTimeoutMs for the response. }
+            Client.ConnectionTimeout := ZbConnectTimeoutMs;
+            Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(JsonParam);
@@ -1067,8 +1088,8 @@ end;
 
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
-            Client.ConnectTimeout := 30000;
-            Client.IOTimeout := 120000;
+            Client.ConnectTimeout := ZbConnectTimeoutMs;
+            Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
             Client.AddHeader('Accept', 'application/json');
@@ -1094,10 +1115,10 @@ end;
 
             {$ELSE}
             Client := THTTPClient.Create;
-            { The same limits as the FPC branch: 30 s to connect, 120 s for
-              the response. Both are in milliseconds. }
-            Client.ConnectionTimeout := 30000;
-            Client.ResponseTimeout := 120000;
+            { The same limits as the FPC branch: ZbConnectTimeoutMs to
+              connect, ZbReadTimeoutMs for the response. }
+            Client.ConnectionTimeout := ZbConnectTimeoutMs;
+            Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(Body);
@@ -1148,8 +1169,8 @@ end;
 
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
-            Client.ConnectTimeout := 30000;
-            Client.IOTimeout := 120000;
+            Client.ConnectTimeout := ZbConnectTimeoutMs;
+            Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
 
@@ -1166,10 +1187,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
-            { The same limits as the FPC branch: 30 s to connect, 120 s for
-              the response. Both are in milliseconds. }
-            Client.ConnectionTimeout := 30000;
-            Client.ResponseTimeout := 120000;
+            { The same limits as the FPC branch: ZbConnectTimeoutMs to
+              connect, ZbReadTimeoutMs for the response. }
+            Client.ConnectionTimeout := ZbConnectTimeoutMs;
+            Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             BodyStream := TStringStream.Create(FormBody);
@@ -1245,8 +1266,8 @@ end;
             FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
-            Client.ConnectTimeout := 30000;
-            Client.IOTimeout := 120000;
+            Client.ConnectTimeout := ZbConnectTimeoutMs;
+            Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
             ResponseStream := TStringStream.Create('');
@@ -1282,10 +1303,10 @@ end;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
-            { The same limits as the FPC branch: 30 s to connect, 120 s for
-              the response. Both are in milliseconds. }
-            Client.ConnectionTimeout := 30000;
-            Client.ResponseTimeout := 120000;
+            { The same limits as the FPC branch: ZbConnectTimeoutMs to
+              connect, ZbReadTimeoutMs for the response. }
+            Client.ConnectionTimeout := ZbConnectTimeoutMs;
+            Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             FileStream := TStringStream.Create(FileContent);

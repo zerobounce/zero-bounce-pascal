@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- `ZbBulkValidationResultFetch`, `ZbAiScoringResultFetch`, `ZbEmailFinderResultFetch` and `ZbDomainSearchResultFetch` now raise a `ZbException` carrying the HTTP status (`StatusCode`) when getfile answers with a JSON body - a JSON content type, or a body that is a JSON object, on any status. In 2.2.0 a body such as `{"message": "File is still processing"}` on an HTTP 200 came back as a result with `HasContent = False` and the text in `Feedback.Message`; the other SDKs raise. A returned `TZBBulkResponse` now always has `HasContent = True`. Upgrading: replace `if not R.HasContent then ... R.Feedback.Message` with an `except on E: ZbException` around the call.
+- The deprecated `ZBSetApiKey` now checks the key like `ZBInitialize`: a key with surrounding whitespace or control characters raises `ZbException` (`api_key has surrounding whitespace or control characters`) and the key already set stays. In 2.2.0 it stored any key unchecked.
+
+### Added
+
+- `ZbConnectTimeoutMs` (default 30000) and `ZbReadTimeoutMs` (default 120000) in __ZbUtility__: the connect and read timeouts, in milliseconds, of every request. They were fixed at the same values before.
+- `ZbBaseUrl` in __ZbUtility__: a base URL with its trailing slashes dropped.
+- Offline tests that every transport stops at a redirect with the status kept, applies the read timeout, and that every public request function refuses a plain `http://` base URL.
+
+### Fixed
+
+- A trailing slash on `ZbApiBaseURL`, `BULK_URI`, `ZbBulkRootURL`, `ZbInboxPlacementURL` or `ZbWarmupBaseURL` built a request path with `//` (for example `https://warmup-api.zerobounce.net//api/v1/warmup/seeds`). Trailing slashes are now dropped from every base URL when a request is built. `ZbListEvaluatorURL` and the `ZBInitialize(ApiKey, BaseUrl)` overload already dropped them.
+- FPC builds: a GET answered with a redirect, or with a status outside a fixed list (200, 201, 204, 400, 401, 403, 404, 409, 422, 429, 500, 502, 503), raised fphttpclient's own `EHTTPClient` (`Unexpected response status code: 302`) with no status, instead of the `ZbException` with `StatusCode` that every other request raises. Every status now reaches the SDK's response checks. Redirects were not followed before either.
+
 ## [2.2.0] - 2026-11-11
 
 ### Upgrading from 2.1.3

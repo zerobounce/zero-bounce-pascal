@@ -224,9 +224,7 @@ const
     { ZbListEvaluatorURL without a trailing slash. }
     function P3ListEvaluatorBase: String;
     begin
-        Result := ZbListEvaluatorURL;
-        while (Result <> '') and (Result[Length(Result)] = '/') do
-            Delete(Result, Length(Result), 1);
+        Result := ZbBaseUrl(ZbListEvaluatorURL);
     end;
 
     { send-evaluated-file is the third leg of the list evaluator flow and sits
@@ -349,7 +347,7 @@ const
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         try
@@ -369,8 +367,9 @@ const
         response: TZbRequestResponse;
         error: ZbException;
         IsJsonCT: Boolean;
+        ErrorText: String;
     begin
-        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         if response.ContentType = '' then
@@ -382,16 +381,26 @@ const
         if ZbBodyLooksLikeHtml(response.Payload) then
             raise ZbException.FromResponse('', response);
         IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
-        if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) then
+        { getfile answers with the file or not at all. A JSON body - with a JSON
+          content type or not, whatever its keys - is the API saying why not, so
+          it is an error carrying the HTTP status, as in the other SDKs. }
+        if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) or
+           (Copy(TrimLeft(response.Payload), 1, 1) = '{') then
         begin
-            Result.HasContent := False;
-            Result.Feedback := ZbFileFeedbackFromJson(response.Payload);
-        end
-        else
-        begin
-            Result.HasContent := True;
-            Result.Content := response.Payload;
+            ErrorText := '';
+            try
+                ErrorText := Trim(ZbFileFeedbackFromJson(response.Payload).Message);
+            except
+                ErrorText := '';
+            end;
+            if ErrorText = '' then
+                ErrorText := ZbErrorOnlyMessage(response.Payload);
+            error := ZbException.FromResponse(ErrorText, response);
+            error.MarkHttpError;
+            raise error;
         end;
+        Result.HasContent := True;
+        Result.Content := response.Payload;
     end;
 
     function P3BulkRootDelete(const Endpoint, FileId: String): TZBFileFeedback;
@@ -400,7 +409,7 @@ const
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbBulkRootURL, Endpoint, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
         try
@@ -447,7 +456,7 @@ begin
             'Empty parameter: first_name_column or full_name_column'
         );
     Result := P3MultipartSubmit(
-        Concat(ZbBulkRootURL, ENDPOINT_EMAIL_FINDER_SEND),
+        Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_EMAIL_FINDER_SEND),
         FileContent,
         BuildEmailFinderForm(DomainColumn, Options)
     );
@@ -480,7 +489,7 @@ begin
     Form.AddPair('domain_column', IntToStr(DomainColumn));
     if (Options <> nil) and Options^.HasHeaderRowSpecified then
         Form.AddPair('has_header_row', StrBool(Options^.HasHeaderRow));
-    Result := P3MultipartSubmit(Concat(ZbBulkRootURL, ENDPOINT_DOMAIN_SEARCH_SEND), FileContent, Form);
+    Result := P3MultipartSubmit(Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_DOMAIN_SEARCH_SEND), FileContent, Form);
 end;
 
 function ZbDomainSearchFileStatus(FileId: String): TZBFileStatus;
@@ -563,7 +572,7 @@ begin
     Form.AddPair('rule', Rule);
     Form.AddPair('target', Target);
     Form.AddPair('value', Value);
-    Result := P3RawJsonForm(Concat(ZbApiBaseURL, ENDPOINT_FILTERS_ADD), Form);
+    Result := P3RawJsonForm(Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_FILTERS_ADD), Form);
 end;
 
 function ZbListFilters(UsePost: Boolean): String;
@@ -574,10 +583,10 @@ begin
     begin
         Form := TStringList.Create;
         Form.AddPair('api_key', ZbApiKey);
-        Result := P3RawJsonForm(Concat(ZbApiBaseURL, ENDPOINT_FILTERS_LIST), Form);
+        Result := P3RawJsonForm(Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_FILTERS_LIST), Form);
     end
     else
-        Result := P3RawJsonGet(Concat(ZbApiBaseURL, ENDPOINT_FILTERS_LIST, '?api_key=', EncodeParam(ZbApiKey)));
+        Result := P3RawJsonGet(Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_FILTERS_LIST, '?api_key=', EncodeParam(ZbApiKey)));
 end;
 
 function ZbDeleteFilter(const Rule, Target, Value: String): String;
@@ -589,7 +598,7 @@ begin
     Form.AddPair('rule', Rule);
     Form.AddPair('target', Target);
     Form.AddPair('value', Value);
-    Result := P3RawJsonForm(Concat(ZbApiBaseURL, ENDPOINT_FILTERS_DELETE), Form);
+    Result := P3RawJsonForm(Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_FILTERS_DELETE), Form);
 end;
 
 function ZbListS3Files(const Bucket, Search: String): String;
@@ -597,7 +606,7 @@ var
     UrlToAccess: String;
     response: TZbRequestResponse;
 begin
-    UrlToAccess := Concat(ZbBulkRootURL, ENDPOINT_LIST_S3, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_LIST_S3, '?api_key=', EncodeParam(ZbApiKey));
     if Bucket <> '' then
         UrlToAccess := Concat(UrlToAccess, '&bucket=', EncodeParam(Bucket));
     if Search <> '' then
@@ -628,7 +637,7 @@ begin
     if Options.IpAddressColumn > 0 then
         Form.AddPair('ip_address_column', IntToStr(Options.IpAddressColumn));
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_VALIDATE_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_VALIDATE_S3), Form);
 end;
 
 function ZbScoreS3File(Options: TZbScoreS3FileOptions): TZBFileFeedback;
@@ -644,7 +653,7 @@ begin
     if Options.EmailAddressColumnSpecified then
         Form.AddPair('email_address_column', IntToStr(Options.EmailAddressColumn));
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_SCORE_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_SCORE_S3), Form);
 end;
 
 function ZbExportS3File(const FileId, ExportBucket: String): TZBFileFeedback;
@@ -662,7 +671,7 @@ begin
     if ExportBucket <> '' then
         Form.AddPair('export_bucket', ExportBucket);
     Form.AddPair('api_key', ZbApiKey);
-    Result := P3FormSubmit(Concat(ZbBulkRootURL, ENDPOINT_EXPORT_S3), Form);
+    Result := P3FormSubmit(Concat(ZbBaseUrl(ZbBulkRootURL), ENDPOINT_EXPORT_S3), Form);
 end;
 
 procedure Register;
@@ -710,7 +719,7 @@ begin
     if Options.RemoveDuplicatesSpecified then
         Body := Concat(Body, '&remove_duplicates=', P3BoolField(Options.RemoveDuplicates));
 
-    response := ZBFormPostRequest(Concat(ZbBulkRootURL, Endpoint), Body);
+    response := ZBFormPostRequest(Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint), Body);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do
@@ -768,7 +777,7 @@ begin
     if ExportPath <> '' then
         Body := Concat(Body, '&export_path=', EncodeParam(ExportPath));
 
-    response := ZBFormPostRequest(Concat(ZbBulkRootURL, '/exportSFTPfile'), Body);
+    response := ZBFormPostRequest(Concat(ZbBaseUrl(ZbBulkRootURL), '/exportSFTPfile'), Body);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do
@@ -821,7 +830,7 @@ function P3InboxPlacementRequest(const Method, Path, ExtraQuery, Body: String): 
 var
     UrlToAccess, Query: String;
 begin
-    UrlToAccess := Concat(ZbInboxPlacementURL, Path);
+    UrlToAccess := Concat(ZbBaseUrl(ZbInboxPlacementURL), Path);
     { LIVE: the Inbox Placement Tester authenticates with a Bearer header.
       Sent as an api_key parameter the request is rejected as unauthorized,
       and the key would end up in a query string that gets logged. }
