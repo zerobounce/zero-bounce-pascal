@@ -126,6 +126,11 @@ begin
     CreditsBefore := ZbGetCredits;
     if CreditsBefore < -1 then
         Exit('getcredits did not answer a balance');
+    { LIVE: -1 is the API's answer for an INVALID key, not a balance.
+      Accepting it let a dead key sail through the one check meant to catch it
+      while every billable call below failed. }
+    if CreditsBefore <= 0 then
+        Exit(Format('not a usable credit balance: %d', [CreditsBefore]));
     Result := '';
 end;
 
@@ -321,7 +326,7 @@ end;
 procedure ValidationFree;
 begin
     WriteLn('Validation API (free calls)');
-    Check('getcredits returns a balance', @CheckCredits);
+    Check('getcredits returns a positive balance', @CheckCredits);
     Check('getapiusage parses the documented date formats', @CheckApiUsage);
     Check('validate on a sandbox address spends nothing', @CheckValidateSandbox);
     Check('validate works over POST as well as GET', @CheckValidatePost);
