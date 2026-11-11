@@ -18,6 +18,8 @@ type
     procedure TestConcurrentKeys;
     procedure TestRedirectsAreNotFollowed;
     procedure TestReadTimeoutIsApplied;
+    procedure TestConnectTimeoutIsApplied;
+    procedure TestADownloadCutShortIsAnError;
     procedure TestEveryRequestFunctionRefusesPlainHttp;
     procedure TestBaseUrlsWithATrailingSlash;
   end;
@@ -287,6 +289,19 @@ begin
     { Longer than the read timeout the test sets, then hang up without an
       answer: a client with no read timeout waits the whole time. }
     Sleep(SLOW_REPLY_MS);
+    CloseSocket(Sock);
+    Exit;
+  end;
+  if (Pos('truncated-', Item.ApiKey) = 1) or (Pos('truncstall-', Item.ApiKey) = 1) then
+  begin
+    { A 200 header promising 1000 bytes, 26 of them, then the end of the
+      connection - or, for 'truncstall-', silence past the read timeout. }
+    Reply := 'HTTP/1.1 200 OK' + #13#10 + 'Content-Type: text/csv' + #13#10 +
+      'Content-Length: 1000' + #13#10 + 'Connection: close' + #13#10 + #13#10 +
+      'email' + #10 + 'partial@example.com' + #10;
+    fpSend(Sock, PChar(Reply), Length(Reply), 0);
+    if Pos('truncstall-', Item.ApiKey) = 1 then
+      Sleep(SLOW_REPLY_MS);
     CloseSocket(Sock);
     Exit;
   end;
@@ -971,6 +986,146 @@ begin
       in a later test's recorded requests. }
     Started := GetTickCount64;
     while (CountRecorded('slow-') < Calls) and (GetTickCount64 - Started < 15000) do
+      Sleep(50);
+    Sleep(SLOW_REPLY_MS + 200);
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestConnectTimeoutIsApplied;
+const
+  { fphttpclient counts the connect timeout in whole seconds; its own default
+    is 3000 ms, so a transport that does not set ZbConnectTimeoutMs takes 3 s. }
+  TEST_CONNECT_TIMEOUT_MS = 1000;
+  { TEST-NET-1 (RFC 5737): never routed, so a connection attempt gets no answer. }
+  UNANSWERED = 'https://192.0.2.1';
+var
+  Transport: TTransport;
+  Started, Elapsed: QWord;
+  SavedConnect, SavedRead: Integer;
+  Raised: Boolean;
+begin
+  SavedConnect := ZbConnectTimeoutMs;
+  SavedRead := ZbReadTimeoutMs;
+  try
+    ZbConnectTimeoutMs := TEST_CONNECT_TIMEOUT_MS;
+    ZbReadTimeoutMs := 20000;
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      ZBInitialize('connect-key');
+      ZbApiBaseURL := UNANSWERED + '/v2';
+      BULK_URI := ZbApiBaseURL;
+      ZbBulkRootURL := UNANSWERED;
+      ZbWarmupBaseURL := UNANSWERED;
+      ZbWarmupInitialize('connect-key');
+      ZbResponseMock := cDefaultMock;
+      Raised := False;
+      Started := GetTickCount64;
+      try
+        CallTransport(Transport);
+      except
+        on E: Exception do
+        begin
+          Raised := True;
+          AssertTrue(TRANSPORT_NAMES[Transport] + ' leaked the key: ' + E.Message,
+            Pos('connect-key', E.Message) = 0);
+        end;
+      end;
+      Elapsed := GetTickCount64 - Started;
+      { With no route at all (a container without a network) the attempt fails
+        at once, and the timeout is never reached: nothing to measure. }
+      if Elapsed < TEST_CONNECT_TIMEOUT_MS div 2 then
+        Ignore(Format('192.0.2.1 is refused at once here (%d ms), so the connect timeout cannot be measured', [Elapsed]));
+      AssertTrue(TRANSPORT_NAMES[Transport] + ': an unanswered connection should time out', Raised);
+      AssertTrue(Format('%s: took %d ms with a %d ms connect timeout',
+        [TRANSPORT_NAMES[Transport], Elapsed, TEST_CONNECT_TIMEOUT_MS]),
+        Elapsed < 2500);
+    end;
+  finally
+    ZbConnectTimeoutMs := SavedConnect;
+    ZbReadTimeoutMs := SavedRead;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestADownloadCutShortIsAnError;
+type
+  TDownload = (dlValidation, dlValidationWithOptions, dlScoring, dlScoringWithOptions,
+    dlEmailFinder, dlDomainSearch, dlWarmupSeeds);
+const
+  DOWNLOAD_NAMES: array[TDownload] of String = (
+    'ZbBulkValidationResultFetch', 'ZbBulkValidationResultFetch(options)', 'ZbAiScoringResultFetch',
+    'ZbAiScoringResultFetch(options)', 'ZbEmailFinderResultFetch', 'ZbDomainSearchResultFetch',
+    'ZbWarmupDownloadSeeds'
+  );
+var
+  Download: TDownload;
+  Options: TZbGetFileOptions;
+  Saved, Message: String;
+  Raised: Boolean;
+  SavedRead: Integer;
+  Started: QWord;
+
+  procedure Run(D: TDownload);
+  begin
+    case D of
+      dlValidation: ZbBulkValidationResultFetch('fid');
+      dlValidationWithOptions: ZbBulkValidationResultFetch('fid', @Options);
+      dlScoring: ZbAiScoringResultFetch('fid');
+      dlScoringWithOptions: ZbAiScoringResultFetch('fid', @Options);
+      dlEmailFinder: ZbEmailFinderResultFetch('fid');
+      dlDomainSearch: ZbDomainSearchResultFetch('fid');
+      dlWarmupSeeds: ZbWarmupDownloadSeeds(Saved);
+    end;
+  end;
+
+begin
+  { The server promises 1000 bytes, sends 26 and closes the connection. Every
+    download used to hand back the 26 bytes as the whole file. }
+  EnsureStub;
+  Options := Default(TZbGetFileOptions);
+  Options.DownloadType := 'combined';
+  Saved := GetTempDir + 'zb-pascal-cut-short-' + IntToStr(GetProcessID) + '.csv';
+  DeleteFile(Saved);
+  for Download := Low(TDownload) to High(TDownload) do
+  begin
+    UseStub('truncated-' + IntToStr(Ord(Download)));
+    Raised := False;
+    Message := '';
+    try
+      Run(Download);
+    except
+      on E: Exception do
+      begin
+        Raised := True;
+        Message := E.Message;
+      end;
+    end;
+    AssertTrue(DOWNLOAD_NAMES[Download] + ': a body cut short should be an error', Raised);
+    AssertTrue(DOWNLOAD_NAMES[Download] + ': ' + Message, Pos('cut short', Message) > 0);
+    AssertTrue(DOWNLOAD_NAMES[Download] + ' leaked the key: ' + Message, Pos('truncated-', Message) = 0);
+  end;
+  AssertFalse('ZbWarmupDownloadSeeds saved the partial file', FileExists(Saved));
+
+  { 26 bytes, then silence past the read timeout. }
+  SavedRead := ZbReadTimeoutMs;
+  try
+    ZbReadTimeoutMs := 200;
+    UseStub('truncstall-1');
+    Raised := False;
+    try
+      ZbBulkValidationResultFetch('fid');
+    except
+      on E: Exception do
+        Raised := True;
+    end;
+    AssertTrue('a body that stalls part-way should be an error', Raised);
+  finally
+    ZbReadTimeoutMs := SavedRead;
+    { Let the stub finish the stalled connection before the next test. }
+    Started := GetTickCount64;
+    while (CountRecorded('truncstall-') < 1) and (GetTickCount64 - Started < 15000) do
       Sleep(50);
     Sleep(SLOW_REPLY_MS + 200);
     ClearRecorded;
