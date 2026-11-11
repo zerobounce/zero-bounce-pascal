@@ -278,7 +278,7 @@ var
     Url: String;
 begin
     RequireWarmupKey;
-    Url := Concat(ZbWarmupBaseURL, ZB_WARMUP_BASE_PATH, Path, Query);
+    Url := Concat(ZbBaseUrl(ZbWarmupBaseURL), ZB_WARMUP_BASE_PATH, Path, Query);
     try
         Result := ZBSendForeignKeyRequest(
             Method, Url, Body, JSON_CONTENT_TYPE, 'API-Key', ZbWarmupApiKey

@@ -91,7 +91,7 @@ var
     error: ZbException;
     FormData: TStrings;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint);
+    UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint);
     FormData := ZbFromDataFromFileSubmitRecord(FileParams, endpoint);
     try
         response := ZBPostRequest(UrlToAccess, FormData, FileContent);
@@ -126,7 +126,7 @@ var
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
     UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
 
@@ -149,8 +149,9 @@ var
     response: TZbRequestResponse;
     error: ZbException;
     IsJsonCT: Boolean;
+    ErrorText: String;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
     UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     if Length(Options.DownloadType) > 0 then
         UrlToAccess := Concat(UrlToAccess, '&download_type=', EncodeParam(Options.DownloadType));
@@ -174,16 +175,26 @@ begin
     if ZbBodyLooksLikeHtml(response.Payload) then
         raise ZbException.FromResponse('', response);
     IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
-    if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) then
+    { getfile answers with the file or not at all. A JSON body - with a JSON
+      content type or not, whatever its keys - is the API saying why not, so
+      it is an error carrying the HTTP status, as in the other SDKs. }
+    if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) or
+       (Copy(TrimLeft(response.Payload), 1, 1) = '{') then
     begin
-        Result.HasContent := False;
-        Result.Feedback := ZbFileFeedbackFromJson(response.Payload);
-    end
-    else
-    begin
-        Result.HasContent := True;
-        Result.Content := response.Payload;
+        ErrorText := '';
+        try
+            ErrorText := Trim(ZbFileFeedbackFromJson(response.Payload).Message);
+        except
+            ErrorText := '';
+        end;
+        if ErrorText = '' then
+            ErrorText := ZbErrorOnlyMessage(response.Payload);
+        error := ZbException.FromResponse(ErrorText, response);
+        error.MarkHttpError;
+        raise error;
     end;
+    Result.HasContent := True;
+    Result.Content := response.Payload;
 end;
 
 function GenericResultDelete(endpoint, FileId: String): TZBFileFeedback;
@@ -192,7 +203,7 @@ var
     response: TZbRequestResponse;
     error: ZbException;
 begin
-    UrlToAccess := Concat(BULK_URI, endpoint, '?api_key=', EncodeParam(ZbApiKey));
+    UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
     UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
 

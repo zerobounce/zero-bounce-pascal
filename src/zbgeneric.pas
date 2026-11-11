@@ -37,7 +37,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_CREDITS, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_CREDITS, '?api_key=', EncodeParam(ZbApiKey));
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
@@ -60,7 +60,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_API_USAGE, '?api_key=', EncodeParam(ZbApiKey));
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_API_USAGE, '?api_key=', EncodeParam(ZbApiKey));
         DateAuxString := Format(
             '%d-%d-%d',
             [
@@ -121,7 +121,7 @@ implementation
         UrlToAccess: String;
         response: TZbRequestResponse;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_SCORE_EMAIL);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_SCORE_EMAIL);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
@@ -133,7 +133,7 @@ implementation
         UrlToAccess, FormBody: String;
         response: TZbRequestResponse;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_SCORE_EMAIL);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_SCORE_EMAIL);
         FormBody := Concat(
             'api_key=', EncodeParam(ZbApiKey),
             '&email=', EncodeParam(Email)
@@ -149,7 +149,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_ACTIVITY_DATA);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
@@ -177,7 +177,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
         { first_name is optional on guessformat. The two-argument overloads
@@ -219,7 +219,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
         { first_name is optional on guessformat. The two-argument overloads
@@ -261,7 +261,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 
@@ -284,7 +284,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&company_name=', EncodeParam(CompanyName));
 
@@ -307,7 +307,7 @@ implementation
         response: TZbRequestResponse;
         error: ZbException;
     begin
-        UrlToAccess := Concat(ZbApiBaseURL, ENDPOINT_EMAIL_FINDER);
+        UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_EMAIL_FINDER);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&domain=', EncodeParam(Domain));
 

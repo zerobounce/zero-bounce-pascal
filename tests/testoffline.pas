@@ -6,7 +6,7 @@ interface
 
 uses
   Classes, SysUtils, fpcunit, testregistry,
-  ZbUtility, ZbGeneric, ZbValidation, ZbBulk, ZbPriority3, ZbStructures;
+  ZbUtility, ZbGeneric, ZbValidation, ZbBulk, ZbPriority3, ZbStructures, ZbWarmup;
 
 type
   TTestOffline = class(TTestCase)
@@ -16,6 +16,10 @@ type
     procedure TestErrorBodies;
     procedure TestBatchAccountAndPartial;
     procedure TestConcurrentKeys;
+    procedure TestRedirectsAreNotFollowed;
+    procedure TestReadTimeoutIsApplied;
+    procedure TestEveryRequestFunctionRefusesPlainHttp;
+    procedure TestBaseUrlsWithATrailingSlash;
   end;
 
 implementation
@@ -35,6 +39,9 @@ type
     constructor Create;
     procedure Execute; override;
   end;
+
+const
+  SLOW_REPLY_MS = 1500;
 
 var
   Stub: TStubServer;
@@ -129,6 +136,15 @@ begin
     Item.ApiKey + '","domain":"' + Item.ApiKey + '","Credits":"7","total":1,"found":true,"active_in_days":"3","score":10,' +
     '"address":"' + Item.ApiKey + '","status":"valid","processed_at":"2018-01-01 00:00:00.000","other_domain_formats":[],' +
     '"start_date":"1/1/2018","end_date":"1/31/2018","upload_date":"2018-01-01T00:00:00","complete_percentage":"100%","file_status":"Complete"}';
+  if Pos('redirect-', Item.ApiKey) = 1 then
+  begin
+    { Same host, so a client that followed it would be seen here. }
+    Result := 'HTTP/1.1 302 Found' + #13#10 +
+      'Location: http://127.0.0.1:' + IntToStr(Stub.Port) + '/followed?api_key=' + Item.ApiKey + #13#10 +
+      'Content-Length: 0' + #13#10 +
+      'Connection: close' + #13#10 + #13#10;
+    Exit;
+  end;
   if Pos('html-403-', Item.ApiKey) = 1 then
   begin
     Code := '403';
@@ -249,6 +265,11 @@ begin
       end;
     end;
   end;
+  { The Warmup API and the Inbox Placement Tester carry the key in a header. }
+  if Item.ApiKey = '' then
+    Item.ApiKey := HeaderValue(Headers, 'API-Key');
+  if (Item.ApiKey = '') and (Pos('Bearer ', HeaderValue(Headers, 'Authorization')) = 1) then
+    Item.ApiKey := Copy(HeaderValue(Headers, 'Authorization'), 8, MaxInt);
   if (Item.ApiKey = '') and (Pos('name="api_key"', Body) > 0) then
   begin
     Q := Pos('name="api_key"', Body);
@@ -261,6 +282,14 @@ begin
   end;
   Sleep(Random(21));
   Remember(Item);
+  if Pos('slow-', Item.ApiKey) = 1 then
+  begin
+    { Longer than the read timeout the test sets, then hang up without an
+      answer: a client with no read timeout waits the whole time. }
+    Sleep(SLOW_REPLY_MS);
+    CloseSocket(Sock);
+    Exit;
+  end;
   Reply := AnswerFor(Item);
   fpSend(Sock, PChar(Reply), Length(Reply), 0);
   CloseSocket(Sock);
@@ -374,7 +403,71 @@ begin
     otherwise these tests reach the live API. }
   ZbListEvaluatorURL := Format('http://127.0.0.1:%d/v2/listevaluator', [Stub.Port]);
   ZbInboxPlacementURL := Format('http://127.0.0.1:%d/api/ipt', [Stub.Port]);
+  ZbWarmupBaseURL := Format('http://127.0.0.1:%d', [Stub.Port]);
+  ZbWarmupInitialize(Key);
   ZbResponseMock := cDefaultMock;
+end;
+
+procedure UseDefaultUrls;
+begin
+  ZBInitialize('mock_api_key');
+  BULK_URI := 'https://bulkapi.zerobounce.net/v2';
+  ZbBulkRootURL := 'https://bulkapi.zerobounce.net';
+  ZbListEvaluatorURL := 'https://bulkapi.zerobounce.net/v2/listevaluator';
+  ZbInboxPlacementURL := 'https://bulkapi.zerobounce.net/api/ipt';
+  ZbWarmupBaseURL := 'https://warmup-api.zerobounce.net';
+  ZbWarmupInitialize('mock_warmup_key');
+  ZbResponseMock := cDefaultMock;
+end;
+
+function CountRecorded(const Prefix: String): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  Gate.Enter;
+  try
+    for I := 0 to High(Recorded) do
+      if Pos(Prefix, Recorded[I].ApiKey) = 1 then
+        Inc(Result);
+  finally
+    Gate.Leave;
+  end;
+end;
+
+type
+  { One call per transport: GET, JSON POST, form POST, multipart upload, and
+    the method-and-header request the Warmup API and the Inbox Placement
+    Tester use. }
+  TTransport = (tpGet, tpJsonPost, tpFormPost, tpMultipart, tpWithHeader);
+
+const
+  TRANSPORT_NAMES: array[TTransport] of String = (
+    'GET', 'JSON POST', 'form POST', 'multipart upload', 'request with header'
+  );
+
+procedure CallTransport(Transport: TTransport);
+var
+  Params: TZbBulkParams;
+  Options: TZbValidateOptions;
+begin
+  case Transport of
+    tpGet: ZbGetCredits;
+    tpJsonPost: ZbBatchValidateEmails(['a@example.com']);
+    tpFormPost:
+      begin
+        Options := ZbDefaultValidateOptions;
+        Options.UsePost := 1;
+        ZbValidateEmail('a@example.com', '', Options);
+      end;
+    tpMultipart:
+      begin
+        FillChar(Params, SizeOf(Params), 0);
+        Params.EmailAddressColumn := 1;
+        ZbBulkValidationFileSubmit('email' + LineEnding + 'a@example.com' + LineEnding, Params);
+      end;
+    tpWithHeader: ZbWarmupGetSeeds;
+  end;
 end;
 
 procedure ExpectShort(const Msg: String);
@@ -800,6 +893,285 @@ begin
         Inc(Seen);
     AssertEquals(1, Seen);
   end;
+end;
+
+procedure TTestOffline.TestRedirectsAreNotFollowed;
+var
+  Transport: TTransport;
+  Key: String;
+begin
+  { A redirect could carry the key to another host. Every transport must
+    stop at the 302, and report it as an error with its status. }
+  EnsureStub;
+  try
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      Key := 'redirect-' + IntToStr(Ord(Transport));
+      UseStub(Key);
+      ClearRecorded;
+      try
+        CallTransport(Transport);
+        Fail(TRANSPORT_NAMES[Transport] + ': a redirect was returned as a result');
+      except
+        on E: ZbException do
+          AssertEquals(TRANSPORT_NAMES[Transport] + ': ' + E.Message, 302, E.StatusCode);
+      end;
+      { Only the first request reached the stub; nothing went to /followed. }
+      AssertEquals(TRANSPORT_NAMES[Transport] + ' followed the redirect', 1, Length(Recorded));
+      AssertTrue(TRANSPORT_NAMES[Transport], Pos('/followed', OnlyRequest.Path) = 0);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestReadTimeoutIsApplied;
+const
+  TEST_READ_TIMEOUT_MS = 200;
+var
+  Transport: TTransport;
+  Started, Elapsed: QWord;
+  SavedRead: Integer;
+  Raised: Boolean;
+  Calls: Integer;
+begin
+  { The stub holds every 'slow-' request longer than the read timeout and
+    then hangs up. A transport that sets no read timeout waits it out. }
+  EnsureStub;
+  SavedRead := ZbReadTimeoutMs;
+  Calls := 0;
+  ClearRecorded;
+  try
+    ZbReadTimeoutMs := TEST_READ_TIMEOUT_MS;
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      UseStub('slow-' + IntToStr(Ord(Transport)));
+      Raised := False;
+      Started := GetTickCount64;
+      try
+        CallTransport(Transport);
+      except
+        on E: Exception do
+        begin
+          Raised := True;
+          AssertTrue(TRANSPORT_NAMES[Transport] + ' leaked the key: ' + E.Message,
+            Pos('slow-', E.Message) = 0);
+        end;
+      end;
+      Elapsed := GetTickCount64 - Started;
+      Inc(Calls);
+      AssertTrue(TRANSPORT_NAMES[Transport] + ': a stalled response should time out', Raised);
+      AssertTrue(Format('%s: took %d ms with a %d ms read timeout',
+        [TRANSPORT_NAMES[Transport], Elapsed, TEST_READ_TIMEOUT_MS]),
+        Elapsed < SLOW_REPLY_MS - 300);
+    end;
+  finally
+    ZbReadTimeoutMs := SavedRead;
+    { Let the stub work through the stalled connections, so they do not land
+      in a later test's recorded requests. }
+    Started := GetTickCount64;
+    while (CountRecorded('slow-') < Calls) and (GetTickCount64 - Started < 15000) do
+      Sleep(50);
+    Sleep(SLOW_REPLY_MS + 200);
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestEveryRequestFunctionRefusesPlainHttp;
+var
+  Missed: String;
+  Params: TZbBulkParams;
+  Finder: TZbEmailFinderSendFileOptions;
+  S3: TZbValidateS3FileOptions;
+  Score: TZbScoreS3FileOptions;
+  Job: TZbBulkFileJobOptions;
+  Emails: array[0..0] of TZbEmailAndIp;
+  Warmup: TZbWarmupAddSendingAccountOptions;
+
+  procedure Expect(const Name: String; E: Exception);
+  begin
+    if (E = nil) or not (E is ZbException) or (Pos('https://', E.Message) = 0) then
+    begin
+      if E <> nil then
+        Missed := Missed + Name + ' (' + E.Message + '); '
+      else
+        Missed := Missed + Name + ' (sent); ';
+    end;
+  end;
+
+begin
+  { Every base URL is plain http on a real host. The mock would answer any
+    request that got past the URL check, so a function that skips the check
+    shows up as "sent". }
+  Missed := '';
+  ZBInitialize('mock_api_key');
+  ZbWarmupInitialize('mock_warmup_key');
+  ZbApiBaseURL := 'http://api.zerobounce.net/v2';
+  BULK_URI := 'http://bulkapi.zerobounce.net/v2';
+  ZbBulkRootURL := 'http://bulkapi.zerobounce.net';
+  ZbListEvaluatorURL := 'http://bulkapi.zerobounce.net/v2/listevaluator';
+  ZbInboxPlacementURL := 'http://bulkapi.zerobounce.net/api/ipt';
+  ZbWarmupBaseURL := 'http://warmup-api.zerobounce.net';
+  ZBMockResponse(200, '{"success":true,"message":"ok","file_id":"fid","Credits":"7"}', 'application/octet-stream');
+  FillChar(Params, SizeOf(Params), 0);
+  Params.EmailAddressColumn := 1;
+  FillChar(Finder, SizeOf(Finder), 0);
+  Finder.FirstNameColumn := 2;
+  FillChar(S3, SizeOf(S3), 0);
+  S3.FileName := 'f.csv';
+  S3.ReturnUrl := 'https://example.com/done';
+  FillChar(Score, SizeOf(Score), 0);
+  Score.FileName := 'f.csv';
+  Score.ReturnUrl := 'https://example.com/done';
+  Job := ZbDefaultBulkFileJobOptions;
+  Job.FileName := 'f.csv';
+  Job.ReturnUrl := 'https://example.com/done';
+  Emails[0].Email := 'a@example.com';
+  Emails[0].Ip := '';
+  Warmup := ZbWarmupDefaultAddSendingAccountOptions;
+  Warmup.EngagementRuleIdSpecified := True;
+  Warmup.EngagementRuleId := 2;
+  try
+    { ZbGeneric }
+    try ZbGetCredits; Expect('ZbGetCredits', nil); except on E: Exception do Expect('ZbGetCredits', E); end;
+    try ZbGetApiUsage; Expect('ZbGetApiUsage', nil); except on E: Exception do Expect('ZbGetApiUsage', E); end;
+    try ZbGetApiUsage(EncodeDate(2024, 1, 1), EncodeDate(2024, 1, 2)); Expect('ZbGetApiUsage(dates)', nil); except on E: Exception do Expect('ZbGetApiUsage(dates)', E); end;
+    try ZbActivityData('a@example.com'); Expect('ZbActivityData', nil); except on E: Exception do Expect('ZbActivityData', E); end;
+    try ZbScoreEmail('a@example.com'); Expect('ZbScoreEmail', nil); except on E: Exception do Expect('ZbScoreEmail', E); end;
+    try ZbScoreEmailPost('a@example.com'); Expect('ZbScoreEmailPost', nil); except on E: Exception do Expect('ZbScoreEmailPost', E); end;
+    try ZbFindEmailByDomain('example.com', 'Ada', 'B', 'Lovelace'); Expect('ZbFindEmailByDomain', nil); except on E: Exception do Expect('ZbFindEmailByDomain', E); end;
+    try ZbFindEmailByCompanyName('Example', 'Ada', 'B', 'Lovelace'); Expect('ZbFindEmailByCompanyName', nil); except on E: Exception do Expect('ZbFindEmailByCompanyName', E); end;
+    try ZbDomainSearchByDomain('example.com'); Expect('ZbDomainSearchByDomain', nil); except on E: Exception do Expect('ZbDomainSearchByDomain', E); end;
+    try ZbDomainSearchByCompanyName('Example'); Expect('ZbDomainSearchByCompanyName', nil); except on E: Exception do Expect('ZbDomainSearchByCompanyName', E); end;
+    {$WARN SYMBOL_DEPRECATED OFF}
+    try ZbFindEmail('example.com', 'Ada', 'B', 'Lovelace'); Expect('ZbFindEmail', nil); except on E: Exception do Expect('ZbFindEmail', E); end;
+    try ZbDomainSearch('example.com'); Expect('ZbDomainSearch', nil); except on E: Exception do Expect('ZbDomainSearch', E); end;
+    {$WARN SYMBOL_DEPRECATED ON}
+    { ZbValidation }
+    try ZbValidateEmail('a@example.com'); Expect('ZbValidateEmail', nil); except on E: Exception do Expect('ZbValidateEmail', E); end;
+    try CallTransport(tpFormPost); Expect('ZbValidateEmail(UsePost)', nil); except on E: Exception do Expect('ZbValidateEmail(UsePost)', E); end;
+    try ZbBatchValidateEmails(Emails); Expect('ZbBatchValidateEmails', nil); except on E: Exception do Expect('ZbBatchValidateEmails', E); end;
+    { ZbBulk }
+    try ZbBulkValidationFileSubmit('email', Params); Expect('ZbBulkValidationFileSubmit', nil); except on E: Exception do Expect('ZbBulkValidationFileSubmit', E); end;
+    try ZbBulkValidationFileStatusCheck('fid'); Expect('ZbBulkValidationFileStatusCheck', nil); except on E: Exception do Expect('ZbBulkValidationFileStatusCheck', E); end;
+    try ZbBulkValidationResultFetch('fid'); Expect('ZbBulkValidationResultFetch', nil); except on E: Exception do Expect('ZbBulkValidationResultFetch', E); end;
+    try ZbBulkValidationResultDelete('fid'); Expect('ZbBulkValidationResultDelete', nil); except on E: Exception do Expect('ZbBulkValidationResultDelete', E); end;
+    try ZbAiScoringFileSubmit('email', Params); Expect('ZbAiScoringFileSubmit', nil); except on E: Exception do Expect('ZbAiScoringFileSubmit', E); end;
+    try ZbAiScoringFileStatusCheck('fid'); Expect('ZbAiScoringFileStatusCheck', nil); except on E: Exception do Expect('ZbAiScoringFileStatusCheck', E); end;
+    try ZbAiScoringResultFetch('fid'); Expect('ZbAiScoringResultFetch', nil); except on E: Exception do Expect('ZbAiScoringResultFetch', E); end;
+    try ZbAiScoringResultDelete('fid'); Expect('ZbAiScoringResultDelete', nil); except on E: Exception do Expect('ZbAiScoringResultDelete', E); end;
+    { ZbPriority3 }
+    try ZbSendEmailFinderFile('a', 1, @Finder); Expect('ZbSendEmailFinderFile', nil); except on E: Exception do Expect('ZbSendEmailFinderFile', E); end;
+    try ZbEmailFinderFileStatus('fid'); Expect('ZbEmailFinderFileStatus', nil); except on E: Exception do Expect('ZbEmailFinderFileStatus', E); end;
+    try ZbEmailFinderResultFetch('fid'); Expect('ZbEmailFinderResultFetch', nil); except on E: Exception do Expect('ZbEmailFinderResultFetch', E); end;
+    try ZbEmailFinderResultDelete('fid'); Expect('ZbEmailFinderResultDelete', nil); except on E: Exception do Expect('ZbEmailFinderResultDelete', E); end;
+    try ZbSendDomainSearchFile('a', 1, nil); Expect('ZbSendDomainSearchFile', nil); except on E: Exception do Expect('ZbSendDomainSearchFile', E); end;
+    try ZbDomainSearchFileStatus('fid'); Expect('ZbDomainSearchFileStatus', nil); except on E: Exception do Expect('ZbDomainSearchFileStatus', E); end;
+    try ZbDomainSearchResultFetch('fid'); Expect('ZbDomainSearchResultFetch', nil); except on E: Exception do Expect('ZbDomainSearchResultFetch', E); end;
+    try ZbDomainSearchResultDelete('fid'); Expect('ZbDomainSearchResultDelete', nil); except on E: Exception do Expect('ZbDomainSearchResultDelete', E); end;
+    try ZbSendListEvaluatorFile('a', 1); Expect('ZbSendListEvaluatorFile', nil); except on E: Exception do Expect('ZbSendListEvaluatorFile', E); end;
+    try ZbGetListEvaluatorResult('fid'); Expect('ZbGetListEvaluatorResult', nil); except on E: Exception do Expect('ZbGetListEvaluatorResult', E); end;
+    try ZbSendEvaluatedFile('fid'); Expect('ZbSendEvaluatedFile', nil); except on E: Exception do Expect('ZbSendEvaluatedFile', E); end;
+    try ZbAddFilter('allow', 'email', 'a@example.com'); Expect('ZbAddFilter', nil); except on E: Exception do Expect('ZbAddFilter', E); end;
+    try ZbListFilters(False); Expect('ZbListFilters(GET)', nil); except on E: Exception do Expect('ZbListFilters(GET)', E); end;
+    try ZbListFilters(True); Expect('ZbListFilters(POST)', nil); except on E: Exception do Expect('ZbListFilters(POST)', E); end;
+    try ZbDeleteFilter('allow', 'email', 'a@example.com'); Expect('ZbDeleteFilter', nil); except on E: Exception do Expect('ZbDeleteFilter', E); end;
+    try ZbListS3Files('bucket', ''); Expect('ZbListS3Files', nil); except on E: Exception do Expect('ZbListS3Files', E); end;
+    try ZbValidateS3File(S3); Expect('ZbValidateS3File', nil); except on E: Exception do Expect('ZbValidateS3File', E); end;
+    try ZbScoreS3File(Score); Expect('ZbScoreS3File', nil); except on E: Exception do Expect('ZbScoreS3File', E); end;
+    try ZbExportS3File('fid', ''); Expect('ZbExportS3File', nil); except on E: Exception do Expect('ZbExportS3File', E); end;
+    try ZbEmailFinderS3File(Job); Expect('ZbEmailFinderS3File', nil); except on E: Exception do Expect('ZbEmailFinderS3File', E); end;
+    try ZbDomainSearchS3File(Job); Expect('ZbDomainSearchS3File', nil); except on E: Exception do Expect('ZbDomainSearchS3File', E); end;
+    try ZbValidateSFTPFile(Job); Expect('ZbValidateSFTPFile', nil); except on E: Exception do Expect('ZbValidateSFTPFile', E); end;
+    try ZbScoreSFTPFile(Job); Expect('ZbScoreSFTPFile', nil); except on E: Exception do Expect('ZbScoreSFTPFile', E); end;
+    try ZbEmailFinderSFTPFile(Job); Expect('ZbEmailFinderSFTPFile', nil); except on E: Exception do Expect('ZbEmailFinderSFTPFile', E); end;
+    try ZbDomainSearchSFTPFile(Job); Expect('ZbDomainSearchSFTPFile', nil); except on E: Exception do Expect('ZbDomainSearchSFTPFile', E); end;
+    try ZbExportSFTPFile('fid', ''); Expect('ZbExportSFTPFile', nil); except on E: Exception do Expect('ZbExportSFTPFile', E); end;
+    try ZbInboxPlacementProviders; Expect('ZbInboxPlacementProviders', nil); except on E: Exception do Expect('ZbInboxPlacementProviders', E); end;
+    try ZbInboxPlacementTestTypes; Expect('ZbInboxPlacementTestTypes', nil); except on E: Exception do Expect('ZbInboxPlacementTestTypes', E); end;
+    try ZbCreateInboxPlacementTest('Launch', nil); Expect('ZbCreateInboxPlacementTest', nil); except on E: Exception do Expect('ZbCreateInboxPlacementTest', E); end;
+    try ZbInboxPlacementTest('tid'); Expect('ZbInboxPlacementTest', nil); except on E: Exception do Expect('ZbInboxPlacementTest', E); end;
+    try ZbListInboxPlacementTests(nil); Expect('ZbListInboxPlacementTests', nil); except on E: Exception do Expect('ZbListInboxPlacementTests', E); end;
+    try ZbDeleteInboxPlacementTest('tid'); Expect('ZbDeleteInboxPlacementTest', nil); except on E: Exception do Expect('ZbDeleteInboxPlacementTest', E); end;
+    try ZbInboxPlacementWebhook; Expect('ZbInboxPlacementWebhook', nil); except on E: Exception do Expect('ZbInboxPlacementWebhook', E); end;
+    try ZbSetInboxPlacementWebhook('https://example.com/ipt'); Expect('ZbSetInboxPlacementWebhook', nil); except on E: Exception do Expect('ZbSetInboxPlacementWebhook', E); end;
+    { ZbWarmup }
+    try ZbWarmupListSendingAccounts; Expect('ZbWarmupListSendingAccounts', nil); except on E: Exception do Expect('ZbWarmupListSendingAccounts', E); end;
+    try ZbWarmupGetSendingAccount('s@example.com'); Expect('ZbWarmupGetSendingAccount', nil); except on E: Exception do Expect('ZbWarmupGetSendingAccount', E); end;
+    try ZbWarmupAddSendingAccount('s@example.com', ZB_WARMUP_SELF_MANAGED, @Warmup); Expect('ZbWarmupAddSendingAccount', nil); except on E: Exception do Expect('ZbWarmupAddSendingAccount', E); end;
+    try ZbWarmupUpdateSendingAccount('s@example.com', 1, 4, True); Expect('ZbWarmupUpdateSendingAccount', nil); except on E: Exception do Expect('ZbWarmupUpdateSendingAccount', E); end;
+    try ZbWarmupDeleteSendingAccount('s@example.com'); Expect('ZbWarmupDeleteSendingAccount', nil); except on E: Exception do Expect('ZbWarmupDeleteSendingAccount', E); end;
+    try ZbWarmupChangeFromAddress('old@example.com', 'new@example.com'); Expect('ZbWarmupChangeFromAddress', nil); except on E: Exception do Expect('ZbWarmupChangeFromAddress', E); end;
+    try ZbWarmupListFromAddresses(nil); Expect('ZbWarmupListFromAddresses', nil); except on E: Exception do Expect('ZbWarmupListFromAddresses', E); end;
+    try ZbWarmupGetEngagementRules; Expect('ZbWarmupGetEngagementRules', nil); except on E: Exception do Expect('ZbWarmupGetEngagementRules', E); end;
+    try ZbWarmupSetEngagementRule('s@example.com', 3); Expect('ZbWarmupSetEngagementRule', nil); except on E: Exception do Expect('ZbWarmupSetEngagementRule', E); end;
+    try ZbWarmupGetCustomEngagement('s@example.com'); Expect('ZbWarmupGetCustomEngagement', nil); except on E: Exception do Expect('ZbWarmupGetCustomEngagement', E); end;
+    try ZbWarmupCreateCustomEngagement('s@example.com', 10, 20, 30); Expect('ZbWarmupCreateCustomEngagement', nil); except on E: Exception do Expect('ZbWarmupCreateCustomEngagement', E); end;
+    try ZbWarmupUpdateCustomEngagement('s@example.com', 10, 20, 30); Expect('ZbWarmupUpdateCustomEngagement', nil); except on E: Exception do Expect('ZbWarmupUpdateCustomEngagement', E); end;
+    try ZbWarmupDeleteCustomEngagement('s@example.com', 2); Expect('ZbWarmupDeleteCustomEngagement', nil); except on E: Exception do Expect('ZbWarmupDeleteCustomEngagement', E); end;
+    try ZbWarmupGetSeeds; Expect('ZbWarmupGetSeeds', nil); except on E: Exception do Expect('ZbWarmupGetSeeds', E); end;
+    try ZbWarmupDownloadSeeds; Expect('ZbWarmupDownloadSeeds', nil); except on E: Exception do Expect('ZbWarmupDownloadSeeds', E); end;
+    try ZbWarmupGetSeedCount; Expect('ZbWarmupGetSeedCount', nil); except on E: Exception do Expect('ZbWarmupGetSeedCount', E); end;
+    try ZbWarmupGetProgressToday; Expect('ZbWarmupGetProgressToday', nil); except on E: Exception do Expect('ZbWarmupGetProgressToday', E); end;
+    try ZbWarmupGetSentToday; Expect('ZbWarmupGetSentToday', nil); except on E: Exception do Expect('ZbWarmupGetSentToday', E); end;
+    try ZbWarmupGetEmailsPerDay; Expect('ZbWarmupGetEmailsPerDay', nil); except on E: Exception do Expect('ZbWarmupGetEmailsPerDay', E); end;
+    try ZbWarmupGetStatistics('s@example.com'); Expect('ZbWarmupGetStatistics', nil); except on E: Exception do Expect('ZbWarmupGetStatistics', E); end;
+    try ZbWarmupGetStatisticsPerDay('s@example.com', '2026-10-01', '2026-10-07'); Expect('ZbWarmupGetStatisticsPerDay', nil); except on E: Exception do Expect('ZbWarmupGetStatisticsPerDay', E); end;
+    try ZbWarmupGetStatisticsDetailed('s@example.com'); Expect('ZbWarmupGetStatisticsDetailed', nil); except on E: Exception do Expect('ZbWarmupGetStatisticsDetailed', E); end;
+    try ZbWarmupDownloadStatistics('s@example.com'); Expect('ZbWarmupDownloadStatistics', nil); except on E: Exception do Expect('ZbWarmupDownloadStatistics', E); end;
+    try ZbWarmupGetFromAddressStatistics('s@example.com'); Expect('ZbWarmupGetFromAddressStatistics', nil); except on E: Exception do Expect('ZbWarmupGetFromAddressStatistics', E); end;
+    try ZbWarmupCheckDomainDmarc('s@example.com'); Expect('ZbWarmupCheckDomainDmarc', nil); except on E: Exception do Expect('ZbWarmupCheckDomainDmarc', E); end;
+    try ZbWarmupTestSmtpConfiguration('s@example.com', 's@example.com', 'pw', 'smtp.example.com', 587); Expect('ZbWarmupTestSmtpConfiguration', nil); except on E: Exception do Expect('ZbWarmupTestSmtpConfiguration', E); end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('functions that did not refuse plain http', '', Missed);
+end;
+
+procedure TTestOffline.TestBaseUrlsWithATrailingSlash;
+var
+  Failures: String;
+
+  procedure Check(const Name: String);
+  var
+    Url: String;
+  begin
+    Url := ZbResponseMock.UrlCalled;
+    if Url = '' then
+      Failures := Failures + Name + ': nothing sent; '
+    else if Pos('//', Copy(Url, Pos('://', Url) + 3, MaxInt)) > 0 then
+      Failures := Failures + Name + ': ' + Url + '; ';
+    ZbResponseMock.UrlCalled := '';
+  end;
+
+begin
+  { Every base URL is a plain variable a caller can set. A trailing slash on
+    any of them must not turn into '//' in the request path. }
+  Failures := '';
+  ZBInitialize('mock_api_key');
+  ZbWarmupInitialize('mock_warmup_key');
+  ZbApiBaseURL := 'https://api.zerobounce.net/v2/';
+  BULK_URI := 'https://bulkapi.zerobounce.net/v2//';
+  ZbBulkRootURL := 'https://bulkapi.zerobounce.net/';
+  ZbListEvaluatorURL := 'https://bulkapi.zerobounce.net/v2/listevaluator/';
+  ZbInboxPlacementURL := 'https://bulkapi.zerobounce.net/api/ipt/';
+  ZbWarmupBaseURL := 'https://warmup-api.zerobounce.net/';
+  ZBMockResponse(200, '{"success":true,"message":"ok","file_id":"fid","Credits":"7","ok":true}');
+  ZbResponseMock.UrlCalled := '';
+  try
+    { Only the URL matters here; the answer may not parse as each result. }
+    try ZbGetCredits; except end; Check('ZbApiBaseURL');
+    try ZbBulkValidationResultDelete('fid'); except end; Check('BULK_URI');
+    try ZbEmailFinderResultDelete('fid'); except end; Check('ZbBulkRootURL');
+    try ZbGetListEvaluatorResult('fid'); except end; Check('ZbListEvaluatorURL');
+    try ZbSendEvaluatedFile('fid'); except end; Check('ZbListEvaluatorURL (send-evaluated-file)');
+    try ZbInboxPlacementProviders; except end; Check('ZbInboxPlacementURL');
+    try ZbWarmupGetSeedCount; except end; Check('ZbWarmupBaseURL');
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('requests built with a double slash', '', Failures);
 end;
 
 initialization

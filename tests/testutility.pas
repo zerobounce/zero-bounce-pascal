@@ -24,6 +24,7 @@ type
     procedure TestRequestToALoopbackLookalikeIsNeverSent;
     procedure TestMissingCACertFileIsAClearError;
     procedure TestTrustDerCertificatesAddsParsableCertificates;
+    procedure TestDeprecatedSetApiKeyChecksTheKey;
   end;
 
 implementation
@@ -292,6 +293,34 @@ end;
 { The OpenSSL half of the Windows system-store path, which is the same code
   on every platform: certificates handed over as DER become trust anchors of
   the connection, and anything OpenSSL cannot parse is skipped. }
+procedure TTestUtility.TestDeprecatedSetApiKeyChecksTheKey;
+var
+    Raised: Boolean;
+begin
+    { The deprecated setter gets the same check as ZBInitialize: a key with
+      surrounding whitespace or control characters is refused, and the key
+      already set stays. }
+    ZBInitialize('good-key');
+    Raised := False;
+    try
+        {$WARN SYMBOL_DEPRECATED OFF}
+        ZBSetApiKey(' dirty'#10);
+        {$WARN SYMBOL_DEPRECATED ON}
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('api_key', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('ZBSetApiKey should refuse a dirty key', Raised);
+    AssertEquals('the previous key is kept', 'good-key', ZbApiKey);
+
+    {$WARN SYMBOL_DEPRECATED OFF}
+    ZBSetApiKey('clean-key');
+    {$WARN SYMBOL_DEPRECATED ON}
+    AssertEquals('clean-key', ZbApiKey);
+end;
+
 procedure TTestUtility.TestTrustDerCertificatesAddsParsableCertificates;
 const
   BUNDLE = '/etc/ssl/certs/ca-certificates.crt';

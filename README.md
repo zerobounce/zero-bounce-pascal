@@ -1,11 +1,19 @@
 # Zero bounce API - pascal SDK
 
 
+## Requirements
+
+- **Free Pascal 3.2** with the FCL units (`fp-units-fcl`, `fp-units-base`). CI and the test image build with FPC 3.2.2; earlier releases are not tested.
+- **FPC builds:** the OpenSSL shared libraries (CI installs `libssl-dev`) and trusted CA certificates, since TLS is verified - see [TLS certificates](#tls-certificates-free-pascal-builds) below.
+- **Delphi:** a version whose `System.Net.HttpClient` `THTTPClient` has `ConnectionTimeout`, `ResponseTimeout` and `HandleRedirects`. Delphi builds use the operating system's TLS stack. They are not compiled in CI, so no minimum Delphi version has been verified.
+
 ## Security
 
 - Keep API keys on a trusted server. Do not embed them in mobile apps or browser JavaScript that untrusted users can inspect.
 - Custom API base URLs (when supported) must use `https://`. Do not pass end-user-controlled hosts into those settings.
 - Request URLs include `api_key` as a query parameter (ZeroBounce API contract). Do not log full request URLs or enable payload debug logging in production.
+- Redirects are never followed: a 3xx answer raises a `ZbException` carrying its status. Every request has a connect and a read timeout, `ZbConnectTimeoutMs` (default 30000) and `ZbReadTimeoutMs` (default 120000), in milliseconds.
+- Trailing slashes on any base URL variable (`ZbApiBaseURL`, `BULK_URI`, `ZbBulkRootURL`, `ZbListEvaluatorURL`, `ZbInboxPlacementURL`, `ZbWarmupBaseURL`) are dropped when a request is built, so no request path contains `//`.
 
 This library is a wrapper for the ZeroBounce API v2.
 
@@ -82,7 +90,7 @@ The methods implemented in this library can raise `ZbException`.
         - `ZbAiScoringFileStatusCheck` (returns `TZBFileStatus`) - check the status of a submitted file
         - `ZbAiScoringResultFetch` (returns `TZBBulkResponse`) - fetch the scoring result; optional `Options: PTZbGetFileOptions = nil` (`activity_data` is not sent for scoring getfile)
         - `ZbAiScoringResultDelete` (returns `TZBFileFeedback`) - delete file submitted for AI scoring
-    - For getfile, if the response body is JSON error data (including some HTTP 200 cases), `TZBBulkResponse.HasContent` is false and `Feedback` is filled; otherwise `HasContent` is true and `Content` holds the file text. Helper: `ZbGetFileJsonIndicatesError` in __ZbStructures__.
+    - For getfile (here and in the email finder / domain search result fetches), a JSON body - error data, or a message such as `{"message": "File is still processing"}`, with any content type and on any HTTP status, 200 included - raises a `ZbException` whose `StatusCode` is the HTTP status. Otherwise `HasContent` is true and `Content` holds the file text.
 - __ZbPriority3__ - bulk email finder and domain search, filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester
     - Bulk email finder and domain search, on the bulk root (`https://bulkapi.zerobounce.net`, **no** `/v2`): `ZbSendEmailFinderFile`, `ZbEmailFinderFileStatus`, `ZbEmailFinderResultFetch`, `ZbEmailFinderResultDelete`, and the matching `ZbSendDomainSearchFile` / `ZbDomainSearch...` functions. `ZbSendEmailFinderFile` needs `DomainColumn` **and** one of `FirstNameColumn` / `FullNameColumn`; with neither name column the job has nothing to build a local part from, so it is refused before the upload
     - List evaluator: `ZbSendListEvaluatorFile`, `ZbGetListEvaluatorResult` and `ZbSendEvaluatedFile(FileId)`, all three built from their own base URL, `ZbListEvaluatorURL` (`send-evaluated-file/` sits beside it). `ZbSendEvaluatedFile` sends the file id as a **form field**, not as a path segment

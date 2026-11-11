@@ -58,6 +58,7 @@ type
         procedure TestResultFetchOkContent;
         procedure TestResultFetchSuccessFalseNonJsonContentType;
         procedure TestResultFetchWithQueryOptions;
+        procedure TestResultFetchJsonBodyIsAnError;
         procedure TestScoringResultFetchOmitsActivityData;
         procedure TestResultDeleteNotFoundIsAnError;
         procedure TestResultDeleteOk;
@@ -392,6 +393,48 @@ begin
         end;
     end;
     AssertTrue('a "success": false body should be reported as an error', Raised);
+end;
+
+procedure TTestBulk.TestResultFetchJsonBodyIsAnError;
+const
+    Bodies: array[0..2] of String = (
+        '{"message":"File is still processing"}',
+        '{"Message":"File is still processing"}',
+        '{"error_message":"File is still processing"}'
+    );
+    Types: array[0..1] of String = (JSON_CONTENT_TYPE, OCTET_STREAM_TYPE);
+var
+    Body, ContentType: String;
+    Raised: Boolean;
+begin
+    { getfile answers with a file or not at all. A JSON body - whatever its
+      keys and content type - is an error carrying the HTTP status, as in
+      every other SDK, not a result with HasContent = False. }
+    for Body in Bodies do
+        for ContentType in Types do
+        begin
+            ZBMockResponse(200, Body, ContentType);
+            Raised := False;
+            try
+                ZbBulkValidationResultFetch(MOCK_FILE_ID);
+            except on e: ZbException do
+                begin
+                    Raised := True;
+                    AssertTrue(e.Message, Pos('still processing', e.Message) > 0);
+                    AssertEquals('the HTTP status is kept on the error', 200, e.StatusCode);
+                end;
+            end;
+            AssertTrue(Concat(Body, ' / ', ContentType, ' should be an error'), Raised);
+        end;
+
+    ZBMockResponse(200, '{"message":"File is still processing"}');
+    Raised := False;
+    try
+        ZbAiScoringResultFetch(MOCK_FILE_ID);
+    except on e: ZbException do
+        Raised := (e.StatusCode = 200) and (Pos('still processing', e.Message) > 0);
+    end;
+    AssertTrue('scoring getfile: a JSON body should be an error with its status', Raised);
 end;
 
 procedure TTestBulk.TestResultFetchWithQueryOptions;
