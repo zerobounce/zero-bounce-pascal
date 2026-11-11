@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- A download cut short after its HTTP 200 header was returned as the whole file. When the connection closed part-way through the body (for example after 26 of the 1000 bytes its `Content-Length` promised), fphttpclient handed back what had arrived, and `ZbBulkValidationResultFetch`, `ZbAiScoringResultFetch`, `ZbEmailFinderResultFetch` and `ZbDomainSearchResultFetch` returned it with `HasContent = True`; `ZbWarmupDownloadSeeds` and `ZbWarmupDownloadStatistics` returned and saved it. With FPC they now raise `ZbException` (`The response from ZeroBounce was cut short: 26 of 1000 bytes received`) and save nothing. This covers every GET request and the Warmup and Inbox Placement Tester requests. A body that stalls past `ZbReadTimeoutMs` part-way already raised. The Delphi branch is unchanged.
+
+### Added
+
+- An offline test that every transport applies `ZbConnectTimeoutMs`. It is skipped where the unrouted test address (192.0.2.1) is refused at once, as in a container without a network.
+
 ## [3.0.0] - 2026-11-12
 
 ### Breaking

@@ -868,6 +868,25 @@ end;
         ));
     end;
 
+    {$IFDEF FPC}
+    { A body shorter than its Content-Length was cut off: the connection closed
+      part-way through. fphttpclient hands back whatever arrived without
+      complaint, and a file download used to return it as the whole file.
+      (A read that times out part-way raises in fphttpclient itself.) }
+    procedure ZbRequireCompleteBody(Client: TFPHTTPClient; Received: Int64);
+    var
+        Expected: Int64;
+    begin
+        if Client.GetHeader(Client.ResponseHeaders, 'Content-Encoding') <> '' then
+            Exit;
+        Expected := StrToInt64Def(Trim(Client.GetHeader(Client.ResponseHeaders, 'Content-Length')), -1);
+        if (Expected < 0) or (Received >= Expected) then
+            Exit;
+        raise ZbException.Create(Format(
+            'The response from ZeroBounce was cut short: %d of %d bytes received', [Received, Expected]));
+    end;
+    {$ENDIF}
+
     function ZBGetRequest(url: String): TZbRequestResponse;
     var
         {$IFDEF FPC}
@@ -906,6 +925,7 @@ end;
                   A list here made fphttpclient raise its own exception, with
                   no status, for anything not on it - a 302 included. }
                 Client.HTTPMethod('GET', url, ResponseStream, []);
+                ZbRequireCompleteBody(Client, ResponseStream.Size);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
@@ -1103,6 +1123,7 @@ end;
             ResponseStream := TStringStream.Create('');
             try
                 Client.HTTPMethod(Method, url, ResponseStream, []);
+                ZbRequireCompleteBody(Client, ResponseStream.Size);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
