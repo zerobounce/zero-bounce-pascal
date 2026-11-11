@@ -170,3 +170,7 @@ The offline suite never reaches the live API. `live/live_api.lpr` is a separate,
 2. **Actions → Publish → Run workflow** with that tag.
 
 No package registry — GitHub release only. Pin the tag via clone or submodule.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
