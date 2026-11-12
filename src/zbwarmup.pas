@@ -346,22 +346,17 @@ begin
 end;
 
 { The JSON body of a Warmup call, or '' for the documented empty successes
-  (HTTP 204, an empty 200). Any other body that is not JSON is an error with
+  (HTTP 204, an empty 200: zero bytes). Any other body that is not JSON is an error with
   its status. }
 function WarmupJson(const Method, Path, Query, Body: String): String;
 var
     Response: TZbRequestResponse;
-    I: Integer;
 begin
     Response := WarmupSend(Method, Path, Query, Body);
     Result := '';
-    { Blank means only space, tab, CR and LF: any other byte (a NUL, a
-      vertical tab) makes the body something that has to be JSON. }
-    I := 1;
-    while (I <= Length(Response.Payload)) and ((Response.Payload[I] = ' ') or
-          (Response.Payload[I] = #9) or (Response.Payload[I] = #10) or (Response.Payload[I] = #13)) do
-        Inc(I);
-    if I > Length(Response.Payload) then
+    { Only a zero-byte body is the documented empty success: a body of only
+      whitespace is not JSON, so it is an error. }
+    if Response.Payload = '' then
         Exit;
     ZbRequireJsonBody(Response);
     Result := Trim(Response.Payload);

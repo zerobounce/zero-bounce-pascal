@@ -51,6 +51,10 @@ const
     { What an error says in place of a body that still held a secret after
       masking (ZbMaskSecret). }
     ZB_SECRET_OMITTED_MESSAGE = 'The response body was omitted because it contained a credential.';
+    { How many times ZbMaskSecret decodes an error before giving up: the SDK's
+      own request encoding plus three layers a server or proxy may add when
+      it echoes the request back. }
+    ZB_SECRET_DECODE_LAYERS = 4;
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
     ENDPOINT_SCORE_EMAIL = '/scoring';
@@ -1040,7 +1044,7 @@ end;
                 Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
         { A spelling the forms above miss (three URL layers, URL of double
           JSON, ...) still decodes to the secret: then none of S is kept. }
-        if ZbSecretInDecodedViews(Result, Secret, 3) then
+        if ZbSecretInDecodedViews(Result, Secret, ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 

@@ -208,12 +208,23 @@ end;
 
 procedure TTestWarmup.TestEmptySuccessesComeBackAsAnEmptyString;
 begin
-    { 204 and an empty 200 are the documented empty successes. }
+    { 204 and an empty (zero-byte) 200 are the documented empty successes. }
     ZBMockResponse(204, '', JSON_CONTENT_TYPE);
     AssertEquals('', ZbWarmupGetSentToday);
 
-    ZBMockResponse(200, '   ', JSON_CONTENT_TYPE);
+    ZBMockResponse(200, '', JSON_CONTENT_TYPE);
     AssertEquals('', ZbWarmupGetSentToday);
+
+    { A body of only whitespace is not empty, and not JSON: an error with
+      its status. }
+    ZBMockResponse(200, '   ', JSON_CONTENT_TYPE);
+    try
+        ZbWarmupGetSentToday;
+        Fail('a blank 200 should raise');
+    except
+        on E: ZbException do
+            AssertEquals(200, E.StatusCode);
+    end;
 end;
 
 procedure TTestWarmup.TestAddSendingAccountSelfManaged;

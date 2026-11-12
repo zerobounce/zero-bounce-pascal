@@ -622,15 +622,16 @@ implementation
         {$ELSE}
         Data := TJSONObject.ParseJSONValue(JsonContent, True);
         {$ENDIF}
-        { Another JSON value (a string, a number, an array) has none of the
-          fields a typed result reads: an empty object, rather than a cast of
-          something that is not one. }
+        { Every typed result is read from a JSON object. Another JSON value (a
+          string, a number, true, null, an array) is not the API's answer
+          either: it raises, and the call reports it as an error with the
+          HTTP status, rather than a result filled with defaults. }
         if Data is TJSONObject then
             Result := TJSONObject(Data)
         else
         begin
             Data.Free;
-            Result := TJSONObject.Create;
+            raise Exception.Create('ZeroBounce returned JSON that is not an object.');
         end;
     end;
 

@@ -853,17 +853,22 @@ begin
         Method, Concat(UrlToAccess, Query), Body, JSON_CONTENT_TYPE,
         'Authorization', Concat('Bearer ', ZbApiKey)
     );
-    { DELETE answers with an empty body, an empty result. From any other call
-      an empty 2xx is an error with its status. }
-    if (Trim(Response.Payload) = '') and (Method <> 'DELETE') then
+    { DELETE answers with an empty (zero-byte) body, an empty result. From
+      any other call an empty 2xx is an error with its status. }
+    if Response.Payload = '' then
     begin
+        if Method = 'DELETE' then
+        begin
+            Result := '';
+            Exit;
+        end;
         Error := ZbException.FromResponse('', Response);
         Error.MarkHttpError;
         raise Error;
     end;
-    { Anything else must be JSON: a proxy's text on a 2xx is not a result. }
-    if Trim(Response.Payload) <> '' then
-        ZbRequireJsonBody(Response);
+    { Anything else must be JSON, a body of only whitespace included: a
+      proxy's text on a 2xx is not a result. }
+    ZbRequireJsonBody(Response);
     Result := Response.Payload;
 end;
 

@@ -38,12 +38,16 @@ type
     procedure TestEveryJsonCallTakesOnlyStrictJson;
     procedure TestRedactionIsClosedUnderEncoding;
     procedure TestABodyStillHoldingTheKeyAfterMaskingIsDropped;
+    procedure TestTypedCallsRejectJsonOfTheWrongShape;
+    procedure TestADeeplyNestedBodyIsAnErrorOnEveryCall;
+    procedure TestEachDecodeStepOfTheRedactionCheckIsNeeded;
+    procedure TestANulInTheBodyDoesNotEndTheRedactionCheck;
   end;
 
 implementation
 
 uses
-  Sockets, SyncObjs;
+  Sockets, SyncObjs, StrUtils;
 
 type
   TRecorded = record
@@ -2291,6 +2295,164 @@ begin
   Result := True;
 end;
 
+var
+  { The public routines that read no typed result (a function returning the
+    body as raw JSON, or a procedure), read from the units' interfaces by
+    RawJsonRoutines. }
+  RawJsonNames: TStringList;
+
+{ Adds the routines in FileName's interface that read no typed result: the
+  functions whose result type is String, and the procedures. }
+procedure AddRawJsonRoutines(const FileName: String; Names: TStrings);
+var
+  Lines: TStringList;
+  Text, Clean, Lower, Name, ResultType: String;
+  I, J, P, Depth: Integer;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(FileName);
+    Text := Lines.Text;
+  finally
+    Lines.Free;
+  end;
+  { Comments can hold anything, so they go first. }
+  Clean := '';
+  I := 1;
+  while I <= Length(Text) do
+  begin
+    if Text[I] = '{' then
+    begin
+      while (I <= Length(Text)) and (Text[I] <> '}') do
+        Inc(I);
+      Inc(I);
+    end
+    else if (Text[I] = '(') and (I < Length(Text)) and (Text[I + 1] = '*') then
+    begin
+      J := Pos('*)', Copy(Text, I + 2, MaxInt));
+      if J = 0 then
+        Break;
+      I := I + 2 + J + 1;
+    end
+    else if (Text[I] = '/') and (I < Length(Text)) and (Text[I + 1] = '/') then
+    begin
+      while (I <= Length(Text)) and (Text[I] <> #10) do
+        Inc(I);
+    end
+    else
+    begin
+      Clean := Clean + Text[I];
+      Inc(I);
+    end;
+  end;
+  Lower := LowerCase(Clean);
+  P := Pos('implementation', Lower);
+  if P > 0 then
+  begin
+    Clean := Copy(Clean, 1, P - 1);
+    Lower := Copy(Lower, 1, P - 1);
+  end;
+  P := Pos('function ', Lower);
+  while P > 0 do
+  begin
+    I := P + Length('function ');
+    while (I <= Length(Clean)) and (Clean[I] in [' ', #9, #10, #13]) do
+      Inc(I);
+    J := I;
+    while (J <= Length(Clean)) and (Clean[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+      Inc(J);
+    Name := Copy(Clean, I, J - I);
+    while (J <= Length(Clean)) and (Clean[J] in [' ', #9, #10, #13]) do
+      Inc(J);
+    if (J <= Length(Clean)) and (Clean[J] = '(') then
+    begin
+      Depth := 0;
+      repeat
+        if Clean[J] = '(' then
+          Inc(Depth)
+        else if Clean[J] = ')' then
+          Dec(Depth);
+        Inc(J);
+      until (J > Length(Clean)) or (Depth = 0);
+    end;
+    while (J <= Length(Clean)) and (Clean[J] in [' ', #9, #10, #13, ':']) do
+      Inc(J);
+    I := J;
+    while (J <= Length(Clean)) and (Clean[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+      Inc(J);
+    ResultType := LowerCase(Copy(Clean, I, J - I));
+    if (Name <> '') and (ResultType = 'string') and (Names.IndexOf(Name) < 0) then
+      Names.Add(Name);
+    P := PosEx('function ', Lower, J);
+  end;
+  { A procedure returns nothing, so it reads no typed result either. }
+  P := Pos('procedure ', Lower);
+  while P > 0 do
+  begin
+    I := P + Length('procedure ');
+    while (I <= Length(Clean)) and (Clean[I] in [' ', #9, #10, #13]) do
+      Inc(I);
+    J := I;
+    while (J <= Length(Clean)) and (Clean[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+      Inc(J);
+    Name := Copy(Clean, I, J - I);
+    if (Name <> '') and (Names.IndexOf(Name) < 0) then
+      Names.Add(Name);
+    P := PosEx('procedure ', Lower, J);
+  end;
+end;
+
+function RawJsonRoutines: TStringList;
+const
+  UNITS: array[0..5] of String = (
+    'zbutility.pas', 'zbgeneric.pas', 'zbvalidation.pas', 'zbbulk.pas', 'zbpriority3.pas', 'zbwarmup.pas'
+  );
+var
+  SrcDir: String;
+  I: Integer;
+begin
+  if RawJsonNames = nil then
+  begin
+    SrcDir := ExtractFilePath(ParamStr(0)) + 'src' + PathDelim;
+    if not FileExists(SrcDir + UNITS[0]) then
+      SrcDir := IncludeTrailingPathDelimiter(GetCurrentDir) + 'src' + PathDelim;
+    if not FileExists(SrcDir + UNITS[0]) then
+      raise Exception.Create('src/ not found beside the test runner or in the working directory');
+    RawJsonNames := TStringList.Create;
+    for I := Low(UNITS) to High(UNITS) do
+      AddRawJsonRoutines(SrcDir + UNITS[I], RawJsonNames);
+    { The filters, the list evaluator result, ZbListS3Files, the Inbox
+      Placement and the Warmup calls. }
+    if RawJsonNames.IndexOf('ZbListS3Files') < 0 then
+      raise Exception.Create('the interface scan missed ZbListS3Files');
+  end;
+  Result := RawJsonNames;
+end;
+
+{ A public call that reads the body into a typed result (a record, an
+  integer), not a download, a raw-JSON call or a low-level ZB* request. }
+function IsTypedCall(const Name: String): Boolean;
+var
+  Base: String;
+begin
+  Base := Name;
+  if Pos('(', Base) > 0 then
+    Base := Copy(Base, 1, Pos('(', Base) - 1);
+  Result := (Copy(Base, 1, 2) <> 'ZB') and not IsDownloadCall(Base) and
+    (RawJsonRoutines.IndexOf(Base) < 0);
+end;
+
+{ Whether Text is a JSON object: its first non-blank character opens one. }
+function IsJsonObjectText(const Text: String): Boolean;
+var
+  I: Integer;
+begin
+  I := 1;
+  while (I <= Length(Text)) and (Text[I] in [' ', #9, #10, #13]) do
+    Inc(I);
+  Result := (I <= Length(Text)) and (Text[I] = '{');
+end;
+
 procedure ExpectCorpusOutcome(const Name: String; E: Exception);
 var
   Success: Boolean;
@@ -2299,14 +2461,18 @@ begin
   if Copy(Name, 1, 2) = 'ZB' then
     Exit;
   { A download takes any application/json answer as the API's error. An
-    empty or blank 2xx is a Warmup JSON call's documented empty success, and
-    ZbDeleteInboxPlacementTest's (E8). }
+    empty (zero-byte) 2xx is a Warmup JSON call's documented empty success,
+    and ZbDeleteInboxPlacementTest's (E8); a blank one is an error. }
   if IsDownloadCall(Name) then
     Success := False
   else if CorpusAccept then
-    Success := True
+    { A typed call reads an object: valid JSON of another shape is an error
+      with status 200 (E7). }
+    Success := not IsTypedCall(Name) or IsJsonObjectText(CorpusBody)
   else
-    Success := IsBlankJson(CorpusBody) and
+    { Only a zero-byte body is the documented empty success; a blank one is
+      not JSON. }
+    Success := (CorpusBody = '') and
       ((Pos('ZbWarmup', Name) = 1) or (Name = 'ZbDeleteInboxPlacementTest'));
   if Success then
   begin
@@ -2659,6 +2825,179 @@ begin
   AssertEquals('nothing secret here %41 A', ZbMaskSecret('nothing secret here %41 A', FUZZ_KEY));
 end;
 
+{ -- E7: typed calls and the shape of the JSON ---------------------------- }
+
+var
+  ShapeTypedCalls: Integer;
+
+procedure ExpectShapeOutcome(const Name: String; E: Exception);
+begin
+  if (Copy(Name, 1, 2) = 'ZB') or IsDownloadCall(Name) then
+    Exit;
+  if IsTypedCall(Name) then
+  begin
+    Inc(ShapeTypedCalls);
+    ExpectKeyMasked(Name, E);
+  end
+  else if (E <> nil) and not ((E is ZbException) and (ZbException(E).StatusCode = 200)) then
+    SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+end;
+
+procedure TTestOffline.TestTypedCallsRejectJsonOfTheWrongShape;
+const
+  BODIES: array[0..8] of String = ('0', '1.5', 'true', 'false', 'null', '"x"', '[]', '[{}]', ' [ ] ');
+var
+  I: Integer;
+  Missed: String;
+begin
+  { JSON of a shape no typed call reads is an API error with status 200 on
+    every typed call, never a result filled with defaults. A raw-JSON call
+    hands it over. }
+  Missed := '';
+  ShapeTypedCalls := 0;
+  try
+    for I := Low(BODIES) to High(BODIES) do
+    begin
+      UseDefaultUrls;
+      ZBInitialize('shape-key');
+      ZbWarmupInitialize('shape-warmup-key');
+      SweepStatus := 200;
+      ZBMockResponse(200, BODIES[I], 'application/json');
+      SweepEveryPublicCall(@ExpectShapeOutcome);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[%s] %s', [BODIES[I], SweepMissed]);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertTrue(Format('only %d typed calls swept', [ShapeTypedCalls]), ShapeTypedCalls > 200);
+  AssertEquals('typed calls that took JSON of the wrong shape', '', Missed);
+end;
+
+procedure ExpectDeepOutcome(const Name: String; E: Exception);
+begin
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  ExpectKeyMasked(Name, E);
+end;
+
+procedure TTestOffline.TestADeeplyNestedBodyIsAnErrorOnEveryCall;
+begin
+  { Nested deeper than the strict-JSON scanner's limit: an error with status
+    200 on every call, not a crash. }
+  try
+    UseDefaultUrls;
+    ZBInitialize('depth-key');
+    ZbWarmupInitialize('depth-warmup-key');
+    SweepStatus := 200;
+    ZBMockResponse(200, StringOfChar('[', 200000), 'application/json');
+    SweepEveryPublicCall(@ExpectDeepOutcome);
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that took 200000 nested [', '', SweepMissed);
+end;
+
+{ Every byte of Text as %XX, lower- or upper-case hex: a spelling the SDK
+  never generates, so only the decode check sees the secret in it. }
+function PercentEveryByte(const Text: String; Lower: Boolean): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(Text) do
+    if Lower then
+      Result := Result + '%' + LowerCase(IntToHex(Ord(Text[I]), 2))
+    else
+      Result := Result + '%' + IntToHex(Ord(Text[I]), 2);
+end;
+
+{ Every byte of an ASCII string as a JSON \u00XX escape. }
+function UnicodeEveryByte(const Text: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(Text) do
+    Result := Result + '\u' + LowerCase(IntToHex(Ord(Text[I]), 4));
+end;
+
+procedure TTestOffline.TestEachDecodeStepOfTheRedactionCheckIsNeeded;
+var
+  Url4: String;
+  I: Integer;
+
+  procedure ExpectOmitted(const What, Spelling: String; const Secret: String = FUZZ_KEY);
+  begin
+    AssertEquals(What, ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo [' + Spelling + '] end', Secret));
+  end;
+
+begin
+  { Every spelling below is one the SDK does not generate, and one decode step
+    (or layer) alone makes the key readable again: removing that step lets
+    the text through. A NUL (%00, \u0000) does not end the search. }
+  Url4 := FUZZ_KEY;
+  for I := 1 to 4 do
+    Url4 := FuzzEncode(Url4, 0);
+  ExpectOmitted('percent, upper-case hex', PercentEveryByte(FUZZ_KEY, False));
+  ExpectOmitted('percent, lower-case hex', PercentEveryByte(FUZZ_KEY, True));
+  ExpectOmitted('after invalid UTF-8', '%ff%fe%c3%28 [' + PercentEveryByte(FUZZ_KEY, True));
+  ExpectOmitted('plus as space', FuzzEncode(FuzzEncode(FUZZ_KEY, 1), 0));
+  ExpectOmitted('\u escapes', UnicodeEveryByte(FUZZ_KEY));
+  ExpectOmitted('surrogate pair', 'k\ud83d\udd11y', 'k'#$F0#$9F#$94#$91'y');
+  ExpectOmitted('four URL layers', Url4);
+  ExpectOmitted('after %00', 'bad %00 then ' + PercentEveryByte(FUZZ_KEY, False));
+  ExpectOmitted('after \u0000', 'bad \u0000 then ' + UnicodeEveryByte(FUZZ_KEY));
+  { The control: a NUL and escapes with no key behind them stay. }
+  AssertEquals('nothing secret %00 here \u0000 %41',
+    ZbMaskSecret('nothing secret %00 here \u0000 %41', FUZZ_KEY));
+end;
+
+procedure ExpectBodyOmitted(const Name: String; E: Exception);
+begin
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  { A Warmup JSON call takes a 200 JSON body as its result, whatever it says. }
+  if (E = nil) and (SweepStatus = 200) and (Pos('ZbWarmup', Name) = 1) and not IsDownloadCall(Name) then
+    Exit;
+  if not (E is ZbException) then
+  begin
+    if E = nil then
+      SweepMissed := SweepMissed + Name + ' (returned); '
+    else
+      SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+    Exit;
+  end;
+  if ZbException(E).StatusCode <> SweepStatus then
+    SweepMissed := SweepMissed + Format('%s (status %d); ', [Name, ZbException(E).StatusCode])
+  else if FuzzSecretReadable(E.Message + ' | ' + ZbException(E).Payload, FUZZ_KEY, 4) then
+    SweepMissed := SweepMissed + Format('%s: %s; ', [Name, E.Message]);
+end;
+
+procedure TTestOffline.TestANulInTheBodyDoesNotEndTheRedactionCheck;
+var
+  Encoded: String;
+begin
+  { A %00 before the key, fully percent-encoded, at 400 and on a 200 dead-key
+    answer: no call lets the key through. }
+  Encoded := PercentEveryByte(FUZZ_KEY, False);
+  try
+    UseDefaultUrls;
+    ZBInitialize(FUZZ_KEY);
+    ZbWarmupInitialize(FUZZ_KEY);
+    SweepStatus := 400;
+    ZBMockResponse(400, 'bad %00 then ' + Encoded, 'text/plain');
+    SweepEveryPublicCall(@ExpectBodyOmitted);
+    AssertEquals('400: calls that let the key through', '', SweepMissed);
+    SweepStatus := 200;
+    ZBMockResponse(200, '{"error":"bad %00 then ' + Encoded + '"}', 'application/json');
+    SweepEveryPublicCall(@ExpectBodyOmitted);
+    AssertEquals('200: calls that let the key through', '', SweepMissed);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
 initialization
   Randomize;
   SweepNames := TStringList.Create;
@@ -2666,6 +3005,7 @@ initialization
   RegisterTest(TTestOffline);
 
 finalization
+  RawJsonNames.Free;
   if Stub <> nil then
   begin
     Stub.Terminate;
