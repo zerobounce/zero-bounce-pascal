@@ -22,6 +22,9 @@ type
     procedure TestADownloadCutShortIsAnError;
     procedure TestEveryRequestFunctionRefusesPlainHttp;
     procedure TestBaseUrlsWithATrailingSlash;
+    procedure TestAJsonAnswerCutShortIsAnErrorOnEveryTransport;
+    procedure TestARefusedUploadCarriesNoStatus;
+    procedure TestAWarmupTransportErrorIsRedacted;
   end;
 
 implementation
@@ -131,6 +134,7 @@ end;
 function AnswerFor(const Item: TRecorded): String;
 var
   Code, ContentType, Body: String;
+  Length_: Integer;
 begin
   Code := '200';
   ContentType := 'application/json';
@@ -190,9 +194,18 @@ begin
     Body := '{"address":"' + Item.ApiKey + '","status":"valid","processed_at":"2018-01-01 00:00:00.000"}'
   else if Pos('getcredits', Item.Path) > 0 then
     Body := '{"Credits":"7"}';
+  { 'cutjson-': the whole, parsable answer, under a Content-Length 500 bytes
+    longer, then the end of the connection. }
+  Length_ := Length(Body);
+  if Pos('cutjson-', Item.ApiKey) = 1 then
+    Length_ := Length_ + 500;
+  { 'badstatus-': a status line whose code is the key, which fphttpclient
+    quotes in its own exception. }
+  if Pos('badstatus-', Item.ApiKey) = 1 then
+    Code := Item.ApiKey;
   Result := 'HTTP/1.1 ' + Code + ' OK' + #13#10 +
     'Content-Type: ' + ContentType + #13#10 +
-    'Content-Length: ' + IntToStr(Length(Body)) + #13#10 +
+    'Content-Length: ' + IntToStr(Length_) + #13#10 +
     'Connection: close' + #13#10 + #13#10 + Body;
 end;
 
@@ -1327,6 +1340,141 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('requests built with a double slash', '', Failures);
+end;
+
+procedure TTestOffline.TestAJsonAnswerCutShortIsAnErrorOnEveryTransport;
+var
+  Transport: TTransport;
+  Key, Missed: String;
+begin
+  { The server sends a whole, parsable answer, but promised 500 bytes more and
+    closes the connection. The JSON POST, form POST and multipart transports
+    used to return what arrived as the result. }
+  EnsureStub;
+  Missed := '';
+  try
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      Key := 'cutjson-' + IntToStr(Ord(Transport));
+      UseStub(Key);
+      try
+        CallTransport(Transport);
+        Missed := Missed + TRANSPORT_NAMES[Transport] + ' (returned a result); ';
+      except
+        on E: ZbException do
+          if (Pos('cut short', E.Message) = 0) or (E.StatusCode <> 0) or (Pos(Key, E.Message) > 0) then
+            Missed := Missed + Format('%s (status %d: %s); ', [TRANSPORT_NAMES[Transport], E.StatusCode, E.Message]);
+      end;
+    end;
+  finally
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+  { Each transport raises "cut short", with status 0 and without the key. }
+  AssertEquals('transports that accepted an answer cut short', '', Missed);
+end;
+
+{ A loopback port with nothing listening: bound, read back, closed. }
+function ClosedPort: Integer;
+var
+  Sock: LongInt;
+  Addr: sockaddr_in;
+  NameLen: TSockLen;
+begin
+  Sock := fpSocket(AF_INET, SOCK_STREAM, 0);
+  Addr := Default(sockaddr_in);
+  Addr.sin_family := AF_INET;
+  Addr.sin_port := htons(0);
+  Addr.sin_addr.s_addr := htonl($7F000001);
+  fpBind(Sock, @Addr, SizeOf(Addr));
+  NameLen := SizeOf(Addr);
+  fpGetSockName(Sock, @Addr, @NameLen);
+  Result := NToHS(Addr.sin_port);
+  CloseSocket(Sock);
+end;
+
+procedure TTestOffline.TestARefusedUploadCarriesNoStatus;
+var
+  Params: TZbBulkParams;
+  Form: TStringList;
+  Response: TZbRequestResponse;
+  Url: String;
+  Attempt: Integer;
+  Raised: Boolean;
+begin
+  { No HTTP answer means no status: 0, as for every other transport error,
+    not whatever happened to be in memory. }
+  FillChar(Params, SizeOf(Params), 0);
+  Params.EmailAddressColumn := 1;
+  Form := TStringList.Create;
+  try
+    for Attempt := 1 to 3 do
+    begin
+      UseStub('refused-key');
+      Url := Format('http://127.0.0.1:%d', [ClosedPort]);
+      BULK_URI := Url + '/v2';
+      Raised := False;
+      try
+        ZbBulkValidationFileSubmit('email' + LineEnding + 'a@example.com' + LineEnding, Params);
+      except
+        on E: ZbException do
+        begin
+          Raised := True;
+          AssertEquals('ZbBulkValidationFileSubmit: ' + E.Message, 0, E.StatusCode);
+          AssertTrue('leaked the key: ' + E.Message, Pos('refused-key', E.Message) = 0);
+        end;
+      end;
+      AssertTrue('a refused upload should raise', Raised);
+
+      { The same, where the result variable already holds an answer. }
+      Response := Default(TZbRequestResponse);
+      Response.StatusCode := 200 + Attempt;
+      Raised := False;
+      try
+        Response := ZBPostRequest(Url + '/v2/sendfile', Form, 'email');
+      except
+        on E: ZbException do
+        begin
+          Raised := True;
+          AssertEquals('ZBPostRequest(multipart): ' + E.Message, 0, E.StatusCode);
+        end;
+      end;
+      AssertTrue('a refused multipart POST should raise', Raised);
+    end;
+  finally
+    Form.Free;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestAWarmupTransportErrorIsRedacted;
+const
+  KEY = 'badstatus-warmup';
+var
+  Raised: Boolean;
+begin
+  { fphttpclient raises its own exception, quoting the status line, which
+    here carries the key. Warmup turns it into a ZbException without it. }
+  EnsureStub;
+  UseStub(KEY);
+  Raised := False;
+  try
+    try
+      ZbWarmupGetSeeds;
+    except
+      on E: Exception do
+      begin
+        Raised := True;
+        AssertTrue('not a ZbException: ' + E.ClassName, E is ZbException);
+        AssertTrue('the key leaked: ' + E.Message, Pos(KEY, E.Message) = 0);
+        AssertTrue(E.Message, Pos('REDACTED', E.Message) > 0);
+      end;
+    end;
+    AssertTrue('a bad status line should raise', Raised);
+  finally
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
 end;
 
 initialization

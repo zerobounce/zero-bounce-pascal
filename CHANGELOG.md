@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- An answer cut short was returned as the result on the JSON POST (`ZbBatchValidateEmails`), form POST (`ZbValidateEmail` with `UsePost`, `ZbScoreEmailPost`, the S3/SFTP jobs, filters, `ZbSendEvaluatedFile`) and multipart upload (`ZbBulkValidationFileSubmit`, `ZbAiScoringFileSubmit`, `ZbSendEmailFinderFile`, `ZbSendDomainSearchFile`, `ZbSendListEvaluatorFile`) requests: when the connection closed before the `Content-Length` the server promised, whatever had arrived was parsed, and if it parsed it came back as a success. With FPC these requests now raise `ZbException` (`The response from ZeroBounce was cut short: N of M bytes received`, `StatusCode` 0), as GET requests and the Warmup and Inbox Placement Tester requests have since 3.0.1. The Delphi branch is unchanged.
+- An upload whose connection was refused raised `ZbException` with an uninitialised `StatusCode` (any number, for example `-599851432`). It is now 0, like every other error with no HTTP answer.
+
+### Added
+
+- Offline tests for guards that had none: a control character inside the key (not only at its ends), `RedactSecrets` on the raw and url-encoded key, the key kept out of API error messages, Warmup errors keeping the Warmup key and the SMTP username and password out of `Message` and `Payload` (including fphttpclient's own exceptions), `"success": "false"` as a string, `ZBInitialize` leaving the key and base URL unchanged when it raises, and the email finder and domain search getfile calls raising on a JSON content type or a JSON object body.
+
 ## [3.0.1] - 2026-11-11
 
 ### Fixed

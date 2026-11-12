@@ -993,6 +993,7 @@ end;
             Client.RequestBody := TRawByteStringStream.Create(JsonParam);
             try
                 Result.Payload := Client.Post(url);
+                ZbRequireCompleteBody(Client, Length(Result.Payload));
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
@@ -1200,6 +1201,7 @@ end;
             Client.RequestBody := TRawByteStringStream.Create(FormBody);
             try
                 Result.Payload := Client.Post(url);
+                ZbRequireCompleteBody(Client, Length(Result.Payload));
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
@@ -1281,6 +1283,11 @@ end;
         else
         begin
             Result.UrlCalled := url;
+            { No answer, no status: a refused connection is reported from
+              here, before any of these is read. }
+            Result.StatusCode := 0;
+            Result.Payload := '';
+            Result.ContentType := '';
             {$IFDEF FPC}
             InitSSLInterface;
 
@@ -1312,6 +1319,7 @@ end;
                     end;
                 end;
 
+                ZbRequireCompleteBody(Client, ResponseStream.Size);
                 ResponseStream.Seek(0, soBeginning);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
