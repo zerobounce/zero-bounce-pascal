@@ -25,6 +25,9 @@ type
     procedure TestAJsonAnswerCutShortIsAnErrorOnEveryTransport;
     procedure TestARefusedUploadCarriesNoStatus;
     procedure TestAWarmupTransportErrorIsRedacted;
+    procedure TestEveryPublicCallRaisesZbExceptionWhenRefused;
+    procedure TestAProtocolErrorIsAZbExceptionWithoutTheKey;
+    procedure TestEveryPublicRequestFunctionIsInTheSweep;
   end;
 
 implementation
@@ -1146,9 +1149,21 @@ begin
   end;
 end;
 
-procedure TTestOffline.TestEveryRequestFunctionRefusesPlainHttp;
+type
+  { What a sweep expects of one call: E is what it raised, nil if it returned. }
+  TSweepCheck = procedure(const Name: String; E: Exception);
+
 var
-  Missed: String;
+  { The functions the last sweep called, by name without the overload label. }
+  SweepNames: TStringList;
+  { Every call the check did not accept, with why. }
+  SweepMissed: String;
+
+{ Calls every public request function once, overloads included, and hands
+  each outcome to Check. TestEveryPublicRequestFunctionIsInTheSweep keeps the
+  list complete against the units' interfaces. }
+procedure SweepEveryPublicCall(Check: TSweepCheck);
+var
   Params: TZbBulkParams;
   Finder: TZbEmailFinderSendFileOptions;
   S3: TZbValidateS3FileOptions;
@@ -1156,32 +1171,24 @@ var
   Job: TZbBulkFileJobOptions;
   Emails: array[0..0] of TZbEmailAndIp;
   Warmup: TZbWarmupAddSendingAccountOptions;
+  Form: TStringList;
+  Url: String;
 
   procedure Expect(const Name: String; E: Exception);
+  var
+    Base: String;
   begin
-    if (E = nil) or not (E is ZbException) or (Pos('https://', E.Message) = 0) then
-    begin
-      if E <> nil then
-        Missed := Missed + Name + ' (' + E.Message + '); '
-      else
-        Missed := Missed + Name + ' (sent); ';
-    end;
+    Base := Name;
+    if Pos('(', Base) > 0 then
+      Base := Copy(Base, 1, Pos('(', Base) - 1);
+    if SweepNames.IndexOf(Base) < 0 then
+      SweepNames.Add(Base);
+    Check(Name, E);
   end;
 
 begin
-  { Every base URL is plain http on a real host. The mock would answer any
-    request that got past the URL check, so a function that skips the check
-    shows up as "sent". }
-  Missed := '';
-  ZBInitialize('mock_api_key');
-  ZbWarmupInitialize('mock_warmup_key');
-  ZbApiBaseURL := 'http://api.zerobounce.net/v2';
-  BULK_URI := 'http://bulkapi.zerobounce.net/v2';
-  ZbBulkRootURL := 'http://bulkapi.zerobounce.net';
-  ZbListEvaluatorURL := 'http://bulkapi.zerobounce.net/v2/listevaluator';
-  ZbInboxPlacementURL := 'http://bulkapi.zerobounce.net/api/ipt';
-  ZbWarmupBaseURL := 'http://warmup-api.zerobounce.net';
-  ZBMockResponse(200, '{"success":true,"message":"ok","file_id":"fid","Credits":"7"}', 'application/octet-stream');
+  SweepNames.Clear;
+  SweepMissed := '';
   FillChar(Params, SizeOf(Params), 0);
   Params.EmailAddressColumn := 1;
   FillChar(Finder, SizeOf(Finder), 0);
@@ -1200,6 +1207,7 @@ begin
   Warmup := ZbWarmupDefaultAddSendingAccountOptions;
   Warmup.EngagementRuleIdSpecified := True;
   Warmup.EngagementRuleId := 2;
+  Form := TStringList.Create;
   try
     { ZbGeneric }
     try ZbGetCredits; Expect('ZbGetCredits', nil); except on E: Exception do Expect('ZbGetCredits', E); end;
@@ -1291,10 +1299,62 @@ begin
     try ZbWarmupGetFromAddressStatistics('s@example.com'); Expect('ZbWarmupGetFromAddressStatistics', nil); except on E: Exception do Expect('ZbWarmupGetFromAddressStatistics', E); end;
     try ZbWarmupCheckDomainDmarc('s@example.com'); Expect('ZbWarmupCheckDomainDmarc', nil); except on E: Exception do Expect('ZbWarmupCheckDomainDmarc', E); end;
     try ZbWarmupTestSmtpConfiguration('s@example.com', 's@example.com', 'pw', 'smtp.example.com', 587); Expect('ZbWarmupTestSmtpConfiguration', nil); except on E: Exception do Expect('ZbWarmupTestSmtpConfiguration', E); end;
+    { ZbGeneric overloads }
+    try ZbFindEmailByDomain('example.com', 'Ada', 'Lovelace'); Expect('ZbFindEmailByDomain(3)', nil); except on E: Exception do Expect('ZbFindEmailByDomain(3)', E); end;
+    try ZbFindEmailByDomain('example.com', 'Ada'); Expect('ZbFindEmailByDomain(2)', nil); except on E: Exception do Expect('ZbFindEmailByDomain(2)', E); end;
+    try ZbFindEmailByCompanyName('Example', 'Ada', 'Lovelace'); Expect('ZbFindEmailByCompanyName(3)', nil); except on E: Exception do Expect('ZbFindEmailByCompanyName(3)', E); end;
+    try ZbFindEmailByCompanyName('Example', 'Ada'); Expect('ZbFindEmailByCompanyName(2)', nil); except on E: Exception do Expect('ZbFindEmailByCompanyName(2)', E); end;
+    { ZbValidation overloads }
+    try ZbValidateEmail('a@example.com', '1.2.3.4'); Expect('ZbValidateEmail(ip)', nil); except on E: Exception do Expect('ZbValidateEmail(ip)', E); end;
+    try ZbBatchValidateEmails(['a@example.com']); Expect('ZbBatchValidateEmails(strings)', nil); except on E: Exception do Expect('ZbBatchValidateEmails(strings)', E); end;
+    { ZbWarmup overloads }
+    try ZbWarmupDownloadStatistics('s@example.com', ''); Expect('ZbWarmupDownloadStatistics(path)', nil); except on E: Exception do Expect('ZbWarmupDownloadStatistics(path)', E); end;
+    try ZbWarmupCheckDomainDmarc('s@example.com', 'sel'); Expect('ZbWarmupCheckDomainDmarc(selector)', nil); except on E: Exception do Expect('ZbWarmupCheckDomainDmarc(selector)', E); end;
+    { ZbUtility: the transports themselves, on the main base URL. }
+    Url := ZbBaseUrl(ZbApiBaseURL) + '/getcredits?api_key=' + EncodeParam(ZbApiKey);
+    try ZBGetRequest(Url); Expect('ZBGetRequest', nil); except on E: Exception do Expect('ZBGetRequest', E); end;
+    try ZBPostRequest(Url, '{}'); Expect('ZBPostRequest(json)', nil); except on E: Exception do Expect('ZBPostRequest(json)', E); end;
+    try ZBFormPostRequest(Url, 'a=b'); Expect('ZBFormPostRequest', nil); except on E: Exception do Expect('ZBFormPostRequest', E); end;
+    try ZBPostRequest(Url, Form, 'email'); Expect('ZBPostRequest(multipart)', nil); except on E: Exception do Expect('ZBPostRequest(multipart)', E); end;
+    try ZBSendRequest('PUT', Url, '{}', JSON_CONTENT_TYPE); Expect('ZBSendRequest', nil); except on E: Exception do Expect('ZBSendRequest', E); end;
+    try ZBSendRequestWithHeader('DELETE', Url, '', '', 'X-Test', 'x'); Expect('ZBSendRequestWithHeader', nil); except on E: Exception do Expect('ZBSendRequestWithHeader', E); end;
+    try ZBSendForeignKeyRequest('GET', Url, '', '', 'API-Key', 'x'); Expect('ZBSendForeignKeyRequest', nil); except on E: Exception do Expect('ZBSendForeignKeyRequest', E); end;
+  finally
+    Form.Free;
+  end;
+end;
+
+procedure ExpectHttpsRefusal(const Name: String; E: Exception);
+begin
+  if (E = nil) or not (E is ZbException) or (Pos('https://', E.Message) = 0) then
+  begin
+    if E <> nil then
+      SweepMissed := SweepMissed + Name + ' (' + E.Message + '); '
+    else
+      SweepMissed := SweepMissed + Name + ' (sent); ';
+  end;
+end;
+
+procedure TTestOffline.TestEveryRequestFunctionRefusesPlainHttp;
+begin
+  { Every base URL is plain http on a real host. The mock would answer any
+    request that got past the URL check, so a function that skips the check
+    shows up as "sent". }
+  ZBInitialize('mock_api_key');
+  ZbWarmupInitialize('mock_warmup_key');
+  ZbApiBaseURL := 'http://api.zerobounce.net/v2';
+  BULK_URI := 'http://bulkapi.zerobounce.net/v2';
+  ZbBulkRootURL := 'http://bulkapi.zerobounce.net';
+  ZbListEvaluatorURL := 'http://bulkapi.zerobounce.net/v2/listevaluator';
+  ZbInboxPlacementURL := 'http://bulkapi.zerobounce.net/api/ipt';
+  ZbWarmupBaseURL := 'http://warmup-api.zerobounce.net';
+  ZBMockResponse(200, '{"success":true,"message":"ok","file_id":"fid","Credits":"7"}', 'application/octet-stream');
+  try
+    SweepEveryPublicCall(@ExpectHttpsRefusal);
   finally
     UseDefaultUrls;
   end;
-  AssertEquals('functions that did not refuse plain http', '', Missed);
+  AssertEquals('functions that did not refuse plain http', '', SweepMissed);
 end;
 
 procedure TTestOffline.TestBaseUrlsWithATrailingSlash;
@@ -1477,8 +1537,247 @@ begin
   end;
 end;
 
+const
+  REFUSED_KEY = 'refusedsweepkey';
+  REFUSED_WARMUP_KEY = 'refusedsweepwarmupkey';
+
+var
+  RefusedPort: Integer;
+
+procedure ExpectRefusedAsZbException(const Name: String; E: Exception);
+begin
+  if E = nil then
+    SweepMissed := SweepMissed + Name + ' (returned); '
+  else if not (E is ZbException) then
+    SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message])
+  else if ZbException(E).StatusCode <> 0 then
+    SweepMissed := SweepMissed + Format('%s (status %d: %s); ', [Name, ZbException(E).StatusCode, E.Message])
+  else if (Pos(REFUSED_KEY, E.Message) > 0) or (Pos(REFUSED_KEY, ZbException(E).Payload) > 0) then
+    SweepMissed := SweepMissed + Name + ' (the key leaked: ' + E.Message + '); '
+  else if Pos(IntToStr(RefusedPort), E.Message) = 0 then
+    { The network library's own message names the address it could not
+      reach; anything else did not come from the refused connection. }
+    SweepMissed := SweepMissed + Name + ' (not the connection error: ' + E.Message + '); ';
+end;
+
+procedure TTestOffline.TestEveryPublicCallRaisesZbExceptionWhenRefused;
+var
+  Base: String;
+begin
+  { Nothing listens on the port, so every request fails before any HTTP
+    answer. The README promises a ZbException; GET, the JSON and form POSTs
+    and ZBSendRequest let fphttpclient's ESocketError through, with no
+    StatusCode, while uploads and Warmup wrapped it. }
+  ZBInitialize(REFUSED_KEY);
+  ZbWarmupInitialize(REFUSED_WARMUP_KEY);
+  RefusedPort := ClosedPort;
+  Base := Format('http://127.0.0.1:%d', [RefusedPort]);
+  ZbApiBaseURL := Base + '/v2';
+  BULK_URI := Base + '/v2';
+  ZbBulkRootURL := Base;
+  ZbListEvaluatorURL := Base + '/v2/listevaluator';
+  ZbInboxPlacementURL := Base + '/api/ipt';
+  ZbWarmupBaseURL := Base;
+  ZbResponseMock := cDefaultMock;
+  try
+    SweepEveryPublicCall(@ExpectRefusedAsZbException);
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that did not raise ZbException (StatusCode 0, key masked)', '', SweepMissed);
+end;
+
+procedure TTestOffline.TestAProtocolErrorIsAZbExceptionWithoutTheKey;
+var
+  Transport: TTransport;
+  Key, Missed: String;
+begin
+  { The status line carries the key, and fphttpclient quotes it in its own
+    exception. Every transport raises a ZbException with StatusCode 0 and the
+    key masked in that text. }
+  EnsureStub;
+  Missed := '';
+  try
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      Key := 'badstatus-' + IntToStr(Ord(Transport));
+      UseStub(Key);
+      try
+        CallTransport(Transport);
+        Missed := Missed + TRANSPORT_NAMES[Transport] + ' (returned a result); ';
+      except
+        on E: Exception do
+          if not (E is ZbException) then
+            Missed := Missed + Format('%s (%s); ', [TRANSPORT_NAMES[Transport], E.ClassName])
+          else if (ZbException(E).StatusCode <> 0) or (Pos(Key, E.Message) > 0) or
+                  (Pos('REDACTED', E.Message) = 0) then
+            Missed := Missed + Format('%s (status %d: %s); ',
+              [TRANSPORT_NAMES[Transport], ZbException(E).StatusCode, E.Message]);
+      end;
+    end;
+  finally
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+  AssertEquals('transports whose protocol error was not a ZbException without the key', '', Missed);
+end;
+
+procedure IgnoreOutcome(const Name: String; E: Exception);
+begin
+end;
+
+{ The routines a unit's interface declares, outside class and record
+  declarations, by name. }
+procedure AddInterfaceRoutines(const FileName: String; Names: TStrings);
+var
+  Text, Clean, Line, Lower, Name: String;
+  Lines: TStringList;
+  I, J, Depth: Integer;
+  InType: Boolean;
+begin
+  Lines := TStringList.Create;
+  try
+    Lines.LoadFromFile(FileName);
+    Text := Lines.Text;
+  finally
+    Lines.Free;
+  end;
+  { Comments and directives can hold anything, so they go first. }
+  Clean := '';
+  I := 1;
+  while I <= Length(Text) do
+  begin
+    if Text[I] = '{' then
+    begin
+      while (I <= Length(Text)) and (Text[I] <> '}') do
+        Inc(I);
+      Inc(I);
+    end
+    else if (Text[I] = '(') and (I < Length(Text)) and (Text[I + 1] = '*') then
+    begin
+      J := Pos('*)', Copy(Text, I + 2, MaxInt));
+      if J = 0 then
+        Break;
+      I := I + 2 + J + 1;
+    end
+    else if (Text[I] = '/') and (I < Length(Text)) and (Text[I + 1] = '/') then
+    begin
+      while (I <= Length(Text)) and (Text[I] <> #10) do
+        Inc(I);
+    end
+    else
+    begin
+      Clean := Clean + Text[I];
+      Inc(I);
+    end;
+  end;
+  Lines := TStringList.Create;
+  try
+    Lines.Text := Clean;
+    Depth := 0;
+    InType := False;
+    for I := 0 to Lines.Count - 1 do
+    begin
+      Lower := LowerCase(Trim(Lines[I]));
+      if Lower = 'interface' then
+        Depth := 1
+      else if Lower = 'implementation' then
+        Break
+      else if Depth = 0 then
+        Continue
+      else if InType then
+      begin
+        if (Lower = 'end;') or (Copy(Lower, 1, 4) = 'end;') then
+          InType := False;
+      end
+      else if ((Pos('= class', Lower) > 0) or (Pos('= record', Lower) > 0) or
+               (Pos('= packed record', Lower) > 0)) and (Lower[Length(Lower)] <> ';') then
+        InType := True
+      else if (Copy(Lower, 1, 9) = 'function ') or (Copy(Lower, 1, 10) = 'procedure ') then
+      begin
+        Line := Trim(Lines[I]);
+        Line := Trim(Copy(Line, Pos(' ', Line) + 1, MaxInt));
+        Name := '';
+        J := 1;
+        while (J <= Length(Line)) and (Line[J] in ['A'..'Z', 'a'..'z', '0'..'9', '_']) do
+        begin
+          Name := Name + Line[J];
+          Inc(J);
+        end;
+        if (Name <> '') and (Names.IndexOf(Name) < 0) then
+          Names.Add(Name);
+      end;
+    end;
+  finally
+    Lines.Free;
+  end;
+end;
+
+procedure TTestOffline.TestEveryPublicRequestFunctionIsInTheSweep;
+const
+  UNITS: array[0..5] of String = (
+    'zbutility.pas', 'zbgeneric.pas', 'zbvalidation.pas', 'zbbulk.pas', 'zbpriority3.pas', 'zbwarmup.pas'
+  );
+  { Public routines that send nothing. Any other routine in these interfaces
+    is a request and must be in SweepEveryPublicCall. }
+  NOT_REQUESTS: array[0..25] of String = (
+    'Register', 'ZBApiURLToString', 'ZBSetApiKey', 'ZBInitialize', 'ZbBaseUrl', 'EncodeParam',
+    'RedactSecrets', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
+    'ZbBodyLooksLikeHtml', 'ZbSuccessMeansFailure', 'ZbMessageFromBody', 'EncodePathSegment',
+    'ZbJsonEscape', 'ZBMockResponse', 'ZbWindowsRootCertificates', 'ZbTrustDerCertificates',
+    'ZbDefaultValidateOptions', 'ZbBatchRequestBodyFromEmails', 'ZbFromDataFromFileSubmitRecord',
+    'ZbDefaultBulkFileJobOptions', 'ZbWarmupInitialize', 'ZbWarmupDefaultAddSendingAccountOptions',
+    'ZbWarmupDefaultListFromAddressesOptions'
+  );
+var
+  SrcDir, Missing, Extra: String;
+  Declared: TStringList;
+  I: Integer;
+begin
+  { The CI and Docker runners build the executable in the repository root. }
+  SrcDir := ExtractFilePath(ParamStr(0)) + 'src' + PathDelim;
+  if not FileExists(SrcDir + UNITS[0]) then
+    SrcDir := IncludeTrailingPathDelimiter(GetCurrentDir) + 'src' + PathDelim;
+  AssertTrue('src/ not found beside the test runner or in the working directory',
+    FileExists(SrcDir + UNITS[0]));
+
+  Declared := TStringList.Create;
+  try
+    for I := Low(UNITS) to High(UNITS) do
+      AddInterfaceRoutines(SrcDir + UNITS[I], Declared);
+    for I := Low(NOT_REQUESTS) to High(NOT_REQUESTS) do
+    begin
+      AssertTrue(NOT_REQUESTS[I] + ' is no longer declared', Declared.IndexOf(NOT_REQUESTS[I]) >= 0);
+      Declared.Delete(Declared.IndexOf(NOT_REQUESTS[I]));
+    end;
+    AssertTrue(Format('only %d request functions found', [Declared.Count]), Declared.Count > 80);
+
+    UseDefaultUrls;
+    ZBMockResponse(200, '{"success":true,"message":"ok","file_id":"fid","Credits":"7"}', 'application/octet-stream');
+    try
+      SweepEveryPublicCall(@IgnoreOutcome);
+    finally
+      UseDefaultUrls;
+    end;
+
+    Missing := '';
+    for I := 0 to Declared.Count - 1 do
+      if SweepNames.IndexOf(Declared[I]) < 0 then
+        Missing := Missing + Declared[I] + ' ';
+    Extra := '';
+    for I := 0 to SweepNames.Count - 1 do
+      if Declared.IndexOf(SweepNames[I]) < 0 then
+        Extra := Extra + SweepNames[I] + ' ';
+  finally
+    Declared.Free;
+  end;
+  AssertEquals('public request functions missing from SweepEveryPublicCall', '', Missing);
+  AssertEquals('swept names that are not public request functions', '', Extra);
+end;
+
 initialization
   Randomize;
+  SweepNames := TStringList.Create;
   RegisterTest(TTestOffline);
 
 finalization
@@ -1490,5 +1789,6 @@ finalization
     Stub.Free;
   end;
   Gate.Free;
+  SweepNames.Free;
 
 end.
