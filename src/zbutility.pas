@@ -887,6 +887,17 @@ end;
     end;
     {$ENDIF}
 
+    { A request that got no HTTP answer at all - the connection refused or
+      timed out, a TLS or protocol failure - raises ZbException with
+      StatusCode 0, as the README promises and as uploads and Warmup already
+      did. The network library's own message is kept, with the key masked:
+      it can quote the URL. }
+    function ZbTransportError(E: Exception): ZbException;
+    begin
+        Result := ZbException.Create(RedactSecrets(E.Message));
+        Result.StatusCode := 0;
+    end;
+
     function ZBGetRequest(url: String): TZbRequestResponse;
     var
         {$IFDEF FPC}
@@ -924,7 +935,15 @@ end;
                   redirect or an error into a ZbException carrying the status.
                   A list here made fphttpclient raise its own exception, with
                   no status, for anything not on it - a 302 included. }
-                Client.HTTPMethod('GET', url, ResponseStream, []);
+                try
+                    Client.HTTPMethod('GET', url, ResponseStream, []);
+                except
+                    { Raised by this SDK (no CA bundle, say): already one. }
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
                 ZbRequireCompleteBody(Client, ResponseStream.Size);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
@@ -943,7 +962,16 @@ end;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
             try
-              Response := Client.Get(url);
+              { Not compiled by CI, which has no Delphi: the same wrapping
+                as the FPC branch. }
+              try
+                Response := Client.Get(url);
+              except
+                on E: ZbException do
+                  raise;
+                on E: Exception do
+                  raise ZbTransportError(E);
+              end;
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -992,7 +1020,15 @@ end;
             Client.AddHeader('Accept', 'application/json');
             Client.RequestBody := TRawByteStringStream.Create(JsonParam);
             try
-                Result.Payload := Client.Post(url);
+                try
+                    Result.Payload := Client.Post(url);
+                except
+                    { Raised by this SDK (no CA bundle, say): already one. }
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
                 ZbRequireCompleteBody(Client, Length(Result.Payload));
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
@@ -1012,7 +1048,14 @@ end;
             try
               Client.CustomHeaders['Content-Type'] := 'application/json; charset=UTF-8';
               Client.CustomHeaders['Accept'] := 'application/json';
-              Response := Client.Post(url, BodyStream);
+              try
+                Response := Client.Post(url, BodyStream);
+              except
+                on E: ZbException do
+                  raise;
+                on E: Exception do
+                  raise ZbTransportError(E);
+              end;
 
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
@@ -1123,7 +1166,15 @@ end;
             end;
             ResponseStream := TStringStream.Create('');
             try
-                Client.HTTPMethod(Method, url, ResponseStream, []);
+                try
+                    Client.HTTPMethod(Method, url, ResponseStream, []);
+                except
+                    { Raised by this SDK (no CA bundle, say): already one. }
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
                 ZbRequireCompleteBody(Client, ResponseStream.Size);
                 Result.Payload := ResponseStream.DataString;
                 Result.StatusCode := Client.ResponseStatusCode;
@@ -1150,7 +1201,14 @@ end;
                     Client.CustomHeaders[HeaderName] := HeaderValue;
                 if Body <> '' then
                     Client.CustomHeaders['Content-Type'] := ContentType;
-                Response := Client.Execute(Method, url, BodyStream);
+                try
+                    Response := Client.Execute(Method, url, BodyStream);
+                except
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
                 Result.Payload := Response.ContentAsString();
                 Result.StatusCode := Response.StatusCode;
                 Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -1200,7 +1258,15 @@ end;
             Client.AddHeader('Accept', 'application/json');
             Client.RequestBody := TRawByteStringStream.Create(FormBody);
             try
-                Result.Payload := Client.Post(url);
+                try
+                    Result.Payload := Client.Post(url);
+                except
+                    { Raised by this SDK (no CA bundle, say): already one. }
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
                 ZbRequireCompleteBody(Client, Length(Result.Payload));
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
@@ -1220,7 +1286,14 @@ end;
             try
               Client.CustomHeaders['Content-Type'] := 'application/x-www-form-urlencoded';
               Client.CustomHeaders['Accept'] := 'application/json';
-              Response := Client.Post(url, BodyStream);
+              try
+                Response := Client.Post(url, BodyStream);
+              except
+                on E: ZbException do
+                  raise;
+                on E: Exception do
+                  raise ZbTransportError(E);
+              end;
 
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
@@ -1342,7 +1415,16 @@ end;
             MPForm := FormDataFromTString;
             try
               MPForm.AddStream('file', FileStream, FILE_NAME, 'text/csv');
-              Response := Client.Post(url, MPForm);
+              try
+                Response := Client.Post(url, MPForm);
+              except
+                on e: Exception do
+                  begin
+                    error := ZbException.FromResponse(e.Message, Result);
+                    error.MarkHttpError;
+                    raise error;
+                  end;
+              end;
 
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
