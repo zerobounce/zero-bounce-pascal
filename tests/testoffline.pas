@@ -35,6 +35,9 @@ type
     procedure TestAnEmptyBodyIsASuccessOnlyForAnInboxPlacementDelete;
     procedure TestTheContentTypeAloneMakesA200AnError;
     procedure TestANonJson200IsAnErrorOnEveryJsonCall;
+    procedure TestEveryJsonCallTakesOnlyStrictJson;
+    procedure TestRedactionIsClosedUnderEncoding;
+    procedure TestABodyStillHoldingTheKeyAfterMaskingIsDropped;
   end;
 
 implementation
@@ -2264,6 +2267,396 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('calls that took a non-JSON 200 as a result, or lost the status', '', Missed);
+end;
+
+{ -- E7: every JSON call against the strict-JSON corpus ------------------- }
+
+var
+  { The corpus body of the current sweep, and whether it is an ACCEPT one. }
+  CorpusBody: String;
+  CorpusAccept: Boolean;
+
+function IsDownloadCall(const Name: String): Boolean;
+begin
+  Result := (Pos('ResultFetch', Name) > 0) or (Pos('ZbWarmupDownload', Name) = 1);
+end;
+
+function IsBlankJson(const Text: String): Boolean;
+var
+  I: Integer;
+begin
+  for I := 1 to Length(Text) do
+    if not (Text[I] in [' ', #9, #10, #13]) then
+      Exit(False);
+  Result := True;
+end;
+
+procedure ExpectCorpusOutcome(const Name: String; E: Exception);
+var
+  Success: Boolean;
+begin
+  { The low-level ZB* request functions hand back the response itself. }
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  { A download takes any application/json answer as the API's error. An
+    empty or blank 2xx is a Warmup JSON call's documented empty success, and
+    ZbDeleteInboxPlacementTest's (E8). }
+  if IsDownloadCall(Name) then
+    Success := False
+  else if CorpusAccept then
+    Success := True
+  else
+    Success := IsBlankJson(CorpusBody) and
+      ((Pos('ZbWarmup', Name) = 1) or (Name = 'ZbDeleteInboxPlacementTest'));
+  if Success then
+  begin
+    { A typed call whose result needs fields an ACCEPT body lacks (a batch's
+      email_batch, a status's or the usage's dates) reports that, with status
+      200; it read the body as JSON. When the parser's message quotes the
+      body (a date of "0"), FromResponse names the body instead. }
+    if (E <> nil) and not ((E is ZbException) and (ZbException(E).StatusCode = 200) and
+       (Pos('not valid JSON', E.Message) = 0) and
+       ((Pos('" not found while parsing', E.Message) > 0) or (Pos('Invalid date/timestamp', E.Message) > 0) or
+        (((Pos('ZbGetApiUsage', Name) = 1) or (Pos('Status', Name) > 0)) and
+         (E.Message = 'Json Error: ' + Trim(CorpusBody))))) then
+      SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+  end
+  else
+    ExpectKeyMasked(Name, E);
+end;
+
+{ The bodies of tests/fixtures/strict-json-corpus.tsv, a byte-identical copy
+  of sdk-docs/skills/zerobounce-sdk/references/strict-json-corpus.tsv in
+  zerobounce/sdk-docs (standard section 3, check E7); update it from there.
+  Each line is REJECT or ACCEPT, a tab, and the body as a JSON-encoded string. }
+function FuzzDecode(const Text: String; How: Integer): String; forward;
+
+procedure ReadStrictJsonCorpus(Kinds, Bodies, Lines: TStringList);
+var
+  Path, Line, Kind, Field: String;
+  Source: TStringList;
+  I, Tab: Integer;
+begin
+  Path := ExtractFilePath(ParamStr(0)) + 'tests' + PathDelim + 'fixtures' + PathDelim + 'strict-json-corpus.tsv';
+  if not FileExists(Path) then
+    Path := IncludeTrailingPathDelimiter(GetCurrentDir) + 'tests' + PathDelim + 'fixtures' + PathDelim +
+      'strict-json-corpus.tsv';
+  if not FileExists(Path) then
+    raise Exception.Create('tests/fixtures/strict-json-corpus.tsv not found');
+  Source := TStringList.Create;
+  try
+    Source.LoadFromFile(Path);
+    for I := 0 to Source.Count - 1 do
+    begin
+      Line := Source[I];
+      if (Line = '') or (Line[1] = '#') then
+        Continue;
+      Tab := Pos(#9, Line);
+      if Tab = 0 then
+        raise Exception.Create('no tab in corpus line: ' + Line);
+      Kind := Copy(Line, 1, Tab - 1);
+      if (Kind <> 'ACCEPT') and (Kind <> 'REJECT') then
+        raise Exception.Create('bad corpus line: ' + Line);
+      { The field is one JSON string. fpjson's GetJSON ends a string at an
+        escaped NUL, so it is unescaped here instead. }
+      Field := Copy(Line, Tab + 1, MaxInt);
+      if (Length(Field) < 2) or (Field[1] <> '"') or (Field[Length(Field)] <> '"') then
+        raise Exception.Create('bad corpus field: ' + Line);
+      Kinds.Add(Kind);
+      Bodies.Add(FuzzDecode(Copy(Field, 2, Length(Field) - 2), 2));
+      Lines.Add(Line);
+    end;
+  finally
+    Source.Free;
+  end;
+end;
+
+procedure TTestOffline.TestEveryJsonCallTakesOnlyStrictJson;
+var
+  Kinds, Bodies, Lines: TStringList;
+  I: Integer;
+  Missed: String;
+begin
+  { Every call against every corpus body on an HTTP 200 application/json: a
+    REJECT body is an error with status 200, an ACCEPT body the result. }
+  Kinds := TStringList.Create;
+  Bodies := TStringList.Create;
+  Lines := TStringList.Create;
+  Missed := '';
+  try
+    ReadStrictJsonCorpus(Kinds, Bodies, Lines);
+    { 42 REJECT and 9 ACCEPT lines when this was written. }
+    AssertTrue(Format('only %d corpus lines', [Bodies.Count]), Bodies.Count >= 51);
+    { The NUL line decodes whole: the body is the object and a NUL byte. }
+    AssertTrue('the corpus has the NUL body', Bodies.IndexOf('{"a":1}'#0) >= 0);
+    for I := 0 to Bodies.Count - 1 do
+    begin
+      UseDefaultUrls;
+      ZBInitialize('corpus-key');
+      ZbWarmupInitialize('corpus-warmup-key');
+      SweepStatus := 200;
+      CorpusBody := Bodies[I];
+      CorpusAccept := Kinds[I] = 'ACCEPT';
+      ZBMockResponse(200, Bodies[I], 'application/json');
+      SweepEveryPublicCall(@ExpectCorpusOutcome);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[%s] %s', [Lines[I], SweepMissed]);
+    end;
+  finally
+    UseDefaultUrls;
+    Kinds.Free;
+    Bodies.Free;
+    Lines.Free;
+  end;
+  AssertEquals('calls that took a REJECT body or refused an ACCEPT one', '', Missed);
+end;
+
+{ -- S4/S7: redaction is closed under encoding ---------------------------- }
+
+const
+  { Every character JSON or URL encoding changes, and a space. }
+  FUZZ_KEY = 'fz a"b/c\d+e%f&g=h<i>j''k';
+  FUZZ_WARMUP_KEY = 'wz a"b/c\d+e%f&g=h<i>j''k';
+  FUZZ_SMTP_USER = 'us a"b/c\d+e%f&g=h<i>j''k';
+  FUZZ_SMTP_PASSWORD = 'pw a"b/c\d+e%f&g=h<i>j''k';
+
+var
+  FuzzSeed: Cardinal;
+  FuzzDesc: String;
+  { The secret the current fuzz sweep checks, besides FUZZ_KEY. }
+  FuzzSecret: String;
+
+function FuzzNext: Cardinal;
+begin
+  { A fixed linear congruential generator, so a failure repeats. }
+  FuzzSeed := FuzzSeed * 1664525 + 1013904223;
+  Result := FuzzSeed shr 8;
+end;
+
+{ One encoding a server or proxy may apply: URL-encoding with a space as %20
+  (0) or '+' (1), JSON escaping (2), JSON escaping with '/' as '\/' (3). }
+function FuzzEncode(const Text: String; How: Integer): String;
+const
+  HEX = '0123456789ABCDEF';
+var
+  I: Integer;
+  C: Char;
+begin
+  Result := '';
+  for I := 1 to Length(Text) do
+  begin
+    C := Text[I];
+    if How >= 2 then
+    begin
+      if (C = '"') or (C = '\') or ((How = 3) and (C = '/')) then
+        Result := Result + '\';
+      Result := Result + C;
+    end
+    else if C in ['A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'] then
+      Result := Result + C
+    else if (C = ' ') and (How = 1) then
+      Result := Result + '+'
+    else
+      Result := Result + '%' + HEX[(Ord(C) shr 4) + 1] + HEX[(Ord(C) and 15) + 1];
+  end;
+end;
+
+function FuzzHex(C: Char): Integer;
+begin
+  case C of
+    '0'..'9': Result := Ord(C) - Ord('0');
+    'a'..'f': Result := Ord(C) - Ord('a') + 10;
+    'A'..'F': Result := Ord(C) - Ord('A') + 10;
+  else
+    Result := -1;
+  end;
+end;
+
+{ One decoding: %XX (0), %XX and '+' (1), JSON unescaping (2), written apart
+  from the SDK's own. }
+function FuzzDecode(const Text: String; How: Integer): String;
+const
+  FROM_CHARS = '"\/bfnrt';
+var
+  I, K, CodePoint: Integer;
+  ToChars: String;
+begin
+  ToChars := '"\/'#8#12#10#13#9;
+  Result := '';
+  I := 1;
+  while I <= Length(Text) do
+  begin
+    if (How < 2) and (Text[I] = '%') and (I + 2 <= Length(Text)) and (FuzzHex(Text[I + 1]) >= 0) and
+       (FuzzHex(Text[I + 2]) >= 0) then
+    begin
+      Result := Result + Chr(FuzzHex(Text[I + 1]) * 16 + FuzzHex(Text[I + 2]));
+      Inc(I, 3);
+    end
+    else if (How = 1) and (Text[I] = '+') then
+    begin
+      Result := Result + ' ';
+      Inc(I);
+    end
+    else if (How = 2) and (Text[I] = '\') and (I < Length(Text)) and (Pos(Text[I + 1], FROM_CHARS) > 0) then
+    begin
+      Result := Result + ToChars[Pos(Text[I + 1], FROM_CHARS)];
+      Inc(I, 2);
+    end
+    else if (How = 2) and (Text[I] = '\') and (I + 5 <= Length(Text)) and (Text[I + 1] = 'u') and
+            (FuzzHex(Text[I + 2]) >= 0) and (FuzzHex(Text[I + 3]) >= 0) and (FuzzHex(Text[I + 4]) >= 0) and
+            (FuzzHex(Text[I + 5]) >= 0) then
+    begin
+      CodePoint := 0;
+      for K := 2 to 5 do
+        CodePoint := CodePoint * 16 + FuzzHex(Text[I + K]);
+      if CodePoint < $80 then
+        Result := Result + Chr(CodePoint)
+      else if CodePoint < $800 then
+        Result := Result + Chr($C0 or (CodePoint shr 6)) + Chr($80 or (CodePoint and $3F))
+      else
+        Result := Result + Chr($E0 or (CodePoint shr 12)) + Chr($80 or ((CodePoint shr 6) and $3F)) +
+          Chr($80 or (CodePoint and $3F));
+      Inc(I, 6);
+    end
+    else
+    begin
+      Result := Result + Text[I];
+      Inc(I);
+    end;
+  end;
+end;
+
+{ Whether Secret is in Text or in any view of it decoded up to Layers times,
+  in any order. }
+function FuzzSecretReadable(const Text, Secret: String; Layers: Integer): Boolean;
+var
+  How: Integer;
+begin
+  Result := Pos(Secret, Text) > 0;
+  if Result or (Layers = 0) then
+    Exit;
+  for How := 0 to 2 do
+    if FuzzSecretReadable(FuzzDecode(Text, How), Secret, Layers - 1) then
+      Exit(True);
+end;
+
+{ A random composition of up to three encodings of Secret; FuzzDesc gets the
+  sequence, e.g. "2,0". }
+function FuzzSpelling(const Secret: String): String;
+var
+  Layers, I, How: Integer;
+begin
+  Result := Secret;
+  FuzzDesc := '';
+  Layers := FuzzNext mod 4;
+  for I := 1 to Layers do
+  begin
+    How := FuzzNext mod 4;
+    Result := FuzzEncode(Result, How);
+    if FuzzDesc <> '' then
+      FuzzDesc := FuzzDesc + ',';
+    FuzzDesc := FuzzDesc + IntToStr(How);
+  end;
+end;
+
+{ A body quoting a spelling with a 4xx: a JSON error (one more JSON escape,
+  which the SDK's parser undoes) or a text one. }
+procedure MockFuzzedEcho(const Spelling: String; Round: Integer);
+begin
+  if Odd(Round) then
+    ZBMockResponse(400, '{"error":"Invalid API key ' + FuzzEncode(Spelling, 2) + '"}', 'application/json')
+  else
+    ZBMockResponse(400, 'Bad Request: [' + Spelling + '] end', 'text/plain');
+end;
+
+procedure ExpectNoDecodableSecret(const Name: String; E: Exception);
+var
+  Text: String;
+begin
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  if E = nil then
+  begin
+    SweepMissed := SweepMissed + Name + ' (returned); ';
+    Exit;
+  end;
+  Text := E.Message;
+  if E is ZbException then
+    Text := Text + ' | ' + ZbException(E).Payload;
+  if FuzzSecretReadable(Text, FUZZ_KEY, 3) or
+     ((Pos('ZbWarmup', Name) = 1) and FuzzSecretReadable(Text, FuzzSecret, 3)) then
+    SweepMissed := SweepMissed + Format('%s, encodings [%s]: %s; ', [Name, FuzzDesc, Text]);
+end;
+
+procedure TTestOffline.TestRedactionIsClosedUnderEncoding;
+var
+  Round: Integer;
+  Spelling, Text, Missed: String;
+begin
+  { Standard section 3: whatever composition of up to three URL and JSON
+    encodings a body uses to quote the API key, the Warmup key or the SMTP
+    credentials, no decoded view of the message or the Payload of any error
+    holds it. }
+  Missed := '';
+  FuzzSeed := 20261112;
+  try
+    for Round := 0 to 39 do
+    begin
+      UseDefaultUrls;
+      ZBInitialize(FUZZ_KEY);
+      ZbWarmupInitialize(FUZZ_WARMUP_KEY);
+      FuzzSecret := FUZZ_WARMUP_KEY;
+      { Each body quotes the key a non-Warmup call sends, or the Warmup key. }
+      if Odd(Round div 2) then
+        Spelling := FuzzSpelling(FUZZ_WARMUP_KEY)
+      else
+        Spelling := FuzzSpelling(FUZZ_KEY);
+      MockFuzzedEcho(Spelling, Round);
+      SweepEveryPublicCall(@ExpectNoDecodableSecret);
+      if SweepMissed <> '' then
+        Missed := Missed + SweepMissed;
+    end;
+    for Round := 0 to 199 do
+    begin
+      UseDefaultUrls;
+      ZbWarmupInitialize('fuzz-smtp-warmup-key');
+      if Round mod 3 = 0 then
+        FuzzSecret := FUZZ_SMTP_USER
+      else
+        FuzzSecret := FUZZ_SMTP_PASSWORD;
+      Spelling := FuzzSpelling(FuzzSecret);
+      MockFuzzedEcho(Spelling, Round);
+      try
+        ZbWarmupTestSmtpConfiguration('s@example.com', FUZZ_SMTP_USER, FUZZ_SMTP_PASSWORD,
+          'smtp.example.com', 587);
+        Missed := Missed + 'ZbWarmupTestSmtpConfiguration (returned); ';
+      except
+        on E: Exception do
+        begin
+          Text := E.Message;
+          if E is ZbException then
+            Text := Text + ' | ' + ZbException(E).Payload;
+          if FuzzSecretReadable(Text, FuzzSecret, 3) then
+            Missed := Missed + Format('ZbWarmupTestSmtpConfiguration, encodings [%s]: %s; ', [FuzzDesc, Text]);
+        end;
+      end;
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('errors with a secret readable in a decoded view', '', Missed);
+end;
+
+procedure TTestOffline.TestABodyStillHoldingTheKeyAfterMaskingIsDropped;
+var
+  Thrice: String;
+begin
+  { A spelling no list of generated forms covers (three URL layers) is
+    dropped whole, with a message that says why; text without the secret is
+    kept as it is. }
+  Thrice := FuzzEncode(FuzzEncode(FuzzEncode(FUZZ_KEY, 0), 0), 1);
+  AssertEquals(ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo [' + Thrice + '] end', FUZZ_KEY));
+  AssertEquals('nothing secret here %41 A', ZbMaskSecret('nothing secret here %41 A', FUZZ_KEY));
 end;
 
 initialization

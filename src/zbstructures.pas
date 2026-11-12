@@ -201,10 +201,15 @@ function ZbMessageOnlyBody(const Body: String): Boolean;
   {"Message": "Greylist validation still in progress..."}, a result. *)
 procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
 { For a call that hands its raw JSON body to the caller: raises a ZbException
-  with the response's status unless the body is one JSON object or array
-  (whitespace around it allowed). A proxy's text, a CSV labelled
+  with the response's status unless the body is one strict JSON value
+  (ZbIsStrictJson). A proxy's text, a CSV labelled
   application/json or an empty body on a 2xx is not the API's answer. }
 procedure ZbRequireJsonBody(const Response: TZbRequestResponse);
+{ Whether Text is exactly one strict RFC 8259 JSON value, with only space,
+  tab, CR and LF around it. fpjson's GetJSON is lenient (single quotes,
+  unquoted keys, TRUE, leading zeros, raw control characters in strings), so
+  every JSON body is checked with this first. }
+function ZbIsStrictJson(const Text: String): Boolean;
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
@@ -325,52 +330,207 @@ implementation
         end;
     end;
 
-    (* Raises when Text holds anything but whitespace after its first JSON
-      object or array: GetJSON stops after that value and ignores the rest,
-      so {"a":1} followed by a proxy's text would pass as JSON. *)
-    procedure ZbRequireNothingAfterJson(const Text: String);
+    function ZbIsStrictJson(const Text: String): Boolean;
     var
-        I, Depth: Integer;
-        InString, Escaped: Boolean;
-        C: Char;
-    begin
-        I := 1;
-        while (I <= Length(Text)) and ((Text[I] = ' ') or (Text[I] = #9) or (Text[I] = #10) or (Text[I] = #13)) do
-            Inc(I);
-        if (I > Length(Text)) or not ((Text[I] = '{') or (Text[I] = '[')) then
-            Exit;
-        Depth := 0;
-        InString := False;
-        Escaped := False;
-        while I <= Length(Text) do
+        P, Len: Integer;
+
+        procedure SkipWs;
         begin
-            C := Text[I];
-            if InString then
-            begin
-                if Escaped then
-                    Escaped := False
-                else if C = '\' then
-                    Escaped := True
-                else if C = '"' then
-                    InString := False;
-            end
-            else if C = '"' then
-                InString := True
-            else if (C = '{') or (C = '[') then
-                Inc(Depth)
-            else if (C = '}') or (C = ']') then
-            begin
-                Dec(Depth);
-                if Depth = 0 then
-                    Break;
-            end;
-            Inc(I);
+            while (P <= Len) and ((Text[P] = ' ') or (Text[P] = #9) or (Text[P] = #10) or (Text[P] = #13)) do
+                Inc(P);
         end;
-        Inc(I);
-        while (I <= Length(Text)) and ((Text[I] = ' ') or (Text[I] = #9) or (Text[I] = #10) or (Text[I] = #13)) do
-            Inc(I);
-        if I <= Length(Text) then
-            raise Exception.Create('ZeroBounce returned a response that is not valid JSON.');
+
+        function IsDigit: Boolean;
+        begin
+            Result := (P <= Len) and (Text[P] >= '0') and (Text[P] <= '9');
+        end;
+
+        function Digits: Boolean;
+        begin
+            Result := IsDigit;
+            while IsDigit do
+                Inc(P);
+        end;
+
+        function Number: Boolean;
+        begin
+            Result := False;
+            if (P <= Len) and (Text[P] = '-') then
+                Inc(P);
+            if (P <= Len) and (Text[P] = '0') then
+                Inc(P)
+            else if not Digits then
+                Exit;
+            if (P <= Len) and (Text[P] = '.') then
+            begin
+                Inc(P);
+                if not Digits then
+                    Exit;
+            end;
+            if (P <= Len) and ((Text[P] = 'e') or (Text[P] = 'E')) then
+            begin
+                Inc(P);
+                if (P <= Len) and ((Text[P] = '+') or (Text[P] = '-')) then
+                    Inc(P);
+                if not Digits then
+                    Exit;
+            end;
+            Result := True;
+        end;
+
+        function IsHex(C: Char): Boolean;
+        begin
+            Result := ((C >= '0') and (C <= '9')) or ((C >= 'a') and (C <= 'f')) or ((C >= 'A') and (C <= 'F'));
+        end;
+
+        function Str: Boolean;
+        var
+            K: Integer;
+        begin
+            Result := False;
+            if (P > Len) or (Text[P] <> '"') then
+                Exit;
+            Inc(P);
+            while P <= Len do
+            begin
+                if Text[P] = '"' then
+                begin
+                    Inc(P);
+                    Result := True;
+                    Exit;
+                end;
+                if Ord(Text[P]) < 32 then
+                    Exit;
+                if Text[P] = '\' then
+                begin
+                    Inc(P);
+                    if P > Len then
+                        Exit;
+                    if Text[P] = 'u' then
+                    begin
+                        for K := 1 to 4 do
+                        begin
+                            Inc(P);
+                            if (P > Len) or not IsHex(Text[P]) then
+                                Exit;
+                        end;
+                    end
+                    else if Pos(Text[P], '"\/bfnrt') = 0 then
+                        Exit;
+                end;
+                Inc(P);
+            end;
+        end;
+
+        function Literal(const Word: String): Boolean;
+        begin
+            Result := Copy(Text, P, Length(Word)) = Word;
+            if Result then
+                Inc(P, Length(Word));
+        end;
+
+        function Value(Depth: Integer): Boolean;
+        begin
+            Result := False;
+            if (P > Len) or (Depth > 512) then
+                Exit;
+            if Text[P] = '{' then
+            begin
+                Inc(P);
+                SkipWs;
+                if (P <= Len) and (Text[P] = '}') then
+                begin
+                    Inc(P);
+                    Result := True;
+                    Exit;
+                end;
+                while True do
+                begin
+                    if not Str then
+                        Exit;
+                    SkipWs;
+                    if (P > Len) or (Text[P] <> ':') then
+                        Exit;
+                    Inc(P);
+                    SkipWs;
+                    if not Value(Depth + 1) then
+                        Exit;
+                    SkipWs;
+                    if (P <= Len) and (Text[P] = ',') then
+                    begin
+                        Inc(P);
+                        SkipWs;
+                        Continue;
+                    end;
+                    Result := (P <= Len) and (Text[P] = '}');
+                    if Result then
+                        Inc(P);
+                    Exit;
+                end;
+            end
+            else if Text[P] = '[' then
+            begin
+                Inc(P);
+                SkipWs;
+                if (P <= Len) and (Text[P] = ']') then
+                begin
+                    Inc(P);
+                    Result := True;
+                    Exit;
+                end;
+                while True do
+                begin
+                    SkipWs;
+                    if not Value(Depth + 1) then
+                        Exit;
+                    SkipWs;
+                    if (P <= Len) and (Text[P] = ',') then
+                    begin
+                        Inc(P);
+                        Continue;
+                    end;
+                    Result := (P <= Len) and (Text[P] = ']');
+                    if Result then
+                        Inc(P);
+                    Exit;
+                end;
+            end
+            else if Text[P] = '"' then
+                Result := Str
+            else if Text[P] = 't' then
+                Result := Literal('true')
+            else if Text[P] = 'f' then
+                Result := Literal('false')
+            else if Text[P] = 'n' then
+                Result := Literal('null')
+            else
+                Result := Number;
+        end;
+
+    begin
+        P := 1;
+        Len := Length(Text);
+        SkipWs;
+        Result := Value(0);
+        if Result then
+        begin
+            SkipWs;
+            Result := P > Len;
+        end;
+    end;
+
+    (* Raises unless Text is one strict JSON value (ZbIsStrictJson): GetJSON
+      stops after the first value and ignores the rest, so {"a":1} followed by
+      a proxy's text would pass as JSON, and it takes almost-JSON besides. *)
+    procedure ZbRequireNothingAfterJson(const Text: String);
+    begin
+        if ZbIsStrictJson(Text) then
+            Exit;
+        { No message for a blank body, so ZbException.FromResponse says it was
+          empty, with its status. }
+        if Trim(Text) = '' then
+            raise Exception.Create('');
+        raise Exception.Create('ZeroBounce returned a response that is not valid JSON.');
     end;
 
     procedure ZbRequireJsonBody(const Response: TZbRequestResponse);
@@ -380,12 +540,13 @@ implementation
         Valid: Boolean;
         Error: ZbException;
     begin
-        Text := Trim(Response.Payload);
+        { The body as it came: only space, tab, CR and LF may surround the
+          value, which Trim would not tell from other control characters. }
+        Text := Response.Payload;
         Valid := False;
-        if (Text <> '') and ((Text[1] = '{') or (Text[1] = '[')) then
+        if ZbIsStrictJson(Text) then
         begin
             try
-                ZbRequireNothingAfterJson(Text);
                 {$IFDEF FPC}
                 Data := GetJSON(Text);
                 {$ELSE}
@@ -452,13 +613,25 @@ implementation
     end;
 
     class function TZbJson.Parse(JsonContent: String): TJSONObject;
+    var
+        Data: TZbJSONValue;
     begin
         ZbRequireNothingAfterJson(JsonContent);
         {$IFDEF FPC}
-        Result := TJSONObject(GetJSON(JsonContent));
+        Data := GetJSON(JsonContent);
         {$ELSE}
-        Result := TJSONObject(TJSONObject.ParseJSONValue(JsonContent, True));
+        Data := TJSONObject.ParseJSONValue(JsonContent, True);
         {$ENDIF}
+        { Another JSON value (a string, a number, an array) has none of the
+          fields a typed result reads: an empty object, rather than a cast of
+          something that is not one. }
+        if Data is TJSONObject then
+            Result := TJSONObject(Data)
+        else
+        begin
+            Data.Free;
+            Result := TJSONObject.Create;
+        end;
     end;
 
     function TZbJson.GetValue(Key: String): TZbJSONValue;

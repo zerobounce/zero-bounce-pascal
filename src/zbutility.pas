@@ -48,6 +48,9 @@ const
     ZB_DOWNLOAD_TYPE_PHASE_1 = 'phase_1';
     ZB_DOWNLOAD_TYPE_PHASE_2 = 'phase_2';
     ZB_DOWNLOAD_TYPE_COMBINED = 'combined';
+    { What an error says in place of a body that still held a secret after
+      masking (ZbMaskSecret). }
+    ZB_SECRET_OMITTED_MESSAGE = 'The response body was omitted because it contained a credential.';
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
     ENDPOINT_SCORE_EMAIL = '/scoring';
@@ -133,7 +136,10 @@ threadvar
     { S with every form of Secret an answer can quote replaced by REDACTED:
       JSON-escaped ('/' escaped or not, as a request body echoed back),
       url-encoded (as a request URL or form, a space as %20 or '+'), the
-      url encoding of each JSON-escaped form, and raw. }
+      url encoding of each JSON-escaped form, and raw. Redaction is closed
+      under encoding: when a view of the result decoded up to three times
+      (URL-decoding, '+' as a space, JSON-unescaping, in any order) still
+      holds Secret, the whole of S is replaced by ZB_SECRET_OMITTED_MESSAGE. }
     function ZbMaskSecret(const S, Secret: string): string;
 type
     { Masks a secret ZbUtility does not hold itself, such as the Warmup key. }
@@ -797,6 +803,172 @@ end;
         ZbSecretRedactors[High(ZbSecretRedactors)] := Redactor;
     end;
 
+    function ZbHexDigit(C: Char): Integer;
+    begin
+        if (C >= '0') and (C <= '9') then
+            Result := Ord(C) - Ord('0')
+        else if (C >= 'a') and (C <= 'f') then
+            Result := Ord(C) - Ord('a') + 10
+        else if (C >= 'A') and (C <= 'F') then
+            Result := Ord(C) - Ord('A') + 10
+        else
+            Result := -1;
+    end;
+
+    { Text URL-decoded: each %XX as its byte, and '+' as a space when
+      PlusAsSpace is set (a form body). }
+    function ZbUrlDecodeView(const Text: String; PlusAsSpace: Boolean): String;
+    var
+        I, N, Hi, Lo: Integer;
+    begin
+        SetLength(Result, Length(Text));
+        I := 1;
+        N := 0;
+        while I <= Length(Text) do
+        begin
+            Hi := -1;
+            Lo := -1;
+            if (Text[I] = '%') and (I + 2 <= Length(Text)) then
+            begin
+                Hi := ZbHexDigit(Text[I + 1]);
+                Lo := ZbHexDigit(Text[I + 2]);
+            end;
+            Inc(N);
+            if (Hi >= 0) and (Lo >= 0) then
+            begin
+                Result[N] := Chr(Hi * 16 + Lo);
+                Inc(I, 3);
+            end
+            else
+            begin
+                if PlusAsSpace and (Text[I] = '+') then
+                    Result[N] := ' '
+                else
+                    Result[N] := Text[I];
+                Inc(I);
+            end;
+        end;
+        SetLength(Result, N);
+    end;
+
+    function ZbHex4(const Text: String; At: Integer): Integer;
+    var
+        K, D: Integer;
+    begin
+        Result := -1;
+        if At + 3 > Length(Text) then
+            Exit;
+        Result := 0;
+        for K := At to At + 3 do
+        begin
+            D := ZbHexDigit(Text[K]);
+            if D < 0 then
+            begin
+                Result := -1;
+                Exit;
+            end;
+            Result := Result * 16 + D;
+        end;
+    end;
+
+    { One code point as the string type holds it: UTF-8 bytes on FPC, a UTF-16
+      unit on Delphi. }
+    function ZbCodePointText(CodePoint: Integer): String;
+    begin
+        {$IFDEF FPC}
+        if CodePoint < $80 then
+            Result := Chr(CodePoint)
+        else if CodePoint < $800 then
+            Result := Chr($C0 or (CodePoint shr 6)) + Chr($80 or (CodePoint and $3F))
+        else if CodePoint < $10000 then
+            Result := Chr($E0 or (CodePoint shr 12)) + Chr($80 or ((CodePoint shr 6) and $3F)) +
+                Chr($80 or (CodePoint and $3F))
+        else
+            Result := Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
+                Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
+        {$ELSE}
+        Result := Char(CodePoint);
+        {$ENDIF}
+    end;
+
+    { Text with JSON string escapes undone (\" \\ \/ \b \f \n \r \t \uXXXX,
+      surrogate pairs included on FPC); anything else is kept. }
+    function ZbJsonUnescapeView(const Text: String): String;
+    const
+        ESCAPES = '"\/bfnrt';
+    var
+        I, K, CodePoint, Low: Integer;
+        Decoded: String;
+    begin
+        Decoded := '"\/'#8#12#10#13#9;
+        Result := '';
+        I := 1;
+        while I <= Length(Text) do
+        begin
+            if (Text[I] <> '\') or (I = Length(Text)) then
+            begin
+                Result := Result + Text[I];
+                Inc(I);
+                Continue;
+            end;
+            K := Pos(Text[I + 1], ESCAPES);
+            if K > 0 then
+            begin
+                Result := Result + Decoded[K];
+                Inc(I, 2);
+                Continue;
+            end;
+            CodePoint := -1;
+            if Text[I + 1] = 'u' then
+                CodePoint := ZbHex4(Text, I + 2);
+            if CodePoint < 0 then
+            begin
+                Result := Result + Text[I];
+                Inc(I);
+                Continue;
+            end;
+            Inc(I, 6);
+            {$IFDEF FPC}
+            if (CodePoint >= $D800) and (CodePoint <= $DBFF) and (I + 1 <= Length(Text)) and
+               (Text[I] = '\') and (Text[I + 1] = 'u') then
+            begin
+                Low := ZbHex4(Text, I + 2);
+                if (Low >= $DC00) and (Low <= $DFFF) then
+                begin
+                    CodePoint := $10000 + ((CodePoint - $D800) shl 10) + (Low - $DC00);
+                    Inc(I, 6);
+                end;
+            end;
+            {$ENDIF}
+            Result := Result + ZbCodePointText(CodePoint);
+        end;
+    end;
+
+    { Whether Secret can be read in Text or in any view of it decoded up to
+      Layers more times: URL-decoded, form-decoded ('+' as a space too) and
+      JSON-unescaped, in any order. }
+    function ZbSecretInDecodedViews(const Text, Secret: String; Layers: Integer): Boolean;
+    var
+        Views: array[0..2] of String;
+        I: Integer;
+    begin
+        Result := Pos(Secret, Text) > 0;
+        if Result or (Layers = 0) then
+            Exit;
+        { Nothing to decode: every view is Text itself. }
+        if (Pos('%', Text) = 0) and (Pos('+', Text) = 0) and (Pos('\', Text) = 0) then
+            Exit;
+        Views[0] := ZbUrlDecodeView(Text, False);
+        Views[1] := ZbUrlDecodeView(Text, True);
+        Views[2] := ZbJsonUnescapeView(Text);
+        for I := 0 to 2 do
+            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], Secret, Layers - 1) then
+            begin
+                Result := True;
+                Exit;
+            end;
+    end;
+
     function ZbMaskSecret(const S, Secret: string): string;
     const
         HEX = '0123456789ABCDEF';
@@ -866,6 +1038,10 @@ end;
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
                 Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
+        { A spelling the forms above miss (three URL layers, URL of double
+          JSON, ...) still decodes to the secret: then none of S is kept. }
+        if ZbSecretInDecodedViews(Result, Secret, 3) then
+            Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 
     function RedactSecrets(const S: string): string;

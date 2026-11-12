@@ -351,11 +351,20 @@ end;
 function WarmupJson(const Method, Path, Query, Body: String): String;
 var
     Response: TZbRequestResponse;
+    I: Integer;
 begin
     Response := WarmupSend(Method, Path, Query, Body);
+    Result := '';
+    { Blank means only space, tab, CR and LF: any other byte (a NUL, a
+      vertical tab) makes the body something that has to be JSON. }
+    I := 1;
+    while (I <= Length(Response.Payload)) and ((Response.Payload[I] = ' ') or
+          (Response.Payload[I] = #9) or (Response.Payload[I] = #10) or (Response.Payload[I] = #13)) do
+        Inc(I);
+    if I > Length(Response.Payload) then
+        Exit;
+    ZbRequireJsonBody(Response);
     Result := Trim(Response.Payload);
-    if Result <> '' then
-        ZbRequireJsonBody(Response);
 end;
 
 var
