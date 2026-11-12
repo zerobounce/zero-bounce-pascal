@@ -25,6 +25,11 @@ type
     procedure TestMissingCACertFileIsAClearError;
     procedure TestTrustDerCertificatesAddsParsableCertificates;
     procedure TestDeprecatedSetApiKeyChecksTheKey;
+    procedure TestAKeyWithAControlCharacterInsideIsRefused;
+    procedure TestRedactSecretsHidesTheKeyRawAndEncoded;
+    procedure TestAnApiErrorMessageNeverCarriesTheKey;
+    procedure TestInitializeIsAllOrNothing;
+    procedure TestSuccessFalseAsAStringIsAFailure;
   end;
 
 implementation
@@ -379,6 +384,120 @@ begin
   finally
     Ctx.Free;
   end;
+end;
+
+procedure TTestUtility.TestAKeyWithAControlCharacterInsideIsRefused;
+const
+  BAD: array[0..4] of String = ('ab'#10'cd', 'ab'#9'cd', 'ab'#0'cd', 'ab'#27'cd', 'ab'#127'cd');
+var
+  I: Integer;
+  Raised: Boolean;
+begin
+  { Trim only looks at the ends; a control character inside the key would go
+    out on the wire (and into a header for the Warmup key) unchecked. }
+  for I := Low(BAD) to High(BAD) do
+  begin
+    ZBInitialize('good-key');
+    Raised := False;
+    try
+      ZBInitialize(BAD[I]);
+    except on E: ZbException do
+      begin
+        Raised := True;
+        AssertTrue(E.Message, Pos('control characters', E.Message) > 0);
+      end;
+    end;
+    AssertTrue(Format('a key with #%d inside should be refused', [Ord(BAD[I][3])]), Raised);
+    AssertEquals('the previous key is kept', 'good-key', ZbApiKey);
+  end;
+end;
+
+procedure TTestUtility.TestRedactSecretsHidesTheKeyRawAndEncoded;
+const
+  KEY = 'k3y+with/chars';
+begin
+  ZBInitialize(KEY);
+  AssertEquals('the raw key', 'failed: REDACTED.', RedactSecrets('failed: ' + KEY + '.'));
+  { On the query string the key travels url-encoded. }
+  AssertTrue('the test key must change when encoded', EncodeParam(KEY) <> KEY);
+  AssertEquals('the url-encoded key', 'GET /v2/getcredits?api_key=REDACTED failed',
+    RedactSecrets('GET /v2/getcredits?api_key=' + EncodeParam(KEY) + ' failed'));
+end;
+
+procedure TTestUtility.TestAnApiErrorMessageNeverCarriesTheKey;
+const
+  KEY = 'secret-key-123';
+var
+  Raised: Boolean;
+begin
+  ZBInitialize(KEY);
+  ZBMockResponse(400, '{"error":"api_key ' + KEY + ' is not valid"}');
+  Raised := False;
+  try
+    ZbGetCredits;
+  except on E: ZbException do
+    begin
+      Raised := True;
+      AssertEquals(400, E.StatusCode);
+      AssertTrue('the key leaked: ' + E.Message, Pos(KEY, E.Message) = 0);
+      AssertTrue(E.Message, Pos('REDACTED', E.Message) > 0);
+    end;
+  end;
+  AssertTrue('an HTTP 400 should raise', Raised);
+end;
+
+procedure TTestUtility.TestInitializeIsAllOrNothing;
+const
+  OLD_URL = 'https://api.zerobounce.net/v2';
+
+  procedure ExpectRefused(const Key, Url: String; UseRegion: Boolean);
+  var
+    Raised: Boolean;
+  begin
+    ZBInitialize('old-key', OLD_URL);
+    Raised := False;
+    try
+      if UseRegion then
+        ZBInitialize(Key, ZbApiURLEU)
+      else
+        ZBInitialize(Key, Url);
+    except on E: ZbException do
+      Raised := True;
+    end;
+    AssertTrue('ZBInitialize(' + Url + ') should raise', Raised);
+    { A caller that catches the error must not go on with half of it. }
+    AssertEquals('the key after a refused ZBInitialize', 'old-key', ZbApiKey);
+    AssertEquals('the base URL after a refused ZBInitialize', OLD_URL, ZbApiBaseURL);
+  end;
+
+begin
+  { A good key with a bad URL, and a bad key with a good URL. }
+  ExpectRefused('new-key', 'http://api.zerobounce.net/v2', False);
+  ExpectRefused('bad'#10'key', 'https://api-eu.zerobounce.net/v2', False);
+  ExpectRefused(' bad-key', 'https://api-eu.zerobounce.net/v2', False);
+  ExpectRefused('bad'#10'key', '(region EU)', True);
+end;
+
+procedure TTestUtility.TestSuccessFalseAsAStringIsAFailure;
+var
+  Raised: Boolean;
+begin
+  AssertTrue(ZbSuccessMeansFailure('{"success":"false","message":"x"}'));
+  AssertTrue(ZbSuccessMeansFailure('{"success": false}'));
+  AssertFalse(ZbSuccessMeansFailure('{"success":"true"}'));
+  { End to end: a string "false" on an HTTP 200 is an error with the status. }
+  ZBMockResponse(200, '{"success":"false","message":"File cannot be found."}');
+  Raised := False;
+  try
+    ZbGetCredits;
+  except on E: ZbException do
+    begin
+      Raised := True;
+      AssertEquals(200, E.StatusCode);
+      AssertTrue(E.Message, Pos('File cannot be found', E.Message) > 0);
+    end;
+  end;
+  AssertTrue('"success": "false" should raise', Raised);
 end;
 
 initialization

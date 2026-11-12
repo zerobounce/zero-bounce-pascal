@@ -43,6 +43,7 @@ type
         procedure TestTestSmtpConfigurationChecksThePort;
         procedure TestCsvDownloadsRejectAJsonAnswer;
         procedure TestBlankArgumentsAreRejectedBeforeSending;
+        procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
     end;
 
 implementation
@@ -729,6 +730,37 @@ begin
     end;
     AssertTrue('a blank new_from_address should be rejected', Raised);
     AssertNothingSent;
+end;
+
+procedure TTestWarmup.TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
+const
+    USER = 'smtp-user-42';
+    PASSWORD = 'smtp-pass-77';
+var
+    Raised: Boolean;
+begin
+    { The API may quote what it was sent. The Warmup key and the SMTP
+      credentials of test-smtp-configuration stay out of both the message and
+      the payload of the error. }
+    ZBMockResponse(500, Concat('{"error":"login failed for ', USER, ' with ', PASSWORD,
+        ' (key ', MOCK_WARMUP_KEY, ')"}'));
+    Raised := False;
+    try
+        ZbWarmupTestSmtpConfiguration('from@example.com', USER, PASSWORD, 'smtp.example.com', 587);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertEquals(500, e.StatusCode);
+            AssertTrue('the warmup key leaked: ' + e.Message, Pos(MOCK_WARMUP_KEY, e.Message) = 0);
+            AssertTrue('the password leaked: ' + e.Message, Pos(PASSWORD, e.Message) = 0);
+            AssertTrue('the username leaked: ' + e.Message, Pos(USER, e.Message) = 0);
+            AssertTrue('the warmup key leaked: ' + e.Payload, Pos(MOCK_WARMUP_KEY, e.Payload) = 0);
+            AssertTrue('the password leaked: ' + e.Payload, Pos(PASSWORD, e.Payload) = 0);
+            AssertTrue('the username leaked: ' + e.Payload, Pos(USER, e.Payload) = 0);
+            AssertTrue(e.Message, Pos('REDACTED', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('an HTTP 500 should raise', Raised);
 end;
 
 initialization
