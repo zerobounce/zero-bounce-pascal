@@ -378,8 +378,15 @@ const
             error.MarkHttpError;
             raise error;
         end;
-        if ZbBodyLooksLikeHtml(response.Payload) then
-            raise ZbException.FromResponse('', response);
+        { An empty 200 is not an empty file, and an HTML page - by its content
+          type or its body - is a proxy or a portal answering, not the file. }
+        if (response.Payload = '') or ZbContentTypeIsHtml(response.ContentType) or
+           ZbBodyLooksLikeHtml(response.Payload) then
+        begin
+            error := ZbException.FromResponse('', response);
+            error.MarkHttpError;
+            raise error;
+        end;
         IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
         { getfile answers with the file or not at all. A JSON body - with a JSON
           content type or not, whatever its keys - is the API saying why not, so

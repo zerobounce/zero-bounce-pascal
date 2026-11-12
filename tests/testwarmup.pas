@@ -47,6 +47,7 @@ type
         procedure TestCsvDownloadsRejectEveryNonFileAnswer;
         procedure TestBlankArgumentsAreRejectedBeforeSending;
         procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
+        procedure TestSmtpCredentialsAreMaskedInEveryForm;
     end;
 
 implementation
@@ -885,6 +886,50 @@ begin
         end;
     end;
     AssertTrue('an HTTP 500 should raise', Raised);
+end;
+
+procedure TTestWarmup.TestSmtpCredentialsAreMaskedInEveryForm;
+const
+    { Raw, url-encoded, JSON-escaped with '/' escaped and not. }
+    FORMS: array[0..7] of String = (
+        'Pa/ss"w%rd+', 'Pa%2Fss%22w%25rd%2B', 'Pa\/ss\"w%rd+', 'Pa/ss\"w%rd+',
+        'us"er/n+%', 'us%22er%2Fn%2B%25', 'us\"er\/n+%', 'us\"er/n+%'
+    );
+var
+    Body, Text: String;
+    I, Answer: Integer;
+    Raised: Boolean;
+begin
+    { A server or proxy may echo the request body (JSON-escaped) or a form
+      (url-encoded) as well as the raw value; no form of the SMTP credentials
+      may reach the error. A text body is not parsed, so nothing decodes the
+      escaped forms first. }
+    Body := 'SMTP login failed:';
+    for I := Low(FORMS) to High(FORMS) do
+        Body := Body + ' [' + FORMS[I] + ']';
+    for Answer := 0 to 1 do
+    begin
+        if Answer = 0 then
+            ZBMockResponse(500, Body, 'text/plain')
+        else
+            { JSON can carry every form but the raw ones. }
+            ZBMockResponse(500, Concat('{"error":"login failed ', FORMS[1], ' ', FORMS[2], ' ', FORMS[3], ' ',
+                FORMS[5], ' ', FORMS[6], ' ', FORMS[7], '"}'), 'application/json');
+        Raised := False;
+        try
+            ZbWarmupTestSmtpConfiguration('from@example.com', FORMS[4], FORMS[0], 'smtp.example.com', 587);
+        except on e: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(500, e.StatusCode);
+                Text := e.Message + ' | ' + e.Payload;
+                for I := Low(FORMS) to High(FORMS) do
+                    AssertTrue(Format('form %d leaked: %s', [I, Text]), Pos(FORMS[I], Text) = 0);
+                AssertTrue(Text, Pos('REDACTED', e.Message) > 0);
+            end;
+        end;
+        AssertTrue('an HTTP 500 should raise', Raised);
+    end;
 end;
 
 initialization

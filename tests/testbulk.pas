@@ -28,7 +28,8 @@ type
             HasHeaderRow: True;
             RemoveDuplicate: True;
             AllowPhase2Specified: False;
-            AllowPhase2: False
+            AllowPhase2: False;
+            RemoveDuplicateSpecified: True
         );
 
     protected
@@ -43,6 +44,7 @@ type
         procedure TestSubmitParamProviderEmpty;
         procedure TestSubmitParamProviderPartial;
         procedure TestSubmitParamProviderFull;
+        procedure TestSubmitParamRemoveDuplicateOnlyWhenSpecified;
         procedure TestSubmitParamAllowPhase2;
         procedure TestSubmitParamScoringOmitsAllowPhase2;
 
@@ -81,12 +83,12 @@ const
     SUBMIT_PARAM_EMPTY: TZbBulkParams = (
         EmailAddressColumn: 0; FirstNameColumn: 0; LastNameColumn: 0;
         GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False;
-        AllowPhase2Specified: False; AllowPhase2: False
+        AllowPhase2Specified: False; AllowPhase2: False; RemoveDuplicateSpecified: False
     );
     SUBMIT_PARAM_PARTIAL: TZbBulkParams = (
         EmailAddressColumn: 2; FirstNameColumn: 1; LastNameColumn: 0;
         GenderColumn: 0; IpAddressColumn: 0; HasHeaderRow: False; RemoveDuplicate: False;
-        AllowPhase2Specified: False; AllowPhase2: False
+        AllowPhase2Specified: False; AllowPhase2: False; RemoveDuplicateSpecified: False
     );
     SUBMIT_PARAM_FULL: TZbBulkParams = (
         EmailAddressColumn: 2;
@@ -96,7 +98,8 @@ const
         IpAddressColumn: 5;
         HasHeaderRow: True;
         RemoveDuplicate: True;
-        AllowPhase2Specified: False; AllowPhase2: False
+        AllowPhase2Specified: False; AllowPhase2: False;
+        RemoveDuplicateSpecified: True
     );
 
 implementation
@@ -164,7 +167,9 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'api_key', MOCK_API_KEY);
         ExpectKeyInParamsMap(ParamsMap, 'email_address_column', '1');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'false');
-        ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
+        { A zero-filled record does not choose remove_duplicate: the API's
+          default (true) applies. It used to send false. }
+        NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
 
         NotExpectKeyInParamsMap(ParamsMap, 'first_name_column');
         NotExpectKeyInParamsMap(ParamsMap, 'last_name_column');
@@ -185,13 +190,45 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'email_address_column', '2');
         ExpectKeyInParamsMap(ParamsMap, 'first_name_column', '1');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'false');
-        ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
+        NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
 
         NotExpectKeyInParamsMap(ParamsMap, 'last_name_column');
         NotExpectKeyInParamsMap(ParamsMap, 'gender_column');
         NotExpectKeyInParamsMap(ParamsMap, 'ip_address_column');
     finally
         ParamsMap.Free;
+    end;
+end;
+
+procedure TTestBulk.TestSubmitParamRemoveDuplicateOnlyWhenSpecified;
+var
+    Params: TZbBulkParams;
+    ParamsMap: TStringMapping;
+    Endpoint: String;
+    I: Integer;
+begin
+    for I := 0 to 1 do
+    begin
+        if I = 0 then
+            Endpoint := ENDPOINT_FILE_SEND
+        else
+            Endpoint := ENDPOINT_SCORING_SEND;
+        Params := SUBMIT_PARAM_FULL;
+        Params.RemoveDuplicate := False;
+        ParamsMap := FileParamsMapFromRecord(Params, Endpoint);
+        try
+            ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
+        finally
+            ParamsMap.Free;
+        end;
+        Params.RemoveDuplicateSpecified := False;
+        ParamsMap := FileParamsMapFromRecord(Params, Endpoint);
+        try
+            NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
+            ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'true');
+        finally
+            ParamsMap.Free;
+        end;
     end;
 end;
 

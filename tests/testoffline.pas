@@ -20,6 +20,9 @@ type
     procedure TestReadTimeoutIsApplied;
     procedure TestConnectTimeoutIsApplied;
     procedure TestADownloadCutShortIsAnError;
+    procedure TestAChunkedBodyCutShortIsAnError;
+    procedure TestAnHtmlOrEmptyAnswerInPlaceOfAFileIsAnError;
+    procedure TestTheDefaultTimeoutsReachEveryTransport;
     procedure TestEveryRequestFunctionRefusesPlainHttp;
     procedure TestBaseUrlsWithATrailingSlash;
     procedure TestAJsonAnswerCutShortIsAnErrorOnEveryTransport;
@@ -320,6 +323,24 @@ begin
     fpSend(Sock, PChar(Reply), Length(Reply), 0);
     if Pos('truncstall-', Item.ApiKey) = 1 then
       Sleep(SLOW_REPLY_MS);
+    CloseSocket(Sock);
+    Exit;
+  end;
+  if (Pos('chunkcut-', Item.ApiKey) = 1) or (Pos('chunkend-', Item.ApiKey) = 1) or
+     (Pos('chunkok-', Item.ApiKey) = 1) then
+  begin
+    { A chunked 200: 'chunkcut-' closes in the middle of a chunk that
+      promised 64 bytes, 'chunkend-' after a whole chunk but before the last
+      (empty) one, 'chunkok-' sends the whole body. }
+    Reply := 'HTTP/1.1 200 OK' + #13#10 + 'Content-Type: text/csv' + #13#10 +
+      'Transfer-Encoding: chunked' + #13#10 + 'Connection: close' + #13#10 + #13#10;
+    if Pos('chunkcut-', Item.ApiKey) = 1 then
+      Reply := Reply + '40' + #13#10 + 'email' + #10 + 'partial@example.com' + #10
+    else
+      Reply := Reply + '1a' + #13#10 + 'email' + #10 + 'partial@example.com' + #10 + #13#10;
+    if Pos('chunkok-', Item.ApiKey) = 1 then
+      Reply := Reply + '0' + #13#10 + #13#10;
+    fpSend(Sock, PChar(Reply), Length(Reply), 0);
     CloseSocket(Sock);
     Exit;
   end;
@@ -1067,6 +1088,150 @@ begin
   end;
 end;
 
+procedure TTestOffline.TestAChunkedBodyCutShortIsAnError;
+type
+  TDownload = (dlValidation, dlScoring, dlEmailFinder, dlDomainSearch, dlWarmupSeeds);
+const
+  DOWNLOAD_NAMES: array[TDownload] of String = (
+    'ZbBulkValidationResultFetch', 'ZbAiScoringResultFetch', 'ZbEmailFinderResultFetch',
+    'ZbDomainSearchResultFetch', 'ZbWarmupDownloadSeeds'
+  );
+  CUTS: array[0..1] of String = ('chunkcut-', 'chunkend-');
+var
+  Download: TDownload;
+  Cut: Integer;
+  Content, Message: String;
+  Raised: Boolean;
+
+  function Run(D: TDownload): String;
+  begin
+    case D of
+      dlValidation: Result := ZbBulkValidationResultFetch('fid').Content;
+      dlScoring: Result := ZbAiScoringResultFetch('fid').Content;
+      dlEmailFinder: Result := ZbEmailFinderResultFetch('fid').Content;
+      dlDomainSearch: Result := ZbDomainSearchResultFetch('fid').Content;
+      dlWarmupSeeds: Result := ZbWarmupDownloadSeeds('');
+    end;
+  end;
+
+begin
+  { fphttpclient reads a chunked body until its last, empty chunk - or until
+    the connection closes, which it does not report. A body cut there used to
+    come back as the whole file. }
+  EnsureStub;
+  try
+    for Download := Low(TDownload) to High(TDownload) do
+    begin
+      for Cut := Low(CUTS) to High(CUTS) do
+      begin
+        UseStub(CUTS[Cut] + IntToStr(Ord(Download)));
+        Raised := False;
+        Message := '';
+        try
+          Run(Download);
+        except
+          on E: Exception do
+          begin
+            Raised := True;
+            Message := E.Message;
+          end;
+        end;
+        AssertTrue(DOWNLOAD_NAMES[Download] + ' ' + CUTS[Cut] + ': a chunked body cut short should be an error',
+          Raised);
+        AssertTrue(DOWNLOAD_NAMES[Download] + ': ' + Message, Pos('cut short', Message) > 0);
+        AssertTrue(DOWNLOAD_NAMES[Download] + ' leaked the key: ' + Message, Pos(CUTS[Cut], Message) = 0);
+      end;
+      { The same body with its last chunk is the whole file. }
+      UseStub('chunkok-' + IntToStr(Ord(Download)));
+      Content := Run(Download);
+      AssertEquals(DOWNLOAD_NAMES[Download] + ': a whole chunked body',
+        'email' + #10 + 'partial@example.com' + #10, Content);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestAnHtmlOrEmptyAnswerInPlaceOfAFileIsAnError;
+type
+  TDownload = (dlValidation, dlScoring, dlEmailFinder, dlDomainSearch);
+const
+  DOWNLOAD_NAMES: array[TDownload] of String = (
+    'ZbBulkValidationResultFetch', 'ZbAiScoringResultFetch', 'ZbEmailFinderResultFetch',
+    'ZbDomainSearchResultFetch'
+  );
+  { A proxy page that does not look like HTML, under an HTML content type in
+    any case, and an empty body under file content types. }
+  BODIES: array[0..3] of String = ('<p>Access denied by proxy</p>', 'Access denied', '', '');
+  TYPES: array[0..3] of String = ('text/html', 'TEXT/HTML; charset=UTF-8', 'text/csv',
+    'application/octet-stream');
+var
+  Download: TDownload;
+  I: Integer;
+  Raised: Boolean;
+  Status: Integer;
+  Label_: String;
+begin
+  try
+    for I := Low(BODIES) to High(BODIES) do
+      for Download := Low(TDownload) to High(TDownload) do
+      begin
+        UseDefaultUrls;
+        ZBMockResponse(200, BODIES[I], TYPES[I]);
+        Label_ := Format('%s: %s under %s', [DOWNLOAD_NAMES[Download], QuotedStr(BODIES[I]), TYPES[I]]);
+        Raised := False;
+        Status := -1;
+        try
+          case Download of
+            dlValidation: ZbBulkValidationResultFetch('fid');
+            dlScoring: ZbAiScoringResultFetch('fid');
+            dlEmailFinder: ZbEmailFinderResultFetch('fid');
+            dlDomainSearch: ZbDomainSearchResultFetch('fid');
+          end;
+        except
+          on E: ZbException do
+          begin
+            Raised := True;
+            Status := E.StatusCode;
+          end;
+        end;
+        AssertTrue(Label_ + ' should be an error', Raised);
+        AssertEquals(Label_, 200, Status);
+      end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestTheDefaultTimeoutsReachEveryTransport;
+var
+  Transport: TTransport;
+  ConnectMs, ReadMs: Integer;
+begin
+  { Nothing here sets a timeout: what each transport's client ran with is the
+    SDK's default, 30 s to connect and 120 s to read. }
+  EnsureStub;
+  AssertEquals('ZbConnectTimeoutMs default', 30000, ZbConnectTimeoutMs);
+  AssertEquals('ZbReadTimeoutMs default', 120000, ZbReadTimeoutMs);
+  try
+    for Transport := Low(TTransport) to High(TTransport) do
+    begin
+      UseStub('timeouts-' + IntToStr(Ord(Transport)));
+      try
+        CallTransport(Transport);
+      except
+        on E: Exception do
+          ;
+      end;
+      ZbLastRequestTimeouts(ConnectMs, ReadMs);
+      AssertEquals(TRANSPORT_NAMES[Transport] + ' connect timeout', 30000, ConnectMs);
+      AssertEquals(TRANSPORT_NAMES[Transport] + ' read timeout', 120000, ReadMs);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
 procedure TTestOffline.TestADownloadCutShortIsAnError;
 type
   TDownload = (dlValidation, dlValidationWithOptions, dlScoring, dlScoringWithOptions,
@@ -1747,9 +1912,9 @@ const
   );
   { Public routines that send nothing. Any other routine in these interfaces
     is a request and must be in SweepEveryPublicCall. }
-  NOT_REQUESTS: array[0..26] of String = (
+  NOT_REQUESTS: array[0..29] of String = (
     'Register', 'ZBApiURLToString', 'ZBSetApiKey', 'ZBInitialize', 'ZbBaseUrl', 'EncodeParam',
-    'RedactSecrets', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
+    'RedactSecrets', 'ZbMaskSecret', 'ZbContentTypeIsHtml', 'ZbLastRequestTimeouts', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
     'ZbBodyLooksLikeHtml', 'ZbSuccessMeansFailure', 'ZbMessageFromBody', 'EncodePathSegment',
     'ZbJsonEscape', 'ZBMockResponse', 'ZbWindowsRootCertificates', 'ZbTrustDerCertificates',
     'ZbDefaultValidateOptions', 'ZbBatchRequestBodyFromEmails', 'ZbFromDataFromFileSubmitRecord',
@@ -1813,12 +1978,28 @@ begin
 end;
 
 const
-  { Keys that need escaping in a URL, so their raw and URL-encoded forms
-    differ. }
-  LEAK_KEY = 'leak-K3y/x+y';
-  LEAK_KEY_ESCAPED = 'leak-K3y%2Fx%2By';
-  LEAK_WARMUP_KEY = 'leak-W4rm/x+y';
-  LEAK_WARMUP_KEY_ESCAPED = 'leak-W4rm%2Fx%2By';
+  { Keys that need escaping in a URL and in JSON, so their raw, URL-encoded
+    and JSON-escaped forms ('/' escaped or not) all differ. }
+  LEAK_KEY = 'leak-K3y/x+y"q%z';
+  LEAK_KEY_ESCAPED = 'leak-K3y%2Fx%2By%22q%25z';
+  LEAK_KEY_JSON = 'leak-K3y\/x+y\"q%z';
+  LEAK_KEY_JSON_PLAIN = 'leak-K3y/x+y\"q%z';
+  LEAK_WARMUP_KEY = 'leak-W4rm/x+y"q%z';
+  LEAK_WARMUP_KEY_ESCAPED = 'leak-W4rm%2Fx%2By%22q%25z';
+  LEAK_WARMUP_KEY_JSON = 'leak-W4rm\/x+y\"q%z';
+  LEAK_WARMUP_KEY_JSON_PLAIN = 'leak-W4rm/x+y\"q%z';
+
+function HasValidationKey(const Text: String): Boolean;
+begin
+  Result := (Pos(LEAK_KEY, Text) > 0) or (Pos(LEAK_KEY_ESCAPED, Text) > 0) or
+    (Pos(LEAK_KEY_JSON, Text) > 0) or (Pos(LEAK_KEY_JSON_PLAIN, Text) > 0);
+end;
+
+function HasWarmupKey(const Text: String): Boolean;
+begin
+  Result := (Pos(LEAK_WARMUP_KEY, Text) > 0) or (Pos(LEAK_WARMUP_KEY_ESCAPED, Text) > 0) or
+    (Pos(LEAK_WARMUP_KEY_JSON, Text) > 0) or (Pos(LEAK_WARMUP_KEY_JSON_PLAIN, Text) > 0);
+end;
 
 var
   { The HTTP status the mocked answer of the current sweep carries. }
@@ -1841,9 +2022,7 @@ begin
   { Every field a caller can read. A Warmup call sends the Warmup key, every
     other call the validation key; each body quotes both. }
   Text := E.Message + ' | ' + ZbException(E).Payload;
-  if (Pos(LEAK_KEY, Text) > 0) or (Pos(LEAK_KEY_ESCAPED, Text) > 0) or
-     ((Pos('ZbWarmup', Name) = 1) and
-      ((Pos(LEAK_WARMUP_KEY, Text) > 0) or (Pos(LEAK_WARMUP_KEY_ESCAPED, Text) > 0))) then
+  if HasValidationKey(Text) or ((Pos('ZbWarmup', Name) = 1) and HasWarmupKey(Text)) then
     SweepMissed := SweepMissed + Name + ' (the key leaked: ' + Text + '); '
   else if ZbException(E).StatusCode <> SweepStatus then
     SweepMissed := SweepMissed + Format('%s (status %d: %s); ', [Name, ZbException(E).StatusCode, E.Message]);
@@ -1864,23 +2043,29 @@ procedure TTestOffline.TestNoErrorCarriesTheKey;
 const
   { A dead-key error and "success": false on a 200, a proxy quoting the
     request URL, a JSON error, and a text one quoting the URL-encoded keys. }
-  STATUSES: array[0..4] of Integer = (200, 200, 400, 400, 400);
-  TYPES: array[0..4] of String = ('application/json', 'application/json', 'text/plain',
-    'application/json', 'text/plain');
+  STATUSES: array[0..5] of Integer = (200, 200, 400, 400, 400, 400);
+  TYPES: array[0..5] of String = ('application/json', 'application/json', 'text/plain',
+    'application/json', 'text/plain', 'text/plain');
 var
-  Bodies: array[0..4] of String;
+  Bodies: array[0..5] of String;
   I: Integer;
   Missed: String;
 begin
   { Standard section 3: the key is never in an error. Every call gets each
     body; neither the message nor the Payload may carry the key it sent, raw
     or URL-encoded. }
-  Bodies[0] := '{"error":"Invalid API key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
-  Bodies[1] := '{"success":false,"message":"Invalid API key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
+  { JSON bodies carry the keys JSON-escaped (a JSON string cannot hold a raw
+    '"'); the payload keeps them in that form. }
+  Bodies[0] := '{"error":"Invalid API key ' + LEAK_KEY_JSON + ' ' + LEAK_WARMUP_KEY_JSON + '"}';
+  Bodies[1] := '{"success":false,"message":"Invalid API key ' + LEAK_KEY_JSON_PLAIN + ' ' +
+    LEAK_WARMUP_KEY_JSON_PLAIN + '"}';
   Bodies[2] := 'Bad Request: GET https://api.zerobounce.net/v2/validate?api_key=' + LEAK_KEY_ESCAPED +
     '&key=' + LEAK_WARMUP_KEY_ESCAPED;
-  Bodies[3] := '{"error":"Bad key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
+  Bodies[3] := '{"error":"Bad key ' + LEAK_KEY_JSON + ' ' + LEAK_WARMUP_KEY_JSON + '"}';
   Bodies[4] := 'Rejected key ' + LEAK_KEY_ESCAPED + ' ' + LEAK_WARMUP_KEY_ESCAPED;
+  { A proxy quoting the JSON it was sent, and the raw keys. }
+  Bodies[5] := 'Bad Request: {"api_key":"' + LEAK_KEY_JSON + '","k":"' + LEAK_KEY_JSON_PLAIN + '","w":"' +
+    LEAK_WARMUP_KEY_JSON + '","x":"' + LEAK_WARMUP_KEY_JSON_PLAIN + '"} ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY;
   Missed := '';
   try
     for I := Low(Bodies) to High(Bodies) do
@@ -1897,9 +2082,9 @@ begin
     { A 200 JSON body with only a message or a detail quoting both keys, as
       the Warmup API answers an unknown key. The Warmup CSV downloads raise
       on it outside the request itself. }
-    Bodies[0] := '{"message":"Invalid API-Key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + ' ' +
+    Bodies[0] := '{"message":"Invalid API-Key ' + LEAK_KEY_JSON + ' ' + LEAK_WARMUP_KEY_JSON + ' ' +
       LEAK_WARMUP_KEY_ESCAPED + '"}';
-    Bodies[1] := '{"detail":"Invalid API-Key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + ' ' +
+    Bodies[1] := '{"detail":"Invalid API-Key ' + LEAK_KEY_JSON_PLAIN + ' ' + LEAK_WARMUP_KEY_JSON_PLAIN + ' ' +
       LEAK_WARMUP_KEY_ESCAPED + '"}';
     for I := 0 to 1 do
     begin
@@ -1916,13 +2101,13 @@ begin
     UseDefaultUrls;
     ZBInitialize(LEAK_KEY);
     ZBMockResponse(200, '{"email_batch":[],"errors":[{"email_address":"all","error":"Invalid API key ' +
-      LEAK_KEY + '"}]}', 'application/json');
+      LEAK_KEY_JSON + '"}]}', 'application/json');
     try
       ZbBatchValidateEmails(['a@example.com']);
       Missed := Missed + '[batch all] returned; ';
     except
       on E: Exception do
-        if (Pos(LEAK_KEY, E.Message) > 0) or (Pos('REDACTED', E.Message) = 0) then
+        if HasValidationKey(E.Message) or (Pos('REDACTED', E.Message) = 0) then
           Missed := Missed + '[batch all] ' + E.Message + '; ';
     end;
   finally

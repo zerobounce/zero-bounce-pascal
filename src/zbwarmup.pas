@@ -178,14 +178,8 @@ var
     Rest, Secret: String;
     P: Integer;
 begin
-    Result := Value;
-    if ZbWarmupApiKey <> '' then
-    begin
-        Result := StringReplace(Result, ZbWarmupApiKey, 'REDACTED', [rfReplaceAll]);
-        { A body may quote it url-encoded too. }
-        if EncodeParam(ZbWarmupApiKey) <> ZbWarmupApiKey then
-            Result := StringReplace(Result, EncodeParam(ZbWarmupApiKey), 'REDACTED', [rfReplaceAll]);
-    end;
+    { Raw, url-encoded and JSON-escaped: a body may quote any of them. }
+    Result := ZbMaskSecret(Value, ZbWarmupApiKey);
     Rest := WarmupCallSecrets;
     while Rest <> '' do
     begin
@@ -194,8 +188,7 @@ begin
             P := Length(Rest) + 1;
         Secret := Copy(Rest, 1, P - 1);
         Delete(Rest, 1, P);
-        if Secret <> '' then
-            Result := StringReplace(Result, Secret, 'REDACTED', [rfReplaceAll]);
+        Result := ZbMaskSecret(Result, Secret);
     end;
 end;
 

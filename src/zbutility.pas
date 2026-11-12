@@ -126,10 +126,14 @@ threadvar
       used, since a caller may set any of them directly. }
     function ZbBaseUrl(const Url: String): String;
     function EncodeParam(param: String): String;
-    { The text with the API key, raw and url-encoded, and every secret a
-      registered redactor masks, replaced by REDACTED. Every ZbException runs
-      its Message and Payload through it. }
+    { The text with the API key, raw, url-encoded and JSON-escaped, and every
+      secret a registered redactor masks, replaced by REDACTED. Every
+      ZbException runs its Message and Payload through it. }
     function RedactSecrets(const S: string): string;
+    { S with every form of Secret an answer can quote replaced by REDACTED:
+      JSON-escaped ('/' escaped or not, as a request body echoed back),
+      url-encoded (as a request URL or form) and raw. }
+    function ZbMaskSecret(const S, Secret: string): string;
 type
     { Masks a secret ZbUtility does not hold itself, such as the Warmup key. }
     TZbSecretRedactor = function(const S: string): string;
@@ -150,6 +154,8 @@ type
       URL is paired with the single global bulk host. }
     function ZbCheckedUrl(const Url: String): String;
     function ZbBodyLooksLikeHtml(const Body: String): Boolean;
+    { Whether a Content-Type names an HTML page (text/html), in any case. }
+    function ZbContentTypeIsHtml(const ContentType: String): Boolean;
     { Whether a JSON body says the call failed although the HTTP status was a
       success. The API sends "success" as a JSON false, "false" or "False". }
     function ZbSuccessMeansFailure(const Body: String): Boolean;
@@ -181,6 +187,10 @@ type
     procedure ZBMockResponse(StatusCode: integer; Payload, ContentType: String); overload;
     procedure ZBMockResponse(StatusCode: integer; Payload: String); overload;
     {$IFDEF FPC}
+    { The connect and read timeouts, in ms, that the last request on this
+      thread actually ran with, read back from its TFPHTTPClient. For tests:
+      it proves the defaults reach the client every transport builds. }
+    procedure ZbLastRequestTimeouts(out ConnectMs, ReadMs: Integer);
     { The DER certificates of the Windows "ROOT" system store; empty when it
       cannot be read, and on every other platform. With no CA bundle found,
       FPC builds on Windows verify the server against these. }
@@ -206,10 +216,23 @@ type
         procedure VerifyCertificate(Sender: TObject; var Allow: Boolean);
     end;
 
+    { Socket handlers that note when the server closed the connection. A
+      chunked body that ends that way, before its last (empty) chunk, was cut
+      short: fphttpclient hands back what arrived without complaint. }
+    TZbPlainSocketHandler = class(TSocketHandler)
+    public
+        function Recv(Const Buffer; Count: Integer): Integer; override;
+    end;
+
+    TZbOpenSSLSocketHandler = class(TOpenSSLSocketHandler)
+    public
+        function Recv(Const Buffer; Count: Integer): Integer; override;
+    end;
+
     { An OpenSSL handler whose trust anchors are DER certificates handed to
       it - on Windows, the system "ROOT" store - instead of a PEM file. Peer
       and host name verification are exactly those of the file-based path. }
-    TZbSystemStoreSocketHandler = class(TOpenSSLSocketHandler)
+    TZbSystemStoreSocketHandler = class(TZbOpenSSLSocketHandler)
     public
         DerCerts: TZbDerCertificates;
     protected
@@ -246,6 +269,32 @@ const
 
 var
     ZbTlsVerifier: TZbTlsVerifier = nil;
+
+threadvar
+    { Whether the server closed the connection of this thread's request. }
+    ZbConnectionClosed: Boolean;
+    ZbLastConnectTimeoutMs: Integer;
+    ZbLastReadTimeoutMs: Integer;
+
+function TZbPlainSocketHandler.Recv(Const Buffer; Count: Integer): Integer;
+begin
+    Result := inherited Recv(Buffer, Count);
+    if Result <= 0 then
+        ZbConnectionClosed := True;
+end;
+
+function TZbOpenSSLSocketHandler.Recv(Const Buffer; Count: Integer): Integer;
+begin
+    Result := inherited Recv(Buffer, Count);
+    if Result <= 0 then
+        ZbConnectionClosed := True;
+end;
+
+procedure ZbLastRequestTimeouts(out ConnectMs, ReadMs: Integer);
+begin
+    ConnectMs := ZbLastConnectTimeoutMs;
+    ReadMs := ZbLastReadTimeoutMs;
+end;
 
 function ZbNoCABundleMessage: string;
 begin
@@ -418,11 +467,14 @@ var
 begin
     AHandler := nil;
     if not UseSSL then
+    begin
+        AHandler := TZbPlainSocketHandler.Create;
         Exit;
+    end;
     CAFile := ZbFindCACertFile;
     if CAFile <> '' then
     begin
-        Handler := TSSLSocketHandler.GetDefaultHandler;
+        Handler := TZbOpenSSLSocketHandler.Create;
         Handler.CertificateData.CertCA.FileName := CAFile;
     end
     else
@@ -482,6 +534,7 @@ begin
     if ZbTlsVerifier = nil then
         ZbTlsVerifier := TZbTlsVerifier.Create;
     Client.OnGetSocketHandler := ZbTlsVerifier.GetSocketHandler;
+    ZbConnectionClosed := False;
 end;
 {$ENDIF}
 
@@ -502,6 +555,11 @@ end;
         Lower := ZbLowerPrefix(Body);
         Result := (Pos('<!doctype html', Lower) > 0) or (Pos('<html', Lower) > 0) or
             (Pos('<head', Lower) > 0) or (Pos('<body', Lower) > 0);
+    end;
+
+    function ZbContentTypeIsHtml(const ContentType: String): Boolean;
+    begin
+        Result := Pos('text/html', LowerCase(ContentType)) > 0;
     end;
 
     function ZbHtmlTitle(const Body: String): String;
@@ -736,18 +794,58 @@ end;
         ZbSecretRedactors[High(ZbSecretRedactors)] := Redactor;
     end;
 
+    function ZbMaskSecret(const S, Secret: string): string;
+    const
+        HEX = '0123456789ABCDEF';
+    var
+        Forms: array[0..4] of String;
+        I, F: Integer;
+        C: Char;
+    begin
+        Result := S;
+        if Secret = '' then
+            Exit;
+        for F := 0 to 4 do
+            Forms[F] := '';
+        for I := 1 to Length(Secret) do
+        begin
+            C := Secret[I];
+            { 0 and 1: JSON-escaped, '/' escaped and not. }
+            if (C = '"') or (C = '\') then
+            begin
+                Forms[0] := Forms[0] + '\' + C;
+                Forms[1] := Forms[1] + '\' + C;
+            end
+            else if C = '/' then
+            begin
+                Forms[0] := Forms[0] + '\/';
+                Forms[1] := Forms[1] + C;
+            end
+            else
+            begin
+                Forms[0] := Forms[0] + C;
+                Forms[1] := Forms[1] + C;
+            end;
+            { 2: percent-encoded, everything but the unreserved characters. }
+            if C in ['A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'] then
+                Forms[2] := Forms[2] + C
+            else
+                Forms[2] := Forms[2] + '%' + HEX[(Ord(C) shr 4) + 1] + HEX[(Ord(C) and 15) + 1];
+        end;
+        { 3: as EncodeParam sends it on a query string; 4: raw. The escaped
+          forms go first, as they can contain the raw one. }
+        Forms[3] := EncodeParam(Secret);
+        Forms[4] := Secret;
+        for F := 0 to 4 do
+            if Forms[F] <> '' then
+                Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
+    end;
+
     function RedactSecrets(const S: string): string;
     var
         I: Integer;
     begin
-        Result := S;
-        if ZbApiKey <> '' then
-        begin
-            Result := StringReplace(Result, ZbApiKey, 'REDACTED', [rfReplaceAll]);
-            { The key also travels url-encoded, on the query string. }
-            if EncodeParam(ZbApiKey) <> ZbApiKey then
-                Result := StringReplace(Result, EncodeParam(ZbApiKey), 'REDACTED', [rfReplaceAll]);
-        end;
+        Result := ZbMaskSecret(S, ZbApiKey);
         for I := 0 to High(ZbSecretRedactors) do
             Result := ZbSecretRedactors[I](Result);
     end;
@@ -912,6 +1010,16 @@ end;
     var
         Expected: Int64;
     begin
+        ZbLastConnectTimeoutMs := Client.ConnectTimeout;
+        ZbLastReadTimeoutMs := Client.IOTimeout;
+        { A chunked body ends with an empty chunk, after which fphttpclient
+          reads no more. Reaching the end of the connection first means it was
+          cut short mid-stream. }
+        if (CompareText(Trim(Client.GetHeader(Client.ResponseHeaders, 'Transfer-Encoding')), 'chunked') = 0)
+            and ZbConnectionClosed then
+            raise ZbException.Create(Format(
+                'The response from ZeroBounce was cut short: the connection closed before the last chunk (%d bytes received)',
+                [Received]));
         if Client.GetHeader(Client.ResponseHeaders, 'Content-Encoding') <> '' then
             Exit;
         Expected := StrToInt64Def(Trim(Client.GetHeader(Client.ResponseHeaders, 'Content-Length')), -1);
