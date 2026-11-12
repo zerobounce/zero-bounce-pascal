@@ -829,6 +829,8 @@ end;
 function P3InboxPlacementRequest(const Method, Path, ExtraQuery, Body: String): String;
 var
     UrlToAccess, Query: String;
+    Response: TZbRequestResponse;
+    Error: ZbException;
 begin
     UrlToAccess := Concat(ZbBaseUrl(ZbInboxPlacementURL), Path);
     { LIVE: the Inbox Placement Tester authenticates with a Bearer header.
@@ -837,10 +839,19 @@ begin
     Query := ExtraQuery;
     if (Query <> '') and (Query[1] = '&') then
         Query := Concat('?', Copy(Query, 2, Length(Query) - 1));
-    Result := ZBSendRequestWithHeader(
+    Response := ZBSendRequestWithHeader(
         Method, Concat(UrlToAccess, Query), Body, JSON_CONTENT_TYPE,
         'Authorization', Concat('Bearer ', ZbApiKey)
-    ).Payload;
+    );
+    { DELETE answers with an empty body, an empty result. From any other call
+      an empty 2xx is an error with its status. }
+    if (Trim(Response.Payload) = '') and (Method <> 'DELETE') then
+    begin
+        Error := ZbException.FromResponse('', Response);
+        Error.MarkHttpError;
+        raise Error;
+    end;
+    Result := Response.Payload;
 end;
 
 function P3InboxPlacementTestSegment(const TestId: String): String;

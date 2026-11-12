@@ -165,7 +165,12 @@ var
 begin
     Result := Value;
     if ZbWarmupApiKey <> '' then
+    begin
         Result := StringReplace(Result, ZbWarmupApiKey, 'REDACTED', [rfReplaceAll]);
+        { A body may quote it url-encoded too. }
+        if EncodeParam(ZbWarmupApiKey) <> ZbWarmupApiKey then
+            Result := StringReplace(Result, EncodeParam(ZbWarmupApiKey), 'REDACTED', [rfReplaceAll]);
+    end;
     for I := Low(Secrets) to High(Secrets) do
         if Secrets[I] <> '' then
             Result := StringReplace(Result, Secrets[I], 'REDACTED', [rfReplaceAll]);
