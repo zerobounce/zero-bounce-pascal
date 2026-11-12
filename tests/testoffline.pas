@@ -33,6 +33,7 @@ type
     procedure TestEveryPublicRequestFunctionIsInTheSweep;
     procedure TestNoErrorCarriesTheKey;
     procedure TestAnEmptyBodyIsASuccessOnlyForAnInboxPlacementDelete;
+    procedure TestTheContentTypeAloneMakesA200AnError;
   end;
 
 implementation
@@ -2169,6 +2170,46 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('calls that did not treat an empty body as expected', '', Missed);
+end;
+
+procedure ExpectDownloadsToRaise(const Name: String; E: Exception);
+begin
+  { Only a download takes a file-looking body labelled as JSON for the API's
+    error; the raw-JSON calls hand their body over as it is. }
+  if (Pos('ResultFetch', Name) > 0) or (Pos('ZbWarmupDownload', Name) = 1) then
+    ExpectKeyMasked(Name, E);
+end;
+
+procedure TTestOffline.TestTheContentTypeAloneMakesA200AnError;
+var
+  Missed: String;
+begin
+  { The content-type half of each guard is what catches these bodies. A 200
+    labelled text/html whose body parses as JSON is a proxy's or a portal's
+    page: an error with the status on every call. A file-looking body
+    labelled application/json is the API's error in place of a file: an
+    error with the status on every download (bulk getfile, the Warmup CSVs). }
+  Missed := '';
+  try
+    UseDefaultUrls;
+    ZBInitialize('content-type-key');
+    ZbWarmupInitialize('content-type-warmup-key');
+    SweepStatus := 200;
+    ZBMockResponse(200, '{"a":1}', 'text/html; charset=UTF-8');
+    SweepEveryPublicCall(@ExpectKeyMasked);
+    if SweepMissed <> '' then
+      Missed := Missed + '[text/html] ' + SweepMissed;
+    UseDefaultUrls;
+    ZBInitialize('content-type-key');
+    ZbWarmupInitialize('content-type-warmup-key');
+    ZBMockResponse(200, 'email'#10'labelled-json@example.com'#10, 'application/json');
+    SweepEveryPublicCall(@ExpectDownloadsToRaise);
+    if SweepMissed <> '' then
+      Missed := Missed + '[application/json] ' + SweepMissed;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that took the answer as a result, or lost the status', '', Missed);
 end;
 
 initialization

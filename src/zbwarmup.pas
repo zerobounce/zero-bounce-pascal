@@ -343,13 +343,51 @@ begin
     Result := Trim(WarmupSend(Method, Path, Query, Body).Payload);
 end;
 
+var
+    WarmupTempCounter: LongInt = 0;
+
+{ Writes Content to a temporary file beside DownloadPath and moves it over
+  DownloadPath only when the whole of it was written, so a write that fails
+  (a full disk, a file size limit) leaves no partial file and keeps a file
+  already at the path. The temporary name is unique among concurrent
+  downloads to the same path. }
+procedure WriteFileReplacing(const DownloadPath, Content: String);
+var
+    Handle: TFileStream;
+    TempPath: String;
+begin
+    TempPath := Format('%s.%d-%d.part',
+        [DownloadPath, GetProcessID, InterLockedIncrement(WarmupTempCounter)]);
+    try
+        Handle := TFileStream.Create(TempPath, fmCreate);
+        try
+            if Length(Content) > 0 then
+                Handle.WriteBuffer(Content[1], Length(Content));
+        finally
+            Handle.Free;
+        end;
+    except
+        DeleteFile(TempPath);
+        raise;
+    end;
+{$IFDEF WINDOWS}
+    { RenameFile does not replace an existing file on Windows. }
+    if FileExists(DownloadPath) then
+        DeleteFile(DownloadPath);
+{$ENDIF}
+    if not RenameFile(TempPath, DownloadPath) then
+    begin
+        DeleteFile(TempPath);
+        raise EWriteError.CreateFmt('Could not write %s', [DownloadPath]);
+    end;
+end;
+
 { A CSV download. The API labels an error as JSON or HTML, so neither is a
   file: an empty body, a JSON or HTML content type, or a body that is a JSON
   object or array (an HTML body already raised in WarmupSend) is an error. }
 function WarmupCsv(const Path, Query, DownloadPath: String): String;
 var
     Response: TZbRequestResponse;
-    Handle: TFileStream;
     Directory, Trimmed, ContentType: String;
 begin
     Response := WarmupSend('GET', Path, Query, '');
@@ -364,13 +402,7 @@ begin
     Directory := ExtractFilePath(DownloadPath);
     if (Directory <> '') and not DirectoryExists(Directory) then
         ForceDirectories(Directory);
-    Handle := TFileStream.Create(DownloadPath, fmCreate);
-    try
-        if Length(Result) > 0 then
-            Handle.WriteBuffer(Result[1], Length(Result));
-    finally
-        Handle.Free;
-    end;
+    WriteFileReplacing(DownloadPath, Result);
 end;
 
 { -- sending accounts ---------------------------------------------------- }

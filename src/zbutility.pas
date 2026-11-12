@@ -132,7 +132,8 @@ threadvar
     function RedactSecrets(const S: string): string;
     { S with every form of Secret an answer can quote replaced by REDACTED:
       JSON-escaped ('/' escaped or not, as a request body echoed back),
-      url-encoded (as a request URL or form) and raw. }
+      url-encoded (as a request URL or form, a space as %20 or '+'), the
+      url encoding of each JSON-escaped form, and raw. }
     function ZbMaskSecret(const S, Secret: string): string;
 type
     { Masks a secret ZbUtility does not hold itself, such as the Warmup key. }
@@ -666,8 +667,10 @@ end;
             Error.MarkHttpError;
             raise Error;
         end;
-        if ZbBodyLooksLikeHtml(Response.Payload) or (Response.StatusCode > 299) or
-           ZbSuccessMeansFailure(Response.Payload) then
+        { A text/html page is a proxy's or a portal's, not the API's answer,
+          even when its body happens to parse as JSON. }
+        if ZbBodyLooksLikeHtml(Response.Payload) or ZbContentTypeIsHtml(Response.ContentType) or
+           (Response.StatusCode > 299) or ZbSuccessMeansFailure(Response.Payload) then
         begin
             Error := ZbException.FromResponse('', Response);
             Error.MarkHttpError;
@@ -798,45 +801,69 @@ end;
     const
         HEX = '0123456789ABCDEF';
     var
-        Forms: array[0..4] of String;
+        Forms: array[0..9] of String;
         I, F: Integer;
         C: Char;
+
+        { Everything but the unreserved characters percent-encoded. }
+        function PercentEncoded(const Value: String): String;
+        var
+            J: Integer;
+        begin
+            Result := '';
+            for J := 1 to Length(Value) do
+                if Value[J] in ['A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'] then
+                    Result := Result + Value[J]
+                else
+                    Result := Result + '%' + HEX[(Ord(Value[J]) shr 4) + 1] + HEX[(Ord(Value[J]) and 15) + 1];
+        end;
+
+        { As a form body has it: every %20 written as '+'. }
+        function PlusForSpaces(const Value: String): String;
+        begin
+            Result := StringReplace(Value, '%20', '+', [rfReplaceAll]);
+        end;
+
     begin
         Result := S;
         if Secret = '' then
             Exit;
-        for F := 0 to 4 do
+        for F := 0 to High(Forms) do
             Forms[F] := '';
         for I := 1 to Length(Secret) do
         begin
             C := Secret[I];
-            { 0 and 1: JSON-escaped, '/' escaped and not. }
+            { 4 and 5: JSON-escaped, '/' escaped (fpjson) and not. }
             if (C = '"') or (C = '\') then
             begin
-                Forms[0] := Forms[0] + '\' + C;
-                Forms[1] := Forms[1] + '\' + C;
+                Forms[4] := Forms[4] + '\' + C;
+                Forms[5] := Forms[5] + '\' + C;
             end
             else if C = '/' then
             begin
-                Forms[0] := Forms[0] + '\/';
-                Forms[1] := Forms[1] + C;
+                Forms[4] := Forms[4] + '\/';
+                Forms[5] := Forms[5] + C;
             end
             else
             begin
-                Forms[0] := Forms[0] + C;
-                Forms[1] := Forms[1] + C;
+                Forms[4] := Forms[4] + C;
+                Forms[5] := Forms[5] + C;
             end;
-            { 2: percent-encoded, everything but the unreserved characters. }
-            if C in ['A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'] then
-                Forms[2] := Forms[2] + C
-            else
-                Forms[2] := Forms[2] + '%' + HEX[(Ord(C) shr 4) + 1] + HEX[(Ord(C) and 15) + 1];
         end;
-        { 3: as EncodeParam sends it on a query string; 4: raw. The escaped
+        { 0 to 3: each JSON-escaped form percent-encoded, a space as %20 and as
+          '+', as a server putting an echoed JSON body into a URL or form has
+          it; 6 and 7: the secret percent-encoded, %20 and '+'; 8: as
+          EncodeParam sends it on a query string; 9: raw. The longer, escaped
           forms go first, as they can contain the raw one. }
-        Forms[3] := EncodeParam(Secret);
-        Forms[4] := Secret;
-        for F := 0 to 4 do
+        Forms[0] := PercentEncoded(Forms[4]);
+        Forms[1] := PlusForSpaces(Forms[0]);
+        Forms[2] := PercentEncoded(Forms[5]);
+        Forms[3] := PlusForSpaces(Forms[2]);
+        Forms[6] := PercentEncoded(Secret);
+        Forms[7] := PlusForSpaces(Forms[6]);
+        Forms[8] := EncodeParam(Secret);
+        Forms[9] := Secret;
+        for F := 0 to High(Forms) do
             if Forms[F] <> '' then
                 Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
     end;

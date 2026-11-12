@@ -12,6 +12,7 @@ interface
 
 uses
     Classes, SysUtils, fpcunit, testregistry,
+    {$IFDEF UNIX}BaseUnix,{$ENDIF}
     BaseTest, ZbUtility, ZbWarmup;
 
 type
@@ -48,6 +49,10 @@ type
         procedure TestBlankArgumentsAreRejectedBeforeSending;
         procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
         procedure TestSmtpCredentialsAreMaskedInEveryForm;
+        procedure TestTheSmtpPasswordIsMaskedInEveryEncodedForm;
+{$IFDEF UNIX}
+        procedure TestAFailedWriteKeepsTheFileAlreadyAtThePath;
+{$ENDIF}
     end;
 
 implementation
@@ -931,6 +936,157 @@ begin
         AssertTrue('an HTTP 500 should raise', Raised);
     end;
 end;
+
+procedure TTestWarmup.TestTheSmtpPasswordIsMaskedInEveryEncodedForm;
+const
+    { A password with a space and every character JSON or URL encoding
+      changes, in every form a server echoing the request could quote it.
+      Written out by hand, so each form ZbMaskSecret knows is needed:
+      dropping any one leaves its bracket unmasked. }
+    PASSWORD = 'a b"c/d+e%f&g=h<i>j''k\l';
+    FORMS: array[0..9] of String = (
+        'a b"c/d+e%f&g=h<i>j''k\l',
+        { JSON-escaped, '/' escaped (fpjson) and not }
+        'a b\"c\/d+e%f&g=h<i>j''k\\l',
+        'a b\"c/d+e%f&g=h<i>j''k\\l',
+        { URL-encoded, a space as %20 and as '+' }
+        'a%20b%22c%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5Cl',
+        'a+b%22c%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5Cl',
+        { URL-encoded after JSON escaping, each JSON form, %20 and '+' }
+        'a%20b%5C%22c%5C%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5C%5Cl',
+        'a+b%5C%22c%5C%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5C%5Cl',
+        'a%20b%5C%22c%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5C%5Cl',
+        'a+b%5C%22c%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej%27k%5C%5Cl',
+        { As EncodeParam (HTTPEncode) puts it on a query string: a space as
+          '+', and ' left as it is }
+        'a+b%22c%2Fd%2Be%25f%26g%3Dh%3Ci%3Ej''k%5Cl'
+    );
+var
+    Body, Expected: String;
+    I: Integer;
+    Raised: Boolean;
+begin
+    Body := 'SMTP login failed:';
+    Expected := 'SMTP login failed:';
+    for I := Low(FORMS) to High(FORMS) do
+    begin
+        Body := Body + ' [' + FORMS[I] + ']';
+        Expected := Expected + ' [REDACTED]';
+    end;
+    ZBMockResponse(500, Body, 'text/plain');
+    Raised := False;
+    try
+        ZbWarmupTestSmtpConfiguration('from@example.com', 'smtp-user', PASSWORD, 'smtp.example.com', 587);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertEquals(500, e.StatusCode);
+            AssertTrue(e.Message + ' | ' + e.Payload, Pos(Expected, e.Message + ' | ' + e.Payload) > 0);
+            AssertTrue(e.Payload, Pos(Expected, e.Payload) > 0);
+        end;
+    end;
+    AssertTrue('an HTTP 500 should raise', Raised);
+end;
+
+{$IFDEF UNIX}
+procedure TTestWarmup.TestAFailedWriteKeepsTheFileAlreadyAtThePath;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Path, Kept: String;
+    Saved, Tight: TRLimit;
+    Previous: SignalHandler;
+    Call, Parts: Integer;
+    Raised: Boolean;
+    Found: TSearchRec;
+
+    procedure WriteText(const Name, Text: String);
+    var
+        Stream: TFileStream;
+    begin
+        Stream := TFileStream.Create(Name, fmCreate);
+        try
+            Stream.WriteBuffer(Text[1], Length(Text));
+        finally
+            Stream.Free;
+        end;
+    end;
+
+    function ReadText(const Name: String): String;
+    var
+        Lines: TStringList;
+    begin
+        if not FileExists(Name) then
+            Exit('<missing>');
+        Lines := TStringList.Create;
+        try
+            Lines.LoadFromFile(Name);
+            Result := Lines.Text;
+        finally
+            Lines.Free;
+        end;
+    end;
+
+    function CountEntries: Integer;
+    begin
+        Result := 0;
+        if FindFirst(Dir + '*', faAnyFile, Found) = 0 then
+        begin
+            repeat
+                if (Found.Name <> '.') and (Found.Name <> '..') then
+                    Inc(Result);
+            until FindNext(Found) <> 0;
+            FindClose(Found);
+        end;
+    end;
+
+begin
+    { D4: the CSV downloads opened DownloadPath with fmCreate, so a write that
+      failed (a file size limit, a full disk) destroyed a file already there
+      and left a partial one. They now write beside it and move the file into
+      place only when it is complete. }
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-keep-existing-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Path := Dir + 'seeds.csv';
+    AssertEquals(0, FpGetRLimit(RLIMIT_FSIZE, @Saved));
+    Tight := Saved;
+    Tight.rlim_cur := 8;
+    for Call := 0 to 1 do
+    begin
+        WriteText(Path, 'OLD');
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        Raised := False;
+        Previous := FpSignal(SIGXFSZ, SignalHandler(SIG_IGN));
+        AssertEquals(0, FpSetRLimit(RLIMIT_FSIZE, @Tight));
+        try
+            try
+                if Call = 0 then
+                    ZbWarmupDownloadSeeds(Path)
+                else
+                    ZbWarmupDownloadStatistics('sender@example.com', Path);
+            except
+                on e: Exception do
+                    Raised := True;
+            end;
+        finally
+            FpSetRLimit(RLIMIT_FSIZE, @Saved);
+            FpSignal(SIGXFSZ, Previous);
+        end;
+        Kept := ReadText(Path);
+        Parts := CountEntries;
+        AssertTrue(Format('call %d: a failed write should raise', [Call]), Raised);
+        AssertEquals(Format('call %d destroyed the file already there', [Call]), 'OLD', Trim(Kept));
+        AssertEquals(Format('call %d left a partial file beside it', [Call]), 1, Parts);
+    end;
+    { Without the limit the download replaces it. }
+    ZBMockResponse(200, CSV, CSV_TYPE);
+    ZbWarmupDownloadSeeds(Path);
+    AssertEquals(CSV, ReadText(Path));
+    AssertEquals(1, CountEntries);
+    DeleteFile(Path);
+    RemoveDir(Dir);
+end;
+{$ENDIF}
 
 initialization
     RegisterTest(TTestWarmup);
