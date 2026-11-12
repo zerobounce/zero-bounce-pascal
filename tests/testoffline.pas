@@ -34,6 +34,7 @@ type
     procedure TestNoErrorCarriesTheKey;
     procedure TestAnEmptyBodyIsASuccessOnlyForAnInboxPlacementDelete;
     procedure TestTheContentTypeAloneMakesA200AnError;
+    procedure TestANonJson200IsAnErrorOnEveryJsonCall;
   end;
 
 implementation
@@ -2210,6 +2211,59 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('calls that took the answer as a result, or lost the status', '', Missed);
+end;
+
+var
+  { The content type of the current non-JSON sweep. }
+  SweepContentType: String;
+
+procedure ExpectNonJsonRejected(const Name: String; E: Exception);
+begin
+  { The low-level ZB* request functions hand back the response itself. A
+    download takes a body that is not JSON as the file, unless it is
+    labelled application/json. Every other call hands over JSON, so a body
+    that is not JSON is an error with the status. }
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  if ((Pos('ResultFetch', Name) > 0) or (Pos('ZbWarmupDownload', Name) = 1)) and
+     (SweepContentType <> 'application/json') then
+    Exit;
+  ExpectKeyMasked(Name, E);
+end;
+
+procedure TTestOffline.TestANonJson200IsAnErrorOnEveryJsonCall;
+const
+  BODIES: array[0..4] of String = ('not json', 'hello', 'email,status'#10'a@example.com,valid'#10,
+    '{"a":1} <- proxy note', '{"a":');
+  TYPES: array[0..2] of String = ('application/json', 'text/plain', 'text/csv');
+var
+  B, T: Integer;
+  Missed: String;
+begin
+  { E7: a 2xx whose body is not JSON (a proxy's text, a CSV labelled
+    application/json, a JSON value with text after it) did not come from the
+    API: an error with status 200 on every JSON call, the raw-JSON calls
+    (filters, list evaluator, ZbListS3Files, Inbox Placement) and the Warmup
+    JSON calls included. }
+  Missed := '';
+  try
+    for T := Low(TYPES) to High(TYPES) do
+      for B := Low(BODIES) to High(BODIES) do
+      begin
+        UseDefaultUrls;
+        ZBInitialize('non-json-key');
+        ZbWarmupInitialize('non-json-warmup-key');
+        SweepStatus := 200;
+        SweepContentType := TYPES[T];
+        ZBMockResponse(200, BODIES[B], TYPES[T]);
+        SweepEveryPublicCall(@ExpectNonJsonRejected);
+        if SweepMissed <> '' then
+          Missed := Missed + Format('[%s %s] %s', [TYPES[T], BODIES[B], SweepMissed]);
+      end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that took a non-JSON 200 as a result, or lost the status', '', Missed);
 end;
 
 initialization

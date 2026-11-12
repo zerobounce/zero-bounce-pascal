@@ -200,6 +200,11 @@ function ZbMessageOnlyBody(const Body: String): Boolean;
   validate, which answers a repeated greylist_processing request with
   {"Message": "Greylist validation still in progress..."}, a result. *)
 procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
+{ For a call that hands its raw JSON body to the caller: raises a ZbException
+  with the response's status unless the body is one JSON object or array
+  (whitespace around it allowed). A proxy's text, a CSV labelled
+  application/json or an empty body on a 2xx is not the API's answer. }
+procedure ZbRequireJsonBody(const Response: TZbRequestResponse);
 function TZbDomainFormatsFromJson(JsonObj: TZbJson): TZbDomainFormats;
 function TZbFindEmailResponseFromJson(JsonContent: string): TZbFindEmailResponse;
 function TZbDomainSearchResponseFromJson(JsonContent: string): TZbDomainSearchResponse;
@@ -320,6 +325,86 @@ implementation
         end;
     end;
 
+    (* Raises when Text holds anything but whitespace after its first JSON
+      object or array: GetJSON stops after that value and ignores the rest,
+      so {"a":1} followed by a proxy's text would pass as JSON. *)
+    procedure ZbRequireNothingAfterJson(const Text: String);
+    var
+        I, Depth: Integer;
+        InString, Escaped: Boolean;
+        C: Char;
+    begin
+        I := 1;
+        while (I <= Length(Text)) and ((Text[I] = ' ') or (Text[I] = #9) or (Text[I] = #10) or (Text[I] = #13)) do
+            Inc(I);
+        if (I > Length(Text)) or not ((Text[I] = '{') or (Text[I] = '[')) then
+            Exit;
+        Depth := 0;
+        InString := False;
+        Escaped := False;
+        while I <= Length(Text) do
+        begin
+            C := Text[I];
+            if InString then
+            begin
+                if Escaped then
+                    Escaped := False
+                else if C = '\' then
+                    Escaped := True
+                else if C = '"' then
+                    InString := False;
+            end
+            else if C = '"' then
+                InString := True
+            else if (C = '{') or (C = '[') then
+                Inc(Depth)
+            else if (C = '}') or (C = ']') then
+            begin
+                Dec(Depth);
+                if Depth = 0 then
+                    Break;
+            end;
+            Inc(I);
+        end;
+        Inc(I);
+        while (I <= Length(Text)) and ((Text[I] = ' ') or (Text[I] = #9) or (Text[I] = #10) or (Text[I] = #13)) do
+            Inc(I);
+        if I <= Length(Text) then
+            raise Exception.Create('ZeroBounce returned a response that is not valid JSON.');
+    end;
+
+    procedure ZbRequireJsonBody(const Response: TZbRequestResponse);
+    var
+        Text: String;
+        Data: TZbJSONValue;
+        Valid: Boolean;
+        Error: ZbException;
+    begin
+        Text := Trim(Response.Payload);
+        Valid := False;
+        if (Text <> '') and ((Text[1] = '{') or (Text[1] = '[')) then
+        begin
+            try
+                ZbRequireNothingAfterJson(Text);
+                {$IFDEF FPC}
+                Data := GetJSON(Text);
+                {$ELSE}
+                Data := TJSONObject.ParseJSONValue(Text, True);
+                {$ENDIF}
+                Valid := Data <> nil;
+                Data.Free;
+            except
+                Valid := False;
+            end;
+        end;
+        if not Valid then
+        begin
+            Error := ZbException.FromResponse('', Response);
+            Error.MarkJsonError;
+            raise Error;
+        end;
+    end;
+
     procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
     const
         MESSAGE_KEYS: array[0..5] of String = ('Message', 'message', 'error', 'error_message', 'Error', 'detail');
@@ -368,6 +453,7 @@ implementation
 
     class function TZbJson.Parse(JsonContent: String): TJSONObject;
     begin
+        ZbRequireNothingAfterJson(JsonContent);
         {$IFDEF FPC}
         Result := TJSONObject(GetJSON(JsonContent));
         {$ELSE}

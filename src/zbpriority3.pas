@@ -321,6 +321,7 @@ const
         response: TZbRequestResponse;
     begin
         response := ZBGetRequest(Url);
+        ZbRequireJsonBody(response);
         Result := response.Payload;
     end;
 
@@ -338,6 +339,7 @@ const
         end;
         Form.Free;
         response := ZBFormPostRequest(Url, Body);
+        ZbRequireJsonBody(response);
         Result := response.Payload;
     end;
 
@@ -619,6 +621,7 @@ begin
     if Search <> '' then
         UrlToAccess := Concat(UrlToAccess, '&search=', EncodeParam(Search));
     response := ZBGetRequest(UrlToAccess);
+    ZbRequireJsonBody(response);
     Result := response.Payload;
 end;
 
@@ -858,6 +861,9 @@ begin
         Error.MarkHttpError;
         raise Error;
     end;
+    { Anything else must be JSON: a proxy's text on a 2xx is not a result. }
+    if Trim(Response.Payload) <> '' then
+        ZbRequireJsonBody(Response);
     Result := Response.Payload;
 end;
 

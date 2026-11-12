@@ -801,9 +801,9 @@ end;
     const
         HEX = '0123456789ABCDEF';
     var
-        Forms: array[0..9] of String;
-        I, F: Integer;
-        C: Char;
+        Forms: array[0..11] of String;
+        JsonSlash, JsonPlain: String;
+        F: Integer;
 
         { Everything but the unreserved characters percent-encoded. }
         function PercentEncoded(const Value: String): String;
@@ -824,45 +824,45 @@ end;
             Result := StringReplace(Value, '%20', '+', [rfReplaceAll]);
         end;
 
+        { As inside a JSON string: '"' and '\' escaped, and '/' too when
+          EscapeSlash is set (fpjson does, other encoders do not). }
+        function JsonEscaped(const Value: String; EscapeSlash: Boolean): String;
+        var
+            J: Integer;
+        begin
+            Result := '';
+            for J := 1 to Length(Value) do
+                if (Value[J] = '"') or (Value[J] = '\') or (EscapeSlash and (Value[J] = '/')) then
+                    Result := Result + '\' + Value[J]
+                else
+                    Result := Result + Value[J];
+        end;
+
     begin
         Result := S;
         if Secret = '' then
             Exit;
-        for F := 0 to High(Forms) do
-            Forms[F] := '';
-        for I := 1 to Length(Secret) do
-        begin
-            C := Secret[I];
-            { 4 and 5: JSON-escaped, '/' escaped (fpjson) and not. }
-            if (C = '"') or (C = '\') then
-            begin
-                Forms[4] := Forms[4] + '\' + C;
-                Forms[5] := Forms[5] + '\' + C;
-            end
-            else if C = '/' then
-            begin
-                Forms[4] := Forms[4] + '\/';
-                Forms[5] := Forms[5] + C;
-            end
-            else
-            begin
-                Forms[4] := Forms[4] + C;
-                Forms[5] := Forms[5] + C;
-            end;
-        end;
-        { 0 to 3: each JSON-escaped form percent-encoded, a space as %20 and as
-          '+', as a server putting an echoed JSON body into a URL or form has
-          it; 6 and 7: the secret percent-encoded, %20 and '+'; 8: as
-          EncodeParam sends it on a query string; 9: raw. The longer, escaped
-          forms go first, as they can contain the raw one. }
-        Forms[0] := PercentEncoded(Forms[4]);
-        Forms[1] := PlusForSpaces(Forms[0]);
-        Forms[2] := PercentEncoded(Forms[5]);
+        JsonSlash := JsonEscaped(Secret, True);
+        JsonPlain := JsonEscaped(Secret, False);
+        { 0 and 1: JSON-escaped twice, an echoed body quoted inside another
+          JSON string; 2 to 5: each JSON-escaped form percent-encoded, a space
+          as %20 and as '+', as a server putting an echoed JSON body into a
+          URL or form has it; 6 and 7: JSON-escaped; 8 and 9: the secret
+          percent-encoded, %20 and '+'; 10: as EncodeParam sends it on a query
+          string; 11: raw. The longer, escaped forms go first, as they can
+          contain the raw one. }
+        Forms[0] := JsonEscaped(JsonSlash, True);
+        Forms[1] := JsonEscaped(JsonPlain, False);
+        Forms[2] := PercentEncoded(JsonSlash);
         Forms[3] := PlusForSpaces(Forms[2]);
-        Forms[6] := PercentEncoded(Secret);
-        Forms[7] := PlusForSpaces(Forms[6]);
-        Forms[8] := EncodeParam(Secret);
-        Forms[9] := Secret;
+        Forms[4] := PercentEncoded(JsonPlain);
+        Forms[5] := PlusForSpaces(Forms[4]);
+        Forms[6] := JsonSlash;
+        Forms[7] := JsonPlain;
+        Forms[8] := PercentEncoded(Secret);
+        Forms[9] := PlusForSpaces(Forms[8]);
+        Forms[10] := EncodeParam(Secret);
+        Forms[11] := Secret;
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
                 Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);

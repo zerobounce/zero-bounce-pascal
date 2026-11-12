@@ -35,12 +35,19 @@ type
         WeekdaysOnly: Boolean;
         Timezone: String;
         TimezoneOffsetSpecified: Boolean;
-        { Hours from UTC, -11.0 to 14.0; fractional zones such as 5.5 and
-          5.75 are allowed. An Integer up to 3.0.1; integer values still
-          assign. }
-        TimezoneOffset: Double;
+        { Deprecated: use TimezoneOffsetHours, which takes fractional zones
+          such as 5.5. Whole hours from UTC, -11 to 14; ignored when
+          TimezoneOffsetHoursSpecified is set. }
+        TimezoneOffset: Integer;
         { YYYY-MM-DD. }
         WarmupStartDate: String;
+        { Hours from UTC, -11.0 to 14.0, fractional zones such as 5.5 (India)
+          and 5.75 (Nepal) included. Sent as timezone_offset when
+          TimezoneOffsetHoursSpecified is set, in place of TimezoneOffset; a
+          whole number goes out as an integer (3). Added at the end, so
+          positional record constants written for 3.0.x keep compiling. }
+        TimezoneOffsetHoursSpecified: Boolean;
+        TimezoneOffsetHours: Double;
     end;
     PTZbWarmupManagedSending = ^TZbWarmupManagedSending;
 
@@ -136,7 +143,7 @@ procedure Register;
 implementation
 
 uses
-    Math;
+    Math, ZbStructures;
 
 procedure ZbWarmupInitialize(ApiKey: String);
 begin
@@ -338,9 +345,17 @@ begin
     end;
 end;
 
+{ The JSON body of a Warmup call, or '' for the documented empty successes
+  (HTTP 204, an empty 200). Any other body that is not JSON is an error with
+  its status. }
 function WarmupJson(const Method, Path, Query, Body: String): String;
+var
+    Response: TZbRequestResponse;
 begin
-    Result := Trim(WarmupSend(Method, Path, Query, Body).Payload);
+    Response := WarmupSend(Method, Path, Query, Body);
+    Result := Trim(Response.Payload);
+    if Result <> '' then
+        ZbRequireJsonBody(Response);
 end;
 
 var
@@ -483,7 +498,13 @@ begin
                 AddField(Sending, JsonBool('weekdays_only', Options^.ManagedSending^.WeekdaysOnly));
             if Options^.ManagedSending^.Timezone <> '' then
                 AddField(Sending, JsonString('timezone', Options^.ManagedSending^.Timezone));
-            if Options^.ManagedSending^.TimezoneOffsetSpecified then
+            { TimezoneOffsetHours, when set, wins over the deprecated Integer. }
+            if Options^.ManagedSending^.TimezoneOffsetHoursSpecified then
+                AddField(Sending, JsonNumber(
+                    'timezone_offset',
+                    InRangeFloat(Options^.ManagedSending^.TimezoneOffsetHours, -11, 14, 'timezone_offset')
+                ))
+            else if Options^.ManagedSending^.TimezoneOffsetSpecified then
                 AddField(Sending, JsonNumber(
                     'timezone_offset',
                     InRangeFloat(Options^.ManagedSending^.TimezoneOffset, -11, 14, 'timezone_offset')

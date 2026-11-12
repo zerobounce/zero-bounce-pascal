@@ -13,7 +13,7 @@ interface
 uses
     Classes, SysUtils, fpcunit, testregistry,
     {$IFDEF UNIX}BaseUnix,{$ENDIF}
-    BaseTest, ZbUtility, ZbWarmup;
+    BaseTest, ZbUtility, ZbWarmup, Math;
 
 type
 
@@ -36,6 +36,7 @@ type
         procedure TestAddSendingAccountZbManaged;
         procedure TestAddSendingAccountSendsEveryDocumentedField;
         procedure TestTheTimezoneOffsetMayBeFractional;
+        procedure TestTheTimezoneOffsetKeepsIts3_0_xType;
         procedure TestUpdateAndDeleteSendingAccount;
         procedure TestChangeFromAddressUsesTheSmtpCredentialsPath;
         procedure TestListFromAddressesChecksItsArguments;
@@ -50,6 +51,7 @@ type
         procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
         procedure TestSmtpCredentialsAreMaskedInEveryForm;
         procedure TestTheSmtpPasswordIsMaskedInEveryEncodedForm;
+        procedure TestEveryComposedSpellingOfASecretIsMasked;
 {$IFDEF UNIX}
         procedure TestAFailedWriteKeepsTheFileAlreadyAtThePath;
 {$ENDIF}
@@ -372,11 +374,12 @@ begin
     Content.CompanyDescription := 'We sell "things"';
     Content.TypesOfEmails := 'transactional,newsletter,marketing';
     Content.ExampleEmail := 'Hello,'#10'Welcome.';
+    FillChar(Sending, SizeOf(Sending), 0);
     Sending.WeekdaysOnlySpecified := True;
     Sending.WeekdaysOnly := False;
     Sending.Timezone := 'Asia/Kolkata';
-    Sending.TimezoneOffsetSpecified := True;
-    Sending.TimezoneOffset := 5.5;
+    Sending.TimezoneOffsetHoursSpecified := True;
+    Sending.TimezoneOffsetHours := 5.5;
     Sending.WarmupStartDate := '2026-11-02';
     Options := ZbWarmupDefaultAddSendingAccountOptions;
     Options.IgnoreConflictSpecified := True;
@@ -400,23 +403,31 @@ end;
 
 procedure TTestWarmup.TestTheTimezoneOffsetMayBeFractional;
 const
-    ACCEPTED: array[0..5] of Double = (5.5, 3.0, -11.0, 14.0, -9.5, 5.75);
-    SENT: array[0..5] of String = ('5.5', '3', '-11', '14', '-9.5', '5.75');
-    REJECTED: array[0..3] of Double = (-11.5, 14.5, 15, -12);
+    ACCEPTED: array[0..6] of Double = (5.5, 3.0, -11.0, 14.0, -9.5, 5.75, 0.0);
+    SENT: array[0..6] of String = ('5.5', '3', '-11', '14', '-9.5', '5.75', '0');
 var
+    REJECTED: array[0..6] of Double;
     Options: TZbWarmupAddSendingAccountOptions;
     Sending: TZbWarmupManagedSending;
     I: Integer;
     Raised: Boolean;
 begin
+    { Only a real number, -11.0 to 14.0. }
+    REJECTED[0] := -11.5;
+    REJECTED[1] := 14.5;
+    REJECTED[2] := 15;
+    REJECTED[3] := -12;
+    REJECTED[4] := NaN;
+    REJECTED[5] := Infinity;
+    REJECTED[6] := NegInfinity;
     MockOk(OK_JSON);
     FillChar(Sending, SizeOf(Sending), 0);
-    Sending.TimezoneOffsetSpecified := True;
+    Sending.TimezoneOffsetHoursSpecified := True;
     Options := ZbWarmupDefaultAddSendingAccountOptions;
     Options.ManagedSending := @Sending;
     for I := Low(ACCEPTED) to High(ACCEPTED) do
     begin
-        Sending.TimezoneOffset := ACCEPTED[I];
+        Sending.TimezoneOffsetHours := ACCEPTED[I];
         ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
         AssertEquals(SENT[I],
             '{"from_address":"sender@example.com","onboarding_model":"zb_managed",'
@@ -426,7 +437,7 @@ begin
     for I := Low(REJECTED) to High(REJECTED) do
     begin
         ZbResponseMock.UrlCalled := '';
-        Sending.TimezoneOffset := REJECTED[I];
+        Sending.TimezoneOffsetHours := REJECTED[I];
         Raised := False;
         try
             ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
@@ -439,6 +450,64 @@ begin
         AssertTrue(Format('timezone_offset %g should be rejected', [REJECTED[I]]), Raised);
         AssertNothingSent;
     end;
+end;
+
+procedure TTestWarmup.TestTheTimezoneOffsetKeepsIts3_0_xType;
+const
+    { A record constant written for 3.0.x, which had no TimezoneOffsetHours
+      fields: FPC fills the fields left out with zeros. }
+    OLD_SENDING: TZbWarmupManagedSending = (
+        WeekdaysOnlySpecified: True; WeekdaysOnly: True; Timezone: 'Europe/Bucharest';
+        TimezoneOffsetSpecified: True; TimezoneOffset: 3; WarmupStartDate: '2026-11-02'
+    );
+var
+    Options: TZbWarmupAddSendingAccountOptions;
+    Sending: TZbWarmupManagedSending;
+    Whole: Integer;
+    WholePointer: PInteger;
+    Raised: Boolean;
+begin
+    { Code written for 3.0.x keeps compiling and sends the same body: the
+      deprecated TimezoneOffset is still an Integer (assigned to an Integer, its
+      address an PInteger, IntToStr). TimezoneOffsetHours, added at the end,
+      wins when both are set. }
+    MockOk(OK_JSON);
+    Sending := OLD_SENDING;
+    Whole := Sending.TimezoneOffset;
+    WholePointer := @Sending.TimezoneOffset;
+    AssertEquals('3', IntToStr(Whole));
+    AssertEquals(3, WholePointer^);
+    AssertFalse(Sending.TimezoneOffsetHoursSpecified);
+    Options := ZbWarmupDefaultAddSendingAccountOptions;
+    Options.ManagedSending := @Sending;
+    ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+    AssertEquals(
+        '{"from_address":"sender@example.com","onboarding_model":"zb_managed",'
+        + '"managed_sending":{"weekdays_only":true,"timezone":"Europe/Bucharest",'
+        + '"timezone_offset":3,"warmup_start_date":"2026-11-02"}}',
+        ZbLastRequestBody
+    );
+
+    Sending.TimezoneOffsetHoursSpecified := True;
+    Sending.TimezoneOffsetHours := 5.75;
+    ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+    AssertTrue(ZbLastRequestBody, Pos('"timezone_offset":5.75,', ZbLastRequestBody) > 0);
+
+    { The deprecated Integer keeps its range check. }
+    Sending.TimezoneOffsetHoursSpecified := False;
+    Sending.TimezoneOffset := -12;
+    ZbResponseMock.UrlCalled := '';
+    Raised := False;
+    try
+        ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertTrue(e.Message, Pos('timezone_offset', e.Message) > 0);
+        end;
+    end;
+    AssertTrue('timezone_offset -12 should be rejected', Raised);
+    AssertNothingSent;
 end;
 
 procedure TTestWarmup.TestUpdateAndDeleteSendingAccount;
@@ -986,6 +1055,79 @@ begin
         end;
     end;
     AssertTrue('an HTTP 500 should raise', Raised);
+end;
+
+function ComposedJsonEscaped(const Value: String; EscapeSlash: Boolean): String;
+var
+    J: Integer;
+begin
+    Result := '';
+    for J := 1 to Length(Value) do
+        if (Value[J] = '"') or (Value[J] = '\') or (EscapeSlash and (Value[J] = '/')) then
+            Result := Result + '\' + Value[J]
+        else
+            Result := Result + Value[J];
+end;
+
+function ComposedUrlEncoded(const Value: String; PlusForSpace: Boolean): String;
+const
+    HEX = '0123456789ABCDEF';
+var
+    J: Integer;
+    C: Char;
+begin
+    Result := '';
+    for J := 1 to Length(Value) do
+    begin
+        C := Value[J];
+        if (C in ['A'..'Z', 'a'..'z', '0'..'9']) or (C = '-') or (C = '.') or (C = '_') or (C = '~') then
+            Result := Result + C
+        else if (C = ' ') and PlusForSpace then
+            Result := Result + '+'
+        else
+            Result := Result + '%' + HEX[(Ord(C) shr 4) + 1] + HEX[(Ord(C) and 15) + 1];
+    end;
+end;
+
+procedure TTestWarmup.TestEveryComposedSpellingOfASecretIsMasked;
+const
+    SECRET = 'a b"c/d+e%f&g=h<i>j''k\l';
+var
+    Bases: array[0..2] of String;
+    Forms: TStringList;
+    B, I: Integer;
+    Masked: String;
+begin
+    { Composed here from the encoders a server or proxy applies, not listed
+      by hand: (raw, JSON-escaped, JSON-escaped with '\/') x (as is,
+      URL-encoded with %20, URL-encoded with '+'), and JSON-escaped twice
+      (with and without '\/'). Every form differs, so dropping any one
+      generator from ZbMaskSecret leaves its bracket readable. }
+    Bases[0] := SECRET;
+    Bases[1] := ComposedJsonEscaped(SECRET, False);
+    Bases[2] := ComposedJsonEscaped(SECRET, True);
+    Forms := TStringList.Create;
+    try
+        Forms.Sorted := True;
+        Forms.Duplicates := dupIgnore;
+        Forms.CaseSensitive := True;
+        for B := Low(Bases) to High(Bases) do
+        begin
+            Forms.Add(Bases[B]);
+            Forms.Add(ComposedUrlEncoded(Bases[B], False));
+            Forms.Add(ComposedUrlEncoded(Bases[B], True));
+        end;
+        Forms.Add(ComposedJsonEscaped(Bases[1], False));
+        Forms.Add(ComposedJsonEscaped(Bases[2], True));
+        AssertEquals('distinct composed forms', 11, Forms.Count);
+        for I := 0 to Forms.Count - 1 do
+        begin
+            Masked := ZbMaskSecret('echo [' + Forms[I] + '] end', SECRET);
+            AssertEquals(Forms[I], 'echo [REDACTED] end', Masked);
+        end;
+    finally
+        Forms.Free;
+    end;
 end;
 
 {$IFDEF UNIX}
