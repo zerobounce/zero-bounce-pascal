@@ -28,6 +28,8 @@ type
     procedure TestEveryPublicCallRaisesZbExceptionWhenRefused;
     procedure TestAProtocolErrorIsAZbExceptionWithoutTheKey;
     procedure TestEveryPublicRequestFunctionIsInTheSweep;
+    procedure TestNoErrorCarriesTheKey;
+    procedure TestAnEmptyBodyIsASuccessOnlyForAnInboxPlacementDelete;
   end;
 
 implementation
@@ -1156,6 +1158,9 @@ type
 var
   { The functions the last sweep called, by name without the overload label. }
   SweepNames: TStringList;
+  { The same, once per overload the sweep called: a label starting with '#'
+    calls an overload already listed, with other arguments. }
+  SweepOverloads: TStringList;
   { Every call the check did not accept, with why. }
   SweepMissed: String;
 
@@ -1176,18 +1181,25 @@ var
 
   procedure Expect(const Name: String; E: Exception);
   var
-    Base: String;
+    Base, OverloadLabel: String;
   begin
     Base := Name;
+    OverloadLabel := '';
     if Pos('(', Base) > 0 then
+    begin
+      OverloadLabel := Copy(Base, Pos('(', Base) + 1, MaxInt);
       Base := Copy(Base, 1, Pos('(', Base) - 1);
+    end;
     if SweepNames.IndexOf(Base) < 0 then
       SweepNames.Add(Base);
+    if Copy(OverloadLabel, 1, 1) <> '#' then
+      SweepOverloads.Add(Base);
     Check(Name, E);
   end;
 
 begin
   SweepNames.Clear;
+  SweepOverloads.Clear;
   SweepMissed := '';
   FillChar(Params, SizeOf(Params), 0);
   Params.EmailAddressColumn := 1;
@@ -1222,6 +1234,7 @@ begin
     try ZbDomainSearchByCompanyName('Example'); Expect('ZbDomainSearchByCompanyName', nil); except on E: Exception do Expect('ZbDomainSearchByCompanyName', E); end;
     {$WARN SYMBOL_DEPRECATED OFF}
     try ZbFindEmail('example.com', 'Ada', 'B', 'Lovelace'); Expect('ZbFindEmail', nil); except on E: Exception do Expect('ZbFindEmail', E); end;
+    try ZbFindEmail('example.com', 'Ada', 'Lovelace'); Expect('ZbFindEmail(3)', nil); except on E: Exception do Expect('ZbFindEmail(3)', E); end;
     try ZbDomainSearch('example.com'); Expect('ZbDomainSearch', nil); except on E: Exception do Expect('ZbDomainSearch', E); end;
     {$WARN SYMBOL_DEPRECATED ON}
     { ZbValidation }
@@ -1251,7 +1264,7 @@ begin
     try ZbSendEvaluatedFile('fid'); Expect('ZbSendEvaluatedFile', nil); except on E: Exception do Expect('ZbSendEvaluatedFile', E); end;
     try ZbAddFilter('allow', 'email', 'a@example.com'); Expect('ZbAddFilter', nil); except on E: Exception do Expect('ZbAddFilter', E); end;
     try ZbListFilters(False); Expect('ZbListFilters(GET)', nil); except on E: Exception do Expect('ZbListFilters(GET)', E); end;
-    try ZbListFilters(True); Expect('ZbListFilters(POST)', nil); except on E: Exception do Expect('ZbListFilters(POST)', E); end;
+    try ZbListFilters(True); Expect('ZbListFilters(#POST)', nil); except on E: Exception do Expect('ZbListFilters(#POST)', E); end;
     try ZbDeleteFilter('allow', 'email', 'a@example.com'); Expect('ZbDeleteFilter', nil); except on E: Exception do Expect('ZbDeleteFilter', E); end;
     try ZbListS3Files('bucket', ''); Expect('ZbListS3Files', nil); except on E: Exception do Expect('ZbListS3Files', E); end;
     try ZbValidateS3File(S3); Expect('ZbValidateS3File', nil); except on E: Exception do Expect('ZbValidateS3File', E); end;
@@ -1307,7 +1320,9 @@ begin
     { ZbValidation overloads }
     try ZbValidateEmail('a@example.com', '1.2.3.4'); Expect('ZbValidateEmail(ip)', nil); except on E: Exception do Expect('ZbValidateEmail(ip)', E); end;
     try ZbBatchValidateEmails(['a@example.com']); Expect('ZbBatchValidateEmails(strings)', nil); except on E: Exception do Expect('ZbBatchValidateEmails(strings)', E); end;
+    try ZbBatchValidateEmails(Emails, ZbDefaultValidateOptions); Expect('ZbBatchValidateEmails(options)', nil); except on E: Exception do Expect('ZbBatchValidateEmails(options)', E); end;
     { ZbWarmup overloads }
+    try ZbWarmupDownloadSeeds(''); Expect('ZbWarmupDownloadSeeds(path)', nil); except on E: Exception do Expect('ZbWarmupDownloadSeeds(path)', E); end;
     try ZbWarmupDownloadStatistics('s@example.com', ''); Expect('ZbWarmupDownloadStatistics(path)', nil); except on E: Exception do Expect('ZbWarmupDownloadStatistics(path)', E); end;
     try ZbWarmupCheckDomainDmarc('s@example.com', 'sel'); Expect('ZbWarmupCheckDomainDmarc(selector)', nil); except on E: Exception do Expect('ZbWarmupCheckDomainDmarc(selector)', E); end;
     { ZbUtility: the transports themselves, on the main base URL. }
@@ -1627,7 +1642,7 @@ begin
 end;
 
 { The routines a unit's interface declares, outside class and record
-  declarations, by name. }
+  declarations, by name, once per overload. }
 procedure AddInterfaceRoutines(const FileName: String; Names: TStrings);
 var
   Text, Clean, Line, Lower, Name: String;
@@ -1704,13 +1719,25 @@ begin
           Name := Name + Line[J];
           Inc(J);
         end;
-        if (Name <> '') and (Names.IndexOf(Name) < 0) then
+        { Once per declaration, so overloads are counted. }
+        if Name <> '' then
           Names.Add(Name);
       end;
     end;
   finally
     Lines.Free;
   end;
+end;
+
+{ How many times Name is in List. }
+function CountOf(List: TStrings; const Name: String): Integer;
+var
+  I: Integer;
+begin
+  Result := 0;
+  for I := 0 to List.Count - 1 do
+    if List[I] = Name then
+      Inc(Result);
 end;
 
 procedure TTestOffline.TestEveryPublicRequestFunctionIsInTheSweep;
@@ -1730,7 +1757,7 @@ const
     'ZbWarmupDefaultListFromAddressesOptions'
   );
 var
-  SrcDir, Missing, Extra: String;
+  SrcDir, Missing, Overloads, Extra: String;
   Declared: TStringList;
   I: Integer;
 begin
@@ -1748,7 +1775,8 @@ begin
     for I := Low(NOT_REQUESTS) to High(NOT_REQUESTS) do
     begin
       AssertTrue(NOT_REQUESTS[I] + ' is no longer declared', Declared.IndexOf(NOT_REQUESTS[I]) >= 0);
-      Declared.Delete(Declared.IndexOf(NOT_REQUESTS[I]));
+      while Declared.IndexOf(NOT_REQUESTS[I]) >= 0 do
+        Declared.Delete(Declared.IndexOf(NOT_REQUESTS[I]));
     end;
     AssertTrue(Format('only %d request functions found', [Declared.Count]), Declared.Count > 80);
 
@@ -1761,9 +1789,17 @@ begin
     end;
 
     Missing := '';
+    Overloads := '';
     for I := 0 to Declared.Count - 1 do
-      if SweepNames.IndexOf(Declared[I]) < 0 then
-        Missing := Missing + Declared[I] + ' ';
+      if Declared.IndexOf(Declared[I]) = I then
+      begin
+        if SweepNames.IndexOf(Declared[I]) < 0 then
+          Missing := Missing + Declared[I] + ' '
+        else if CountOf(Declared, Declared[I]) <> CountOf(SweepOverloads, Declared[I]) then
+          { An overload left out of the sweep, or one listed twice. }
+          Overloads := Overloads + Format('%s (%d declared, %d swept) ',
+            [Declared[I], CountOf(Declared, Declared[I]), CountOf(SweepOverloads, Declared[I])]);
+      end;
     Extra := '';
     for I := 0 to SweepNames.Count - 1 do
       if Declared.IndexOf(SweepNames[I]) < 0 then
@@ -1772,12 +1808,159 @@ begin
     Declared.Free;
   end;
   AssertEquals('public request functions missing from SweepEveryPublicCall', '', Missing);
+  AssertEquals('overloads missing from SweepEveryPublicCall', '', Overloads);
   AssertEquals('swept names that are not public request functions', '', Extra);
+end;
+
+const
+  { Keys that need escaping in a URL, so their raw and URL-encoded forms
+    differ. }
+  LEAK_KEY = 'leak-K3y/x+y';
+  LEAK_KEY_ESCAPED = 'leak-K3y%2Fx%2By';
+  LEAK_WARMUP_KEY = 'leak-W4rm/x+y';
+  LEAK_WARMUP_KEY_ESCAPED = 'leak-W4rm%2Fx%2By';
+
+var
+  { The HTTP status the mocked answer of the current sweep carries. }
+  SweepStatus: Integer;
+
+procedure ExpectKeyMasked(const Name: String; E: Exception);
+var
+  Text: String;
+begin
+  if E = nil then
+  begin
+    SweepMissed := SweepMissed + Name + ' (returned); ';
+    Exit;
+  end;
+  if not (E is ZbException) then
+  begin
+    SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+    Exit;
+  end;
+  { Every field a caller can read. A Warmup call sends the Warmup key, every
+    other call the validation key; each body quotes both. }
+  Text := E.Message + ' | ' + ZbException(E).Payload;
+  if (Pos(LEAK_KEY, Text) > 0) or (Pos(LEAK_KEY_ESCAPED, Text) > 0) or
+     ((Pos('ZbWarmup', Name) = 1) and
+      ((Pos(LEAK_WARMUP_KEY, Text) > 0) or (Pos(LEAK_WARMUP_KEY_ESCAPED, Text) > 0))) then
+    SweepMissed := SweepMissed + Name + ' (the key leaked: ' + Text + '); '
+  else if ZbException(E).StatusCode <> SweepStatus then
+    SweepMissed := SweepMissed + Format('%s (status %d: %s); ', [Name, ZbException(E).StatusCode, E.Message]);
+end;
+
+procedure TTestOffline.TestNoErrorCarriesTheKey;
+const
+  { A dead-key error and "success": false on a 200, a proxy quoting the
+    request URL, a JSON error, and a text one quoting the URL-encoded keys. }
+  STATUSES: array[0..4] of Integer = (200, 200, 400, 400, 400);
+  TYPES: array[0..4] of String = ('application/json', 'application/json', 'text/plain',
+    'application/json', 'text/plain');
+var
+  Bodies: array[0..4] of String;
+  I: Integer;
+  Missed: String;
+begin
+  { Standard section 3: the key is never in an error. Every call gets each
+    body; neither the message nor the Payload may carry the key it sent, raw
+    or URL-encoded. }
+  Bodies[0] := '{"error":"Invalid API key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
+  Bodies[1] := '{"success":false,"message":"Invalid API key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
+  Bodies[2] := 'Bad Request: GET https://api.zerobounce.net/v2/validate?api_key=' + LEAK_KEY_ESCAPED +
+    '&key=' + LEAK_WARMUP_KEY_ESCAPED;
+  Bodies[3] := '{"error":"Bad key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + '"}';
+  Bodies[4] := 'Rejected key ' + LEAK_KEY_ESCAPED + ' ' + LEAK_WARMUP_KEY_ESCAPED;
+  Missed := '';
+  try
+    for I := Low(Bodies) to High(Bodies) do
+    begin
+      UseDefaultUrls;
+      ZBInitialize(LEAK_KEY);
+      ZbWarmupInitialize(LEAK_WARMUP_KEY);
+      SweepStatus := STATUSES[I];
+      ZBMockResponse(STATUSES[I], Bodies[I], TYPES[I]);
+      SweepEveryPublicCall(@ExpectKeyMasked);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[body %d] %s', [I, SweepMissed]);
+    end;
+    { The account-level batch error is raised from the parsed result. }
+    UseDefaultUrls;
+    ZBInitialize(LEAK_KEY);
+    ZBMockResponse(200, '{"email_batch":[],"errors":[{"email_address":"all","error":"Invalid API key ' +
+      LEAK_KEY + '"}]}', 'application/json');
+    try
+      ZbBatchValidateEmails(['a@example.com']);
+      Missed := Missed + '[batch all] returned; ';
+    except
+      on E: Exception do
+        if (Pos(LEAK_KEY, E.Message) > 0) or (Pos('REDACTED', E.Message) = 0) then
+          Missed := Missed + '[batch all] ' + E.Message + '; ';
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls whose error carried the key, or not the status', '', Missed);
+end;
+
+procedure ExpectEmptyBody(const Name: String; E: Exception);
+begin
+  if Pos('ZbWarmup', Name) = 1 then
+    { The Warmup API documents an empty 200 as an empty success. }
+    Exit;
+  if (SweepStatus < 300) and (Name = 'ZbDeleteInboxPlacementTest') then
+  begin
+    { DELETE answers with an empty body: a success with an empty result. }
+    if E <> nil then
+      SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+  end
+  else if Pos('InboxPlacement', Name) > 0 then
+  begin
+    if E = nil then
+      SweepMissed := SweepMissed + Name + ' (returned); '
+    else if not (E is ZbException) or (ZbException(E).StatusCode <> SweepStatus) or
+            (Pos('Empty response', E.Message) = 0) then
+      SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
+  end
+  else if (SweepStatus >= 300) and ((E = nil) or not (E is ZbException) or
+          (ZbException(E).StatusCode <> SweepStatus)) then
+    { An empty non-2xx is an error with its status everywhere. }
+    SweepMissed := SweepMissed + Name + ' (not an error with its status); ';
+end;
+
+procedure TTestOffline.TestAnEmptyBodyIsASuccessOnlyForAnInboxPlacementDelete;
+const
+  STATUSES: array[0..2] of Integer = (200, 204, 404);
+var
+  I: Integer;
+  Missed: String;
+begin
+  { Only a DELETE of an Inbox Placement test answers with an empty body. An
+    empty 2xx from the other Inbox Placement calls is an error with its
+    status, and an empty non-2xx is an error from every call. }
+  Missed := '';
+  try
+    for I := Low(STATUSES) to High(STATUSES) do
+    begin
+      UseDefaultUrls;
+      SweepStatus := STATUSES[I];
+      ZBMockResponse(STATUSES[I], '', 'application/json');
+      SweepEveryPublicCall(@ExpectEmptyBody);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[HTTP %d] %s', [STATUSES[I], SweepMissed]);
+    end;
+    UseDefaultUrls;
+    ZBMockResponse(200, '', 'application/json');
+    AssertEquals('the empty result of a delete', '', ZbDeleteInboxPlacementTest('tid'));
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that did not treat an empty body as expected', '', Missed);
 end;
 
 initialization
   Randomize;
   SweepNames := TStringList.Create;
+  SweepOverloads := TStringList.Create;
   RegisterTest(TTestOffline);
 
 finalization
@@ -1790,5 +1973,6 @@ finalization
   end;
   Gate.Free;
   SweepNames.Free;
+  SweepOverloads.Free;
 
 end.

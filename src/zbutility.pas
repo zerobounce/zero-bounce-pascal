@@ -28,6 +28,10 @@ type
         StatusCode: Integer;
         Payload: String;
         constructor FromResponse(AMessage: String; response: TZbRequestResponse);
+        { Runs after every constructor: the message and the Payload a caller
+          can read never carry the key, whatever built them (a body quoting
+          the key or the request URL, a batch error, a transport error). }
+        procedure AfterConstruction; override;
         procedure MarkHttpError;
         procedure MarkJsonError;
     end;
@@ -629,6 +633,13 @@ end;
             NewMessage := ZbMessageFromBody(response.Payload, response.StatusCode);
         { Transport errors quote the URL, which carries api_key. }
         Create(RedactSecrets(NewMessage));
+    end;
+
+    procedure ZbException.AfterConstruction;
+    begin
+        inherited AfterConstruction;
+        Message := RedactSecrets(Message);
+        Payload := RedactSecrets(Payload);
     end;
 
     procedure ZbException.MarkHttpError;
