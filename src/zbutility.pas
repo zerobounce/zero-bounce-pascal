@@ -126,7 +126,17 @@ threadvar
       used, since a caller may set any of them directly. }
     function ZbBaseUrl(const Url: String): String;
     function EncodeParam(param: String): String;
+    { The text with the API key, raw and url-encoded, and every secret a
+      registered redactor masks, replaced by REDACTED. Every ZbException runs
+      its Message and Payload through it. }
     function RedactSecrets(const S: string): string;
+type
+    { Masks a secret ZbUtility does not hold itself, such as the Warmup key. }
+    TZbSecretRedactor = function(const S: string): string;
+    { Adds a redactor to RedactSecrets, and so to every ZbException. For units
+      that hold their own secrets; ZbWarmup registers one for its key and the
+      SMTP credentials of the call in progress. }
+    procedure ZbRegisterSecretRedactor(Redactor: TZbSecretRedactor);
     { The key, or a clear error. A key with surrounding whitespace or control
       characters would otherwise be quoted, unredacted, in a transport error. }
     function ZbCheckedApiKey(const ApiKey: String): String;
@@ -717,15 +727,29 @@ end;
         {$ENDIF}
     end;
 
+    var
+        ZbSecretRedactors: array of TZbSecretRedactor;
+
+    procedure ZbRegisterSecretRedactor(Redactor: TZbSecretRedactor);
+    begin
+        SetLength(ZbSecretRedactors, Length(ZbSecretRedactors) + 1);
+        ZbSecretRedactors[High(ZbSecretRedactors)] := Redactor;
+    end;
+
     function RedactSecrets(const S: string): string;
+    var
+        I: Integer;
     begin
         Result := S;
-        if ZbApiKey = '' then
-            Exit;
-        Result := StringReplace(Result, ZbApiKey, 'REDACTED', [rfReplaceAll]);
-        { The key also travels url-encoded, on the query string. }
-        if EncodeParam(ZbApiKey) <> ZbApiKey then
-            Result := StringReplace(Result, EncodeParam(ZbApiKey), 'REDACTED', [rfReplaceAll]);
+        if ZbApiKey <> '' then
+        begin
+            Result := StringReplace(Result, ZbApiKey, 'REDACTED', [rfReplaceAll]);
+            { The key also travels url-encoded, on the query string. }
+            if EncodeParam(ZbApiKey) <> ZbApiKey then
+                Result := StringReplace(Result, EncodeParam(ZbApiKey), 'REDACTED', [rfReplaceAll]);
+        end;
+        for I := 0 to High(ZbSecretRedactors) do
+            Result := ZbSecretRedactors[I](Result);
     end;
 
     function ZbCheckedApiKey(const ApiKey: String): String;

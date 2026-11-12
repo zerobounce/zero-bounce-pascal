@@ -33,6 +33,8 @@ type
         procedure TestEmptySuccessesComeBackAsAnEmptyString;
         procedure TestAddSendingAccountSelfManaged;
         procedure TestAddSendingAccountZbManaged;
+        procedure TestAddSendingAccountSendsEveryDocumentedField;
+        procedure TestTheTimezoneOffsetMayBeFractional;
         procedure TestUpdateAndDeleteSendingAccount;
         procedure TestChangeFromAddressUsesTheSmtpCredentialsPath;
         procedure TestListFromAddressesChecksItsArguments;
@@ -42,6 +44,7 @@ type
         procedure TestCheckDomainDmarcNeedsAnEmailAddress;
         procedure TestTestSmtpConfigurationChecksThePort;
         procedure TestCsvDownloadsRejectAJsonAnswer;
+        procedure TestCsvDownloadsRejectEveryNonFileAnswer;
         procedure TestBlankArgumentsAreRejectedBeforeSending;
         procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
     end;
@@ -348,6 +351,88 @@ begin
         end;
     end;
     AssertTrue('a non ISO start date should be rejected', Raised);
+end;
+
+procedure TTestWarmup.TestAddSendingAccountSendsEveryDocumentedField;
+var
+    Options: TZbWarmupAddSendingAccountOptions;
+    Content: TZbWarmupEmailContent;
+    Sending: TZbWarmupManagedSending;
+begin
+    { https://www.zerobounce.net/docs/warmup-api/adding-a-sending-account }
+    MockOk(OK_JSON);
+    Content.CompanyName := 'Example';
+    Content.CompanyWebsite := 'https://example.com';
+    Content.CompanyDescription := 'We sell "things"';
+    Content.TypesOfEmails := 'transactional,newsletter,marketing';
+    Content.ExampleEmail := 'Hello,'#10'Welcome.';
+    Sending.WeekdaysOnlySpecified := True;
+    Sending.WeekdaysOnly := False;
+    Sending.Timezone := 'Asia/Kolkata';
+    Sending.TimezoneOffsetSpecified := True;
+    Sending.TimezoneOffset := 5.5;
+    Sending.WarmupStartDate := '2026-11-02';
+    Options := ZbWarmupDefaultAddSendingAccountOptions;
+    Options.IgnoreConflictSpecified := True;
+    Options.IgnoreConflict := True;
+    Options.EmailContent := @Content;
+    Options.ManagedSending := @Sending;
+    ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+    AssertEquals(
+        '{"from_address":"sender@example.com","onboarding_model":"zb_managed",'
+        + '"ignore_conflict":true,'
+        + '"email_content":{"company_name":"Example",'
+        + '"company_website":"https://example.com",'
+        + '"company_description":"We sell \"things\"",'
+        + '"types_of_emails":["transactional","newsletter","marketing"],'
+        + '"example_email":"Hello,\nWelcome."},'
+        + '"managed_sending":{"weekdays_only":false,"timezone":"Asia/Kolkata",'
+        + '"timezone_offset":5.5,"warmup_start_date":"2026-11-02"}}',
+        ZbLastRequestBody
+    );
+end;
+
+procedure TTestWarmup.TestTheTimezoneOffsetMayBeFractional;
+const
+    ACCEPTED: array[0..5] of Double = (5.5, 3.0, -11.0, 14.0, -9.5, 5.75);
+    SENT: array[0..5] of String = ('5.5', '3', '-11', '14', '-9.5', '5.75');
+    REJECTED: array[0..3] of Double = (-11.5, 14.5, 15, -12);
+var
+    Options: TZbWarmupAddSendingAccountOptions;
+    Sending: TZbWarmupManagedSending;
+    I: Integer;
+    Raised: Boolean;
+begin
+    MockOk(OK_JSON);
+    FillChar(Sending, SizeOf(Sending), 0);
+    Sending.TimezoneOffsetSpecified := True;
+    Options := ZbWarmupDefaultAddSendingAccountOptions;
+    Options.ManagedSending := @Sending;
+    for I := Low(ACCEPTED) to High(ACCEPTED) do
+    begin
+        Sending.TimezoneOffset := ACCEPTED[I];
+        ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+        AssertEquals(SENT[I],
+            '{"from_address":"sender@example.com","onboarding_model":"zb_managed",'
+            + '"managed_sending":{"timezone_offset":' + SENT[I] + '}}',
+            ZbLastRequestBody);
+    end;
+    for I := Low(REJECTED) to High(REJECTED) do
+    begin
+        ZbResponseMock.UrlCalled := '';
+        Sending.TimezoneOffset := REJECTED[I];
+        Raised := False;
+        try
+            ZbWarmupAddSendingAccount('sender@example.com', ZB_WARMUP_ZB_MANAGED, @Options);
+        except on e: ZbException do
+            begin
+                Raised := True;
+                AssertTrue(e.Message, Pos('timezone_offset', e.Message) > 0);
+            end;
+        end;
+        AssertTrue(Format('timezone_offset %g should be rejected', [REJECTED[I]]), Raised);
+        AssertNothingSent;
+    end;
 end;
 
 procedure TTestWarmup.TestUpdateAndDeleteSendingAccount;
@@ -676,6 +761,45 @@ begin
         end;
     end;
     AssertTrue('a JSON answer is not a CSV download', Raised);
+end;
+
+procedure TTestWarmup.TestCsvDownloadsRejectEveryNonFileAnswer;
+const
+    BODIES: array[0..5] of String = (
+        '{"message":"No seeds"}', '  [{"error":"nope"}]', '', '<!DOCTYPE html><html><title>Blocked</title></html>',
+        'Blocked', 'seed,provider'
+    );
+    TYPES: array[0..5] of String = (
+        'text/csv', 'text/csv', 'text/csv', 'text/csv', 'text/html; charset=utf-8', 'application/json'
+    );
+var
+    I, Call: Integer;
+    Raised: Boolean;
+    Saved: String;
+begin
+    { D1-D3: a JSON body or content type, an HTML page by body or content
+      type, and an empty body are errors with the status, and no file. }
+    Saved := GetTempDir(False) + 'zb-warmup-nonfile.csv';
+    for I := Low(BODIES) to High(BODIES) do
+        for Call := 0 to 1 do
+        begin
+            DeleteFile(Saved);
+            ZBMockResponse(200, BODIES[I], TYPES[I]);
+            Raised := False;
+            try
+                if Call = 0 then
+                    ZbWarmupDownloadSeeds(Saved)
+                else
+                    ZbWarmupDownloadStatistics('sender@example.com', Saved);
+            except on e: ZbException do
+                begin
+                    Raised := True;
+                    AssertEquals(BODIES[I], 200, e.StatusCode);
+                end;
+            end;
+            AssertTrue(Format('%d/%d %s (%s) is not a CSV download', [I, Call, BODIES[I], TYPES[I]]), Raised);
+            AssertFalse('a file was saved for ' + BODIES[I], FileExists(Saved));
+        end;
 end;
 
 procedure TTestWarmup.TestBlankArgumentsAreRejectedBeforeSending;

@@ -1747,9 +1747,9 @@ const
   );
   { Public routines that send nothing. Any other routine in these interfaces
     is a request and must be in SweepEveryPublicCall. }
-  NOT_REQUESTS: array[0..25] of String = (
+  NOT_REQUESTS: array[0..26] of String = (
     'Register', 'ZBApiURLToString', 'ZBSetApiKey', 'ZBInitialize', 'ZbBaseUrl', 'EncodeParam',
-    'RedactSecrets', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
+    'RedactSecrets', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
     'ZbBodyLooksLikeHtml', 'ZbSuccessMeansFailure', 'ZbMessageFromBody', 'EncodePathSegment',
     'ZbJsonEscape', 'ZBMockResponse', 'ZbWindowsRootCertificates', 'ZbTrustDerCertificates',
     'ZbDefaultValidateOptions', 'ZbBatchRequestBodyFromEmails', 'ZbFromDataFromFileSubmitRecord',
@@ -1849,6 +1849,17 @@ begin
     SweepMissed := SweepMissed + Format('%s (status %d: %s); ', [Name, ZbException(E).StatusCode, E.Message]);
 end;
 
+procedure ExpectKeyMaskedIfRaised(const Name: String; E: Exception);
+begin
+  { A message-only or detail-only 200 is a result for most calls; where it is
+    an error it must not carry the key either. A Warmup CSV download always
+    raises: a JSON answer is not a file. }
+  if E <> nil then
+    ExpectKeyMasked(Name, E)
+  else if Pos('ZbWarmupDownload', Name) = 1 then
+    SweepMissed := SweepMissed + Name + ' (returned); ';
+end;
+
 procedure TTestOffline.TestNoErrorCarriesTheKey;
 const
   { A dead-key error and "success": false on a 200, a proxy quoting the
@@ -1882,6 +1893,24 @@ begin
       SweepEveryPublicCall(@ExpectKeyMasked);
       if SweepMissed <> '' then
         Missed := Missed + Format('[body %d] %s', [I, SweepMissed]);
+    end;
+    { A 200 JSON body with only a message or a detail quoting both keys, as
+      the Warmup API answers an unknown key. The Warmup CSV downloads raise
+      on it outside the request itself. }
+    Bodies[0] := '{"message":"Invalid API-Key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + ' ' +
+      LEAK_WARMUP_KEY_ESCAPED + '"}';
+    Bodies[1] := '{"detail":"Invalid API-Key ' + LEAK_KEY + ' ' + LEAK_WARMUP_KEY + ' ' +
+      LEAK_WARMUP_KEY_ESCAPED + '"}';
+    for I := 0 to 1 do
+    begin
+      UseDefaultUrls;
+      ZBInitialize(LEAK_KEY);
+      ZbWarmupInitialize(LEAK_WARMUP_KEY);
+      SweepStatus := 200;
+      ZBMockResponse(200, Bodies[I], 'application/json');
+      SweepEveryPublicCall(@ExpectKeyMaskedIfRaised);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[200 %s-only body] %s', [Copy('messagedetail', 1 + 7 * I, 7 - I), SweepMissed]);
     end;
     { The account-level batch error is raised from the parsed result. }
     UseDefaultUrls;

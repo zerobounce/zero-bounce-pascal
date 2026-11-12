@@ -35,7 +35,10 @@ type
         WeekdaysOnly: Boolean;
         Timezone: String;
         TimezoneOffsetSpecified: Boolean;
-        TimezoneOffset: Integer;
+        { Hours from UTC, -11.0 to 14.0; fractional zones such as 5.5 and
+          5.75 are allowed. An Integer up to 3.0.1; integer values still
+          assign. }
+        TimezoneOffset: Double;
         { YYYY-MM-DD. }
         WarmupStartDate: String;
     end;
@@ -132,6 +135,9 @@ procedure Register;
 
 implementation
 
+uses
+    Math;
+
 procedure ZbWarmupInitialize(ApiKey: String);
 begin
     if Trim(ApiKey) = '' then
@@ -157,11 +163,20 @@ begin
         );
 end;
 
+threadvar
+    { The secrets of the Warmup call in progress on this thread (the SMTP
+      credentials of test-smtp-configuration), #0 separated. }
+    WarmupCallSecrets: String;
+
 { The Warmup key never travels in a URL, but a transport error may quote the
-  header, and test-smtp-configuration carries SMTP credentials in its body. }
-function WarmupRedact(const Value: String; const Secrets: array of String): String;
+  header, an answer may quote the key, and test-smtp-configuration carries
+  SMTP credentials in its body. Registered with ZbUtility, so every
+  ZbException masks them whatever raised it (a request, a CSV download that
+  got JSON, a check after the request). }
+function WarmupRedact(const Value: String): String;
 var
-    I: Integer;
+    Rest, Secret: String;
+    P: Integer;
 begin
     Result := Value;
     if ZbWarmupApiKey <> '' then
@@ -171,9 +186,17 @@ begin
         if EncodeParam(ZbWarmupApiKey) <> ZbWarmupApiKey then
             Result := StringReplace(Result, EncodeParam(ZbWarmupApiKey), 'REDACTED', [rfReplaceAll]);
     end;
-    for I := Low(Secrets) to High(Secrets) do
-        if Secrets[I] <> '' then
-            Result := StringReplace(Result, Secrets[I], 'REDACTED', [rfReplaceAll]);
+    Rest := WarmupCallSecrets;
+    while Rest <> '' do
+    begin
+        P := Pos(#0, Rest);
+        if P = 0 then
+            P := Length(Rest) + 1;
+        Secret := Copy(Rest, 1, P - 1);
+        Delete(Rest, 1, P);
+        if Secret <> '' then
+            Result := StringReplace(Result, Secret, 'REDACTED', [rfReplaceAll]);
+    end;
 end;
 
 function RequiredParam(const Value, Name: String): String;
@@ -227,6 +250,32 @@ begin
     Result := Concat('"', Name, '":', IntToStr(Value));
 end;
 
+{ A JSON number with '.' as the decimal separator whatever the locale; a
+  whole number is written without a fraction (3, not 3.0). }
+function JsonNumber(const Name: String; Value: Double): String;
+var
+    Text: String;
+begin
+    if Frac(Value) = 0 then
+        Text := IntToStr(Round(Value))
+    else
+    begin
+        Str(Value:0:6, Text);
+        while Text[Length(Text)] = '0' do
+            Delete(Text, Length(Text), 1);
+    end;
+    Result := Concat('"', Name, '":', Text);
+end;
+
+function InRangeFloat(Value: Double; Low_, High_: Integer; const Name: String): Double;
+begin
+    if IsNan(Value) or (Value < Low_) or (Value > High_) then
+        raise ZbException.Create(Format(
+            'Invalid parameter: %s (must be %d to %d)', [Name, Low_, High_]
+        ));
+    Result := Value;
+end;
+
 { A JSON array of the documented email types, from a comma-separated list. }
 function ZbWarmupEmailTypesJson(const TypesOfEmails: String): String;
 var
@@ -277,8 +326,7 @@ end;
 
 { One Warmup request. Returns the raw body; HTTP 204 and an empty 200 are the
   documented empty successes and come back as ''. }
-function WarmupSend(const Method, Path, Query, Body: String;
-    const Secrets: array of String): TZbRequestResponse;
+function WarmupSend(const Method, Path, Query, Body: String): TZbRequestResponse;
 var
     Url: String;
 begin
@@ -289,39 +337,34 @@ begin
             Method, Url, Body, JSON_CONTENT_TYPE, 'API-Key', ZbWarmupApiKey
         );
     except
+        { A ZbException already has the Warmup secrets masked (WarmupRedact). }
         on e: ZbException do
-        begin
-            e.Message := WarmupRedact(e.Message, Secrets);
-            e.Payload := WarmupRedact(e.Payload, Secrets);
             raise;
-        end;
         on e: Exception do
-            raise ZbException.Create(WarmupRedact(e.Message, Secrets));
+            raise ZbException.Create(e.Message);
     end;
 end;
 
 function WarmupJson(const Method, Path, Query, Body: String): String;
 begin
-    Result := Trim(WarmupSend(Method, Path, Query, Body, []).Payload);
-end;
-
-function WarmupJsonWithSecrets(const Method, Path, Query, Body: String;
-    const Secrets: array of String): String;
-begin
-    Result := Trim(WarmupSend(Method, Path, Query, Body, Secrets).Payload);
+    Result := Trim(WarmupSend(Method, Path, Query, Body).Payload);
 end;
 
 { A CSV download. The API labels an error as JSON or HTML, so neither is a
-  file. }
+  file: an empty body, a JSON or HTML content type, or a body that is a JSON
+  object or array (an HTML body already raised in WarmupSend) is an error. }
 function WarmupCsv(const Path, Query, DownloadPath: String): String;
 var
     Response: TZbRequestResponse;
     Handle: TFileStream;
-    Directory: String;
+    Directory, Trimmed, ContentType: String;
 begin
-    Response := WarmupSend('GET', Path, Query, '', []);
+    Response := WarmupSend('GET', Path, Query, '');
     Result := Response.Payload;
-    if (Trim(Result) = '') or (Pos(JSON_CONTENT_TYPE, LowerCase(Response.ContentType)) > 0) then
+    Trimmed := Trim(Result);
+    ContentType := LowerCase(Response.ContentType);
+    if (Trimmed = '') or (Trimmed[1] = '{') or (Trimmed[1] = '[') or
+       (Pos(JSON_CONTENT_TYPE, ContentType) > 0) or (Pos('text/html', ContentType) > 0) then
         raise ZbException.FromResponse('', Response);
     if DownloadPath = '' then
         Exit;
@@ -416,9 +459,9 @@ begin
             if Options^.ManagedSending^.Timezone <> '' then
                 AddField(Sending, JsonString('timezone', Options^.ManagedSending^.Timezone));
             if Options^.ManagedSending^.TimezoneOffsetSpecified then
-                AddField(Sending, JsonInt(
+                AddField(Sending, JsonNumber(
                     'timezone_offset',
-                    InRange(Options^.ManagedSending^.TimezoneOffset, -11, 14, 'timezone_offset')
+                    InRangeFloat(Options^.ManagedSending^.TimezoneOffset, -11, 14, 'timezone_offset')
                 ));
             if Options^.ManagedSending^.WarmupStartDate <> '' then
                 AddField(Sending, JsonString(
@@ -717,10 +760,12 @@ begin
     AddField(Body, JsonString('password', RequiredParam(Password, 'password')));
     AddField(Body, JsonString('server', RequiredParam(Server, 'server')));
     AddField(Body, JsonInt('port', InRange(Port, 1, 65535, 'port')));
-    Result := WarmupJsonWithSecrets(
-        'POST', '/test-smtp-configuration', '', Concat('{', Body, '}'),
-        [Password, Username]
-    );
+    WarmupCallSecrets := Concat(Trim(Password), #0, Trim(Username));
+    try
+        Result := WarmupJson('POST', '/test-smtp-configuration', '', Concat('{', Body, '}'));
+    finally
+        WarmupCallSecrets := '';
+    end;
 end;
 
 procedure Register;
@@ -729,5 +774,6 @@ end;
 
 initialization
     ZbWarmupApiKey := '';
+    ZbRegisterSecretRedactor(@WarmupRedact);
 
 end.
