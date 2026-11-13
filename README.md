@@ -77,7 +77,7 @@ The methods implemented in this library can raise `ZbException`.
     - `ZbValidateEmail` (returns `TZbValidationResult`) - validate one email
     - `ZbBatchValidateEmails` (retrns `TZBBatchValidation`) - validate a list of emails
 - __ZbBulk__ - bulk email validation or AI scoring (bulk base URL: `https://bulkapi.zerobounce.net/v2`; see [v2 send file](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-send-file), [v2 file status](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-file-status), [v2 get file](https://www.zerobounce.net/docs/email-validation-api-quickstart/v2-get-file))
-    - `TZbBulkParams` - column indexes and flags for file submit; set `AllowPhase2Specified` and `AllowPhase2` to send `allow_phase_2` on **validation** sendfile only (not AI scoring), and `RemoveDuplicateSpecified` and `RemoveDuplicate` to send `remove_duplicate` (otherwise the API default, true, applies).
+    - `TZbBulkParams` - column indexes and flags for file submit; set `AllowPhase2Specified` and `AllowPhase2` to send `allow_phase_2` on **validation** sendfile only (not AI scoring), and `RemoveDuplicate` for `remove_duplicate`, which is always sent (as in 3.0.x; `False` in a zero-filled record; `RemoveDuplicateSpecified` is kept for source compatibility and ignored).
     - `TZbGetFileOptions` / `PTZbGetFileOptions` - optional `download_type` (`DownloadType`) and validation-only `activity_data` (`ActivityDataSpecified` + `ActivityData`); pass `@Options` as the second argument to result-fetch functions, or `nil` for defaults.
     - Constants in __ZbUtility__: `ZB_DOWNLOAD_TYPE_PHASE_1`, `ZB_DOWNLOAD_TYPE_PHASE_2`, `ZB_DOWNLOAD_TYPE_COMBINED`.
     - Bulk Email validation:

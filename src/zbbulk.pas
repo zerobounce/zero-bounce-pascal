@@ -21,15 +21,15 @@ type
         GenderColumn: Integer;
         IpAddressColumn: Integer;
         HasHeaderRow: Boolean;
-        { Sent as remove_duplicate only when RemoveDuplicateSpecified is True. }
+        { Always sent as remove_duplicate, as in 3.0.x; a zero-filled record
+          sends false. }
         RemoveDuplicate: Boolean;
         { When AllowPhase2Specified, sends allow_phase_2 (validation bulk sendfile only). }
         AllowPhase2Specified: Boolean;
         AllowPhase2: Boolean;
-        { Whether to send RemoveDuplicate. Left False, nothing is sent and the
-          API's default (True) applies, so a zero-filled record no longer turns
-          de-duplication off. Last in the record, so record constants written
-          for the older layout still compile. }
+        { Kept for source compatibility and ignored: RemoveDuplicate is always
+          sent, as in the released 3.0.x. Last in the record, so record
+          constants written for the older layout still compile. }
         RemoveDuplicateSpecified: Boolean;
     end;
 
@@ -83,8 +83,10 @@ implementation
             Result.AddPair('ip_address_column', IntToStr(SubmitParams.IpAddressColumn));
 
         Result.AddPair('has_header_row', StrBool(SubmitParams.HasHeaderRow));
-        if SubmitParams.RemoveDuplicateSpecified then
-            Result.AddPair('remove_duplicate', StrBool(SubmitParams.RemoveDuplicate));
+        { Always sent, with the caller's value (false in a zero-filled record),
+          as the released 3.0.x did: changing a released default is a breaking
+          change (standard.md, sendfile settled shapes). }
+        Result.AddPair('remove_duplicate', StrBool(SubmitParams.RemoveDuplicate));
 
         if (Endpoint = ENDPOINT_FILE_SEND) and SubmitParams.AllowPhase2Specified then
             Result.AddPair('allow_phase_2', StrBool(SubmitParams.AllowPhase2));

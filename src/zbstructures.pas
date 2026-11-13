@@ -32,6 +32,9 @@ type
         function GetArray(Key: String; OUT JArray: TJSONArray): Boolean;
         { The trimmed value when it is a JSON string, or ''. }
         function GetText(Key: String): String;
+        { The string field Key, which the result cannot do without: present,
+          not null, and a JSON string. Raises otherwise. }
+        function GetRequiredString(Key: String): String;
         function KeyCount: Integer;
         function KeyAt(Index: Integer): String;
     end;
@@ -591,6 +594,15 @@ implementation
         raise Error;
     end;
 
+    { Field types are part of the response shape (standard E7): a field that
+      arrives with a JSON type its model does not take is not the API's answer.
+      The call turns this into a ZbException with the HTTP status. }
+    procedure ZbRaiseFieldType(const Key: String);
+    begin
+        raise Exception.CreateFmt(
+            'ZeroBounce returned the field "%s" missing or with the wrong JSON type.', [Key]);
+    end;
+
     constructor TZbJson.Create(JsonContent: String);
     begin
         inherited Create;
@@ -654,11 +666,26 @@ implementation
 
         {$IFDEF FPC}
         if JValue.IsNull then exit;
+        if JValue.JSONType <> jtString then ZbRaiseFieldType(Key);
         Result := JValue.AsString;
         {$ELSE}
         if JValue.Null then exit;
+        if not (JValue is TJSONString) then ZbRaiseFieldType(Key);
         Result := JValue.AsType<String>;
         {$ENDIF}
+    end;
+
+    function TZbJson.GetRequiredString(Key: String): String;
+    var
+        JValue: TZbJSONValue;
+    begin
+        JValue := GetValue(Key);
+        {$IFDEF FPC}
+        if (JValue = nil) or (JValue.JSONType <> jtString) then ZbRaiseFieldType(Key);
+        {$ELSE}
+        if (JValue = nil) or not (JValue is TJSONString) then ZbRaiseFieldType(Key);
+        {$ENDIF}
+        Result := GetString(Key);
     end;
 
     function TZbJson.GetInteger(Key: String): Integer;
@@ -671,9 +698,15 @@ implementation
 
         {$IFDEF FPC}
         if JValue.IsNull then exit;
+        { A JSON integer: fpjson would read true as 1, 5.5 as 6 and "5" as 5. }
+        if not ((JValue is TJSONIntegerNumber) or (JValue is TJSONInt64Number)) then
+            ZbRaiseFieldType(Key);
         Result := JValue.AsInteger;
         {$ELSE}
         if JValue.Null then exit;
+        if not (JValue is TJSONNumber) or (Pos('.', JValue.Value) > 0) or
+            (Pos('e', LowerCase(JValue.Value)) > 0) then
+            ZbRaiseFieldType(Key);
         Result := JValue.AsType<Integer>;
         {$ENDIF}
     end;
@@ -688,9 +721,11 @@ implementation
 
         {$IFDEF FPC}
         if JValue.IsNull then exit;
+        if JValue.JSONType <> jtBoolean then ZbRaiseFieldType(Key);
         Result := JValue.AsBoolean;
         {$ELSE}
         if JValue.Null then exit;
+        if not (JValue is TJSONBool) then ZbRaiseFieldType(Key);
         Result := JValue.AsType<Boolean>;
         {$ENDIF}
     end;
@@ -819,6 +854,14 @@ implementation
             Result := EncodeDateTime(Year, Month, Day, Hour, Minute, Second, Milis);
         end;
     begin
+        { A result names its address and status, as JSON strings. The one
+          answer without them is a greylist_processing validate still in
+          progress, which carries its text in Message. }
+        if JsonObj.GetText('Message') = '' then
+        begin
+            JsonObj.GetRequiredString('address');
+            JsonObj.GetRequiredString('status');
+        end;
         Result.Address :=       JsonObj.GetString('address');
         Result.Status :=        JsonObj.GetString('status');
         Result.SubStatus :=     JsonObj.GetString('sub_status');
@@ -932,6 +975,29 @@ implementation
         J: TZbJson;
         V: TZbJSONValue;
         Trimmed: String;
+
+        function HasText(const Key: String): Boolean;
+        var
+            Value: TZbJSONValue;
+        begin
+            Value := J.GetValue(Key);
+            {$IFDEF FPC}
+            if (Value = nil) or Value.IsNull then
+                Result := False
+            else if Value.JSONType = jtString then
+                Result := Length(Trim(Value.AsString)) > 0
+            else
+                Result := True;
+            {$ELSE}
+            if (Value = nil) or Value.Null then
+                Result := False
+            else if Value is TJSONString then
+                Result := Length(Trim(Value.Value)) > 0
+            else
+                Result := True;
+            {$ENDIF}
+        end;
+
     begin
         Result := False;
         Trimmed := Trim(JsonContent);
@@ -981,17 +1047,9 @@ implementation
                 end;
                 {$ENDIF}
             end;
-            if Length(Trim(J.GetString('message'))) > 0 then
-            begin
-                Result := True;
-                Exit;
-            end;
-            if Length(Trim(J.GetString('error'))) > 0 then
-            begin
-                Result := True;
-                Exit;
-            end;
-            if Length(Trim(J.GetString('error_message'))) > 0 then
+            { Any message, error or error_message that is not null or blank
+              (a JSON object in place of a file is an error anyway). }
+            if HasText('message') or HasText('error') or HasText('error_message') then
             begin
                 Result := True;
                 Exit;

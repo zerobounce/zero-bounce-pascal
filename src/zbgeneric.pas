@@ -31,8 +31,27 @@ procedure Register;
 implementation
 
 
+    { Whether Text is an optional '-' and decimal digits only, in Integer range. }
+    function ZbIsIntegerText(const Text: String): Boolean;
+    var
+        I, Start: Integer;
+        Value: Int64;
+    begin
+        Result := False;
+        Start := 1;
+        if (Length(Text) > 0) and (Text[1] = '-') then
+            Start := 2;
+        if Length(Text) < Start then
+            Exit;
+        for I := Start to Length(Text) do
+            if not (Text[I] in ['0'..'9']) then
+                Exit;
+        Result := TryStrToInt64(Text, Value) and (Value >= Low(Integer)) and (Value <= High(Integer));
+    end;
+
     function ZbGetCredits : Integer;
     var
+        CreditsText: String;
         UrlToAccess: string;
         response: TZbRequestResponse;
         error: ZbException;
@@ -42,7 +61,13 @@ implementation
 
         // attempt json parsing
         try
-            Result := TZbJSon.Create(response.Payload).GetInteger('Credits');
+            { Credits is a JSON string holding an integer ("-1" for a dead
+              key); missing, null, another JSON type, or text that is not an
+              integer ("abc", "5.0") is not an answer. }
+            CreditsText := TZbJSon.Create(response.Payload).GetRequiredString('Credits');
+            if not ZbIsIntegerText(CreditsText) then
+                raise Exception.Create('ZeroBounce returned the field "Credits" missing or with the wrong JSON type.');
+            Result := StrToInt(CreditsText);
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);

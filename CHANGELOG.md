@@ -7,14 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Breaking
-
-- Bulk and scoring `sendfile` (`ZbBulkValidationFileSubmit`, `ZbAiScoringFileSubmit`) send `remove_duplicate` only when the new `TZbBulkParams.RemoveDuplicateSpecified` (last in the record) is `True`. 3.0.x always sent `RemoveDuplicate`, so a zero-filled record (as in `examples/fpc/ExampleBulkValidation.lpr`) sent `false` and turned off the API's default de-duplication. A record cannot tell an explicit `RemoveDuplicate := False` from a zero-filled one, so the flag is needed: left `False`, nothing is sent and the API's default (true) applies.
-
-  **Upgrading from 3.0.x:** code that sets `RemoveDuplicate := False` to keep duplicate emails must also set `RemoveDuplicateSpecified := True`; without it, `false` is not sent and the API removes duplicates. Code that sets `RemoveDuplicate := True`, or leaves the record zero-filled, needs no change (the API's default is true). Record constants written for the 3.0.x layout still compile, with a "Some fields ... were not initialized" warning.
-
 ### Fixed
 
+- Typed calls took an HTTP 200 JSON object whose fields were missing, null or of another JSON type as a result, coercing or defaulting them: `ZbGetCredits` returned `0` for `{}` or `{"Credits":null}`, `1` for `{"Credits":true}`, and `6` for `{"Credits":5.5}`; `ZbValidateEmail` returned `'5'` as the address for `{"address":5,...}` and `'7'` as the status for `{"status":7}`, and a result with no address or status at all for `{}`; any string field took a number or boolean as text, and an integer field took `true` or `5.5`. Field types are now part of the response shape: such a body raises `ZbException` with the HTTP status (200) (`Json Error: ZeroBounce returned the field "<name>" missing or with the wrong JSON type.`). `Credits` must be a JSON string holding an integer (`"-1"`, `"12345"`); `ZbValidateEmail` (and each `ZbBatchValidateEmails` row) needs `address` and `status` as strings, except a greylist answer that carries its text in `Message`, which is still a result. `null` is still accepted for every optional field, and the documented example responses still parse. Warmup and the raw-JSON calls are unchanged.
+- Offline tests: the dead-key bodies `{"error": ...}`, `{"error_message": ...}` and `{"Error": ...}` on an HTTP 200 over every public request function (the `sendfile` family of uploads and Warmup included); a `\uXXXX` escape for each UTF-8 sequence length (2, 3 and 4 bytes) in the redaction check, whose 2- and 3-byte branches had no test.
 - A chunked download cut mid-stream came back as the whole result: fphttpclient stops reading a chunked body when the connection closes and reports nothing, so `ZbBulkValidationResultFetch` returned the 34 bytes that had arrived as the file. Every request now notes when the server closed the connection, and a chunked body that ends that way, before its last (empty) chunk, raises `ZbException` ("cut short") with status 0, on every transport and download (Warmup CSV included).
 - `ZbBulkValidationResultFetch`, `ZbAiScoringResultFetch`, `ZbEmailFinderResultFetch` and `ZbDomainSearchResultFetch` returned `HasContent = True` for an empty HTTP 200 body, and for an HTML page whose body did not look like HTML (a proxy's `<p>Access denied by proxy</p>` sent as `text/html`). Both now raise `ZbException` with the status; a `text/html` content type is checked in any letter case.
 - An answer cut short was returned as the result on the JSON POST (`ZbBatchValidateEmails`), form POST (`ZbValidateEmail` with `UsePost`, `ZbScoreEmailPost`, the S3/SFTP jobs, filters, `ZbSendEvaluatedFile`) and multipart upload (`ZbBulkValidationFileSubmit`, `ZbAiScoringFileSubmit`, `ZbSendEmailFinderFile`, `ZbSendDomainSearchFile`, `ZbSendListEvaluatorFile`) requests: when the connection closed before the `Content-Length` the server promised, whatever had arrived was parsed, and if it parsed it came back as a success. With FPC these requests now raise `ZbException` (`The response from ZeroBounce was cut short: N of M bytes received`, `StatusCode` 0), as GET requests and the Warmup and Inbox Placement Tester requests have since 3.0.1. The Delphi branch is unchanged.
@@ -50,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
+- `TZbBulkParams.RemoveDuplicateSpecified` (last in the record) has no effect: bulk and scoring `sendfile` always send `remove_duplicate` with `RemoveDuplicate`, `false` in a zero-filled record, as 3.0.x did. The field stays so code written against the pre-release that sent `remove_duplicate` only when it was set still compiles.
 - `TZbWarmupManagedSending.TimezoneOffset` (`Integer`, whole hours only): use `TimezoneOffsetHours` with `TimezoneOffsetHoursSpecified`. It keeps its type and behaviour and is ignored when `TimezoneOffsetHoursSpecified` is set.
 
 ## [3.0.1] - 2026-11-11

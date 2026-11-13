@@ -42,6 +42,10 @@ type
     procedure TestADeeplyNestedBodyIsAnErrorOnEveryCall;
     procedure TestEachDecodeStepOfTheRedactionCheckIsNeeded;
     procedure TestANulInTheBodyDoesNotEndTheRedactionCheck;
+    procedure TestTypedCallsRejectFieldsOfTheWrongType;
+    procedure TestEveryFieldAModelReadsIsTypeChecked;
+    procedure TestDocumentedExamplesStillParse;
+    procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
   end;
 
 implementation
@@ -2483,6 +2487,8 @@ begin
     if (E <> nil) and not ((E is ZbException) and (ZbException(E).StatusCode = 200) and
        (Pos('not valid JSON', E.Message) = 0) and
        ((Pos('" not found while parsing', E.Message) > 0) or (Pos('Invalid date/timestamp', E.Message) > 0) or
+        { getcredits and validate need named fields (E7). }
+        (Pos('missing or with the wrong JSON type', E.Message) > 0) or
         (((Pos('ZbGetApiUsage', Name) = 1) or (Pos('Status', Name) > 0)) and
          (E.Message = 'Json Error: ' + Trim(CorpusBody))))) then
       SweepMissed := SweepMissed + Format('%s (%s: %s); ', [Name, E.ClassName, E.Message]);
@@ -2945,6 +2951,12 @@ begin
   ExpectOmitted('plus as space', FuzzEncode(FuzzEncode(FUZZ_KEY, 1), 0));
   ExpectOmitted('\u escapes', UnicodeEveryByte(FUZZ_KEY));
   ExpectOmitted('surrogate pair', 'k\ud83d\udd11y', 'k'#$F0#$9F#$94#$91'y');
+  { A \uXXXX escape for each UTF-8 sequence length the decoder writes: 1 byte
+    (above), 2 bytes (U+00E9), 3 bytes (U+20AC), 4 bytes (the pair above, and
+    upper-case hex here). }
+  ExpectOmitted('\u escape, 2-byte UTF-8', 'k\u00e9y', 'k'#$C3#$A9'y');
+  ExpectOmitted('\u escape, 3-byte UTF-8', 'k\u20ACy', 'k'#$E2#$82#$AC'y');
+  ExpectOmitted('\u escape, 4-byte UTF-8', 'k\uD83D\uDD11y', 'k'#$F0#$9F#$94#$91'y');
   ExpectOmitted('four URL layers', Url4);
   ExpectOmitted('after %00', 'bad %00 then ' + PercentEveryByte(FUZZ_KEY, False));
   ExpectOmitted('after \u0000', 'bad \u0000 then ' + UnicodeEveryByte(FUZZ_KEY));
@@ -2997,6 +3009,403 @@ begin
     UseDefaultUrls;
   end;
 end;
+
+{ -- E7: field types are part of the shape ------------------------------- }
+
+{ What one call raised for the mocked body: '' for a result, 'E200' for a
+  ZbException with status 200, else the exception's class and message. }
+function OutcomeOf(E: Exception): String;
+begin
+  if E = nil then
+    Result := ''
+  else if (E is ZbException) and (ZbException(E).StatusCode = 200) then
+    Result := 'E200'
+  else
+    Result := E.ClassName + ': ' + E.Message;
+end;
+
+procedure ExpectFieldError(const What, Body: String; E: Exception);
+begin
+  if OutcomeOf(E) <> 'E200' then
+    SweepMissed := SweepMissed + Format('%s with %s (%s); ', [What, Body, OutcomeOf(E)]);
+end;
+
+procedure TTestOffline.TestTypedCallsRejectFieldsOfTheWrongType;
+const
+  CREDITS: array[0..12] of String = ('{}', '{"Credits":null}', '{"Credits":true}', '{"Credits":5}',
+    '{"Credits":5.5}', '{"Credits":"abc"}', '{"Credits":"5.0"}', '{"Credits":""}', '{"Credits":" 5"}',
+    '{"Credits":"5abc"}', '{"Credits":"99999999999999999999"}', '{"Credits":[1]}', '{"Credits":{}}');
+  VALIDATE: array[0..10] of String = ('{}', '{"address":true,"status":"valid"}',
+    '{"address":"a@b.c","status":5}', '{"status":"valid"}', '{"address":"a@b.c"}',
+    '{"address":null,"status":"valid"}', '{"address":"a@b.c","status":null}',
+    '{"address":"a@b.c","status":"valid","free_email":"maybe"}',
+    '{"address":"a@b.c","status":"valid","domain_age_days":9692}',
+    '{"address":"a@b.c","status":"valid","catchall_domain":"no"}',
+    '{"address":"a@b.c","status":"valid","Message":7}');
+  ROWS: array[0..5] of String = ('{}', '{"status":"valid"}', '{"address":"a@b.c"}',
+    '{"address":null,"status":"valid"}', '{"address":"a@b.c","status":null}',
+    '{"address":"a@b.c","status":5}');
+var
+  I: Integer;
+  Emails: array[0..0] of TZbEmailAndIp;
+  Body: String;
+begin
+  { checks.md E7: getcredits, validate and each batch row with a missing,
+    null or wrong-typed field fail with status 200; nothing is coerced or
+    defaulted. }
+  SweepMissed := '';
+  Emails[0].Email := 'a@b.c';
+  Emails[0].Ip := '';
+  try
+    UseDefaultUrls;
+    ZBInitialize('field-types');
+    for I := Low(CREDITS) to High(CREDITS) do
+    begin
+      ZBMockResponse(200, CREDITS[I], 'application/json');
+      try ZbGetCredits; ExpectFieldError('ZbGetCredits', CREDITS[I], nil);
+      except on E: Exception do ExpectFieldError('ZbGetCredits', CREDITS[I], E); end;
+    end;
+    for I := Low(VALIDATE) to High(VALIDATE) do
+    begin
+      ZBMockResponse(200, VALIDATE[I], 'application/json');
+      try ZbValidateEmail('a@b.c'); ExpectFieldError('ZbValidateEmail', VALIDATE[I], nil);
+      except on E: Exception do ExpectFieldError('ZbValidateEmail', VALIDATE[I], E); end;
+      try CallTransport(tpFormPost); ExpectFieldError('ZbValidateEmail(UsePost)', VALIDATE[I], nil);
+      except on E: Exception do ExpectFieldError('ZbValidateEmail(UsePost)', VALIDATE[I], E); end;
+    end;
+    for I := Low(ROWS) to High(ROWS) do
+    begin
+      Body := '{"email_batch":[' + ROWS[I] + '],"errors":[]}';
+      ZBMockResponse(200, Body, 'application/json');
+      try ZbBatchValidateEmails(Emails); ExpectFieldError('ZbBatchValidateEmails', Body, nil);
+      except on E: Exception do ExpectFieldError('ZbBatchValidateEmails', Body, E); end;
+    end;
+    ZBMockResponse(200, '{"total":5.5}', 'application/json');
+    try ZbGetApiUsage; ExpectFieldError('ZbGetApiUsage', 'total 5.5', nil);
+    except on E: Exception do ExpectFieldError('ZbGetApiUsage', 'total 5.5', E); end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('typed calls that took a field of the wrong type', '', SweepMissed);
+end;
+
+var
+  { The outcome of each typed call of the last field sweep, as Name=Outcome. }
+  FieldOutcomes: TStringList;
+
+procedure RecordFieldOutcome(const Name: String; E: Exception);
+begin
+  if (Copy(Name, 1, 2) = 'ZB') or not IsTypedCall(Name) then
+    Exit;
+  FieldOutcomes.Values[Name] := OutcomeOf(E);
+  if FieldOutcomes.Values[Name] = '' then
+    FieldOutcomes.Values[Name] := 'OK';
+end;
+
+{ Every field name a response model reads (GetString, GetInteger, GetBoolean,
+  GetArray, GetRequiredString, and score), scanned from src/, so a field added
+  later is swept too. }
+function ModelFieldNames: TStringList;
+const
+  UNITS: array[0..3] of String = ('zbstructures.pas', 'zbgeneric.pas', 'zbvalidation.pas', 'zbbulk.pas');
+  READERS: array[0..4] of String = ('GetString(''', 'GetInteger(''', 'GetBoolean(''', 'GetArray(''',
+    'GetRequiredString(''');
+var
+  SrcDir, Text, Name: String;
+  Source: TStringList;
+  U, R, P, Q: Integer;
+begin
+  Result := TStringList.Create;
+  Result.Sorted := True;
+  Result.Duplicates := dupIgnore;
+  Result.CaseSensitive := True;
+  SrcDir := ExtractFilePath(ParamStr(0)) + 'src' + PathDelim;
+  if not FileExists(SrcDir + UNITS[0]) then
+    SrcDir := IncludeTrailingPathDelimiter(GetCurrentDir) + 'src' + PathDelim;
+  Source := TStringList.Create;
+  try
+    for U := Low(UNITS) to High(UNITS) do
+    begin
+      Source.LoadFromFile(SrcDir + UNITS[U]);
+      Text := Source.Text;
+      for R := Low(READERS) to High(READERS) do
+      begin
+        P := Pos(READERS[R], Text);
+        while P > 0 do
+        begin
+          Q := PosEx('''', Text, P + Length(READERS[R]));
+          Name := Copy(Text, P + Length(READERS[R]), Q - P - Length(READERS[R]));
+          if (Name <> '') and (Pos(' ', Name) = 0) then
+            Result.Add(Name);
+          P := PosEx(READERS[R], Text, Q);
+        end;
+      end;
+    end;
+  finally
+    Source.Free;
+  end;
+  Result.Add('score');
+end;
+
+{ A JSON object every typed call takes, with Field (and a row of each list
+  carrying it) given as Value when WithField. }
+function FieldSweepBody(const Field: String; WithField: Boolean; const Value: String = '{}'): String;
+const
+  BASE: array[0..11] of String = (
+    'success', 'true', 'message', '"File Accepted"', 'file_id', '"fid"', 'file_name', '"f.csv"',
+    'Credits', '"7"', 'address', '"a@b.c"');
+  MORE: array[0..9] of String = (
+    'status', '"valid"', 'start_date', '"1/12/2010"', 'end_date', '"12/1/2030"',
+    'upload_date', '"2023-04-26T17:52:23Z"', 'complete_percentage', '"100%"');
+var
+  I: Integer;
+  Wrong, Row, Small: String;
+begin
+  Wrong := '';
+  if WithField then
+    Wrong := '"' + Field + '":' + Value;
+  Result := '{' + Wrong;
+  I := Low(BASE);
+  while I < High(BASE) do
+  begin
+    if not WithField or (BASE[I] <> Field) then
+      Result := Result + IfThen(Length(Result) > 1, ',', '') + '"' + BASE[I] + '":' + BASE[I + 1];
+    Inc(I, 2);
+  end;
+  I := Low(MORE);
+  while I < High(MORE) do
+  begin
+    if not WithField or (MORE[I] <> Field) then
+      Result := Result + ',"' + MORE[I] + '":' + MORE[I + 1];
+    Inc(I, 2);
+  end;
+  Row := '{"address":"a@b.c","status":"valid"';
+  if WithField and (Field <> 'address') and (Field <> 'status') then
+    Row := Row + ',' + Wrong
+  else if WithField then
+    Row := '{' + Wrong + IfThen(Field = 'address', ',"status":"valid"', ',"address":"a@b.c"');
+  Row := Row + '}';
+  Small := '{' + Wrong + '}';
+  if not WithField or (Field <> 'email_batch') then
+    Result := Result + ',"email_batch":[' + Row + ']';
+  if not WithField or (Field <> 'errors') then
+    Result := Result + ',"errors":[' + Small + ']';
+  if not WithField or (Field <> 'other_domain_formats') then
+    Result := Result + ',"other_domain_formats":[' + Small + ']';
+  Result := Result + '}';
+end;
+
+procedure TTestOffline.TestEveryFieldAModelReadsIsTypeChecked;
+const
+  { One value of each JSON type; a field takes at most one of them. }
+  WRONG: array[0..4] of String = ('7.5', 'true', '"zz-7"', '[1]', '{}');
+var
+  Fields, Accepting: TStringList;
+  All, Missed: String;
+  I, J, V, Rejected, TypesRejected: Integer;
+begin
+  { E7 by construction: every field any model reads, given as an object (a
+    type no scalar or list field takes), fails every typed call with 200; and
+    each field alone, given a value of each JSON type in turn, is rejected
+    (by a typed call that takes the same body without it) for at least four
+    of the five types: everything but its own. }
+  Fields := ModelFieldNames;
+  FieldOutcomes := TStringList.Create;
+  Accepting := TStringList.Create;
+  Missed := '';
+  try
+    { 70 fields when this was written. }
+    AssertTrue(Format('only %d fields scanned', [Fields.Count]), Fields.Count >= 65);
+    UseDefaultUrls;
+    ZBInitialize('field-sweep');
+    ZbWarmupInitialize('field-sweep-warmup');
+    All := '{';
+    for I := 0 to Fields.Count - 1 do
+      All := All + IfThen(I > 0, ',', '') + '"' + Fields[I] + '":{}';
+    All := All + '}';
+    ZBMockResponse(200, All, 'application/json');
+    SweepEveryPublicCall(@RecordFieldOutcome);
+    AssertTrue(Format('only %d typed calls swept', [FieldOutcomes.Count]), FieldOutcomes.Count > 25);
+    for J := 0 to FieldOutcomes.Count - 1 do
+      if FieldOutcomes.ValueFromIndex[J] <> 'E200' then
+        Missed := Missed + Format('%s with every field wrong (%s); ', [FieldOutcomes.Names[J], FieldOutcomes.ValueFromIndex[J]]);
+    for I := 0 to Fields.Count - 1 do
+    begin
+      FieldOutcomes.Clear;
+      ZBMockResponse(200, FieldSweepBody(Fields[I], False), 'application/json');
+      SweepEveryPublicCall(@RecordFieldOutcome);
+      Accepting.Clear;
+      for J := 0 to FieldOutcomes.Count - 1 do
+        if FieldOutcomes.ValueFromIndex[J] = 'OK' then
+          Accepting.Add(FieldOutcomes.Names[J]);
+      TypesRejected := 0;
+      for V := Low(WRONG) to High(WRONG) do
+      begin
+        FieldOutcomes.Clear;
+        ZBMockResponse(200, FieldSweepBody(Fields[I], True, WRONG[V]), 'application/json');
+        SweepEveryPublicCall(@RecordFieldOutcome);
+        Rejected := 0;
+        for J := 0 to Accepting.Count - 1 do
+          if FieldOutcomes.Values[Accepting[J]] = 'E200' then
+            Inc(Rejected);
+        if Rejected > 0 then
+          Inc(TypesRejected);
+      end;
+      if TypesRejected < 4 then
+        Missed := Missed + Format('%s is rejected for only %d JSON types; ', [Fields[I], TypesRejected]);
+    end;
+  finally
+    UseDefaultUrls;
+    Fields.Free;
+    Accepting.Free;
+    FreeAndNil(FieldOutcomes);
+  end;
+  AssertEquals('fields of the wrong type that a typed call took', '', Missed);
+end;
+
+procedure TTestOffline.TestDocumentedExamplesStillParse;
+const
+  ROW = '{"address":"valid@example.com","status":"valid","sub_status":"","free_email":false,' +
+    '"did_you_mean":null,"account":null,"domain":null,"domain_age_days":"9692","smtp_provider":"example",' +
+    '"catchall_domain":false,"mx_found":"true","mx_record":"mx.example.com","firstname":"zero",' +
+    '"lastname":"bounce","gender":"male","country":"United States","region":"Florida",' +
+    '"city":"West Palm Beach","zipcode":"33401","processed_at":"2023-03-23 13:30:28.105"}';
+  NULL_ROW = '{"address":"invalid@example.com","status":"invalid","sub_status":"failed_syntax_check",' +
+    '"free_email":false,"did_you_mean":null,"account":"","domain":null,"domain_age_days":"",' +
+    '"smtp_provider":"","mx_found":"false","mx_record":null,"firstname":"","lastname":"",' +
+    '"gender":"","country":null,"region":null,"city":null,"zipcode":null,' +
+    '"processed_at":"2023-04-05 08:55:40.661"}';
+  USAGE_FIELDS: array[0..32] of String = ('status_invalid', 'status_catch_all', 'status_do_not_mail',
+    'status_spamtrap', 'status_unknown', 'sub_status_toxic', 'sub_status_disposable', 'sub_status_role_based',
+    'sub_status_possible_trap', 'sub_status_global_suppression', 'sub_status_timeout_exceeded',
+    'sub_status_mail_server_temporary_error', 'sub_status_mail_server_did_not_respond',
+    'sub_status_greylisted', 'sub_status_antispam_system', 'sub_status_does_not_accept_mail',
+    'sub_status_exception_occurred', 'sub_status_failed_syntax_check', 'sub_status_mailbox_not_found',
+    'sub_status_unroutable_ip_address', 'sub_status_possible_typo', 'sub_status_no_dns_entries',
+    'sub_status_role_based_catch_all', 'sub_status_accept_all', 'sub_status_mailbox_quota_exceeded',
+    'sub_status_forcible_disconnect', 'sub_status_failed_smtp_connection', 'sub_status_mx_forward',
+    'sub_status_alternate', 'sub_status_allowed', 'sub_status_blocked', 'sub_status_gold',
+    'sub_status_role_based_accept_all');
+  STATUS_OK = '{"success":true,"file_id":"e90e9b1d-8dc7-40eb-a7d9-999d52086a56","file_name":"emails2.txt",' +
+    '"upload_date":"2023-04-26T17:52:23Z","file_status":"Processing","complete_percentage":"100%",' +
+    '"error_reason":null,"return_url":"https://mock.value.com/"}';
+  STATUS_DELETED = '{"success":true,"file_id":"e90e9b1d-8dc7-40eb-a7d9-999d52086a56","file_name":"emails2.txt",' +
+    '"upload_date":"2023-04-26T17:52:23Z","file_status":"Deleted","complete_percentage":"0%",' +
+    '"error_reason":"mock value","return_url":null}';
+var
+  Usage, Missed: String;
+  I: Integer;
+  Emails: array[0..0] of TZbEmailAndIp;
+  Params: TZbBulkParams;
+
+  procedure Serve(const Body: String);
+  begin
+    ZBMockResponse(200, Body, 'application/json');
+  end;
+
+  procedure Fail(const What: String; E: Exception);
+  begin
+    Missed := Missed + Format('%s (%s: %s); ', [What, E.ClassName, E.Message]);
+  end;
+
+begin
+  { E7 ACCEPT: the documented example responses (zerobounce.net/docs, as the
+    SDKs' fixtures carry them) still parse, nulls included. }
+  Missed := '';
+  Emails[0].Email := 'valid@example.com';
+  Emails[0].Ip := '';
+  FillChar(Params, SizeOf(Params), 0);
+  Usage := '{"total":10,"status_valid":10,"start_date":"1/12/2010","end_date":"12/1/2030"';
+  for I := Low(USAGE_FIELDS) to High(USAGE_FIELDS) do
+    Usage := Usage + ',"' + USAGE_FIELDS[I] + '":0';
+  Usage := Usage + '}';
+  try
+    UseDefaultUrls;
+    ZBInitialize('documented');
+    Serve('{"Credits":"123456"}');
+    try AssertEquals(123456, ZbGetCredits); except on E: Exception do Fail('credits', E); end;
+    Serve('{"Credits":"-1"}');
+    try AssertEquals(-1, ZbGetCredits); except on E: Exception do Fail('credits -1', E); end;
+    Serve(Usage);
+    try AssertEquals(10, ZbGetApiUsage.Total); except on E: Exception do Fail('usage', E); end;
+    Serve('{"found":true,"active_in_days":"180"}');
+    try AssertEquals(180, ZbActivityData('a@example.com')); except on E: Exception do Fail('activity', E); end;
+    Serve('{"found":false,"active_in_days":null}');
+    try AssertEquals(-1, ZbActivityData('a@example.com')); except on E: Exception do Fail('activity null', E); end;
+    Serve(ROW);
+    try AssertEquals('valid', ZbValidateEmail('a@example.com').Status); except on E: Exception do Fail('validate', E); end;
+    Serve(NULL_ROW);
+    try AssertEquals('invalid', ZbValidateEmail('a@example.com').Status); except on E: Exception do Fail('validate nulls', E); end;
+    Serve('{"Message":"Greylist validation still in progress. Please try again later."}');
+    try ZbValidateEmail('a@example.com'); except on E: Exception do Fail('greylist', E); end;
+    Serve('{"email_batch":[' + ROW + '],"errors":[{"error":"Mock error message","email_address":"invalid@example.com"}]}');
+    try AssertEquals(1, ZbBatchValidateEmails(Emails).ErrorsLength); except on E: Exception do Fail('batch', E); end;
+    Serve('{"email_batch":[],"errors":[{"error":"Mock error message","email_address":"invalid@example.com"}]}');
+    try ZbBatchValidateEmails(Emails); except on E: Exception do Fail('batch errors only', E); end;
+    Serve('{"email_batch":[' + ROW + '],"errors":[]}');
+    try ZbBatchValidateEmails(Emails); except on E: Exception do Fail('batch no errors', E); end;
+    Serve('{"success":true,"message":"File Accepted","file_name":"emails2.txt",' +
+      '"file_id":"e90e9b1d-8dc7-40eb-a7d9-999d52086a56"}');
+    try ZbBulkValidationFileSubmit('email', Params); except on E: Exception do Fail('sendfile', E); end;
+    Serve(STATUS_OK);
+    try ZbBulkValidationFileStatusCheck('fid'); except on E: Exception do Fail('filestatus', E); end;
+    Serve(STATUS_DELETED);
+    try ZbBulkValidationFileStatusCheck('fid'); except on E: Exception do Fail('filestatus deleted', E); end;
+    Serve('{"success":true,"message":"File Deleted","file_name":"emails2.txt",' +
+      '"file_id":"e90e9b1d-8dc7-40eb-a7d9-999d52086a56"}');
+    try ZbBulkValidationResultDelete('fid'); except on E: Exception do Fail('deletefile', E); end;
+    Serve('{"email":"john.doe@example.com","email_confidence":"high","domain":"",' +
+      '"company_name":"Internet Assigned Numbers Authority","did_you_mean":"","failure_reason":""}');
+    try ZbFindEmailByDomain('example.com', 'A', 'B', 'C'); except on E: Exception do Fail('finder', E); end;
+    Serve('{"domain":"example.com","company_name":"","format":"first.last","confidence":"high",' +
+      '"did_you_mean":"","failure_reason":"","other_domain_formats":[{"format":"first_last",' +
+      '"confidence":"high"},{"format":"first","confidence":"medium"}]}');
+    try ZbDomainSearchByDomain('example.com'); except on E: Exception do Fail('domain search', E); end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('documented examples that did not parse', '', Missed);
+end;
+
+procedure ExpectDeadKeyError(const Name: String; E: Exception);
+begin
+  if Copy(Name, 1, 2) = 'ZB' then
+    Exit;
+  ExpectKeyMasked(Name, E);
+end;
+
+procedure TTestOffline.TestADeadKeyOn200IsAnErrorOnEveryCall;
+const
+  BODIES: array[0..2] of String = (
+    '{"error":"Invalid API key or your account ran out of credits"}',
+    '{"error_message":"Invalid API key or your account ran out of credits"}',
+    '{"Error":"Invalid API key or your account ran out of credits"}');
+var
+  I: Integer;
+  Missed: String;
+begin
+  { E2: the three dead-key spellings the API answers with on an HTTP 200,
+    over every public request function (the sendfile family of uploads, the
+    S3/SFTP jobs, Inbox Placement, Warmup and the raw-JSON calls included). }
+  Missed := '';
+  try
+    for I := Low(BODIES) to High(BODIES) do
+    begin
+      UseDefaultUrls;
+      ZBInitialize('dead-key-sweep');
+      ZbWarmupInitialize('dead-key-sweep-warmup');
+      SweepStatus := 200;
+      ZBMockResponse(200, BODIES[I], 'application/json');
+      SweepEveryPublicCall(@ExpectDeadKeyError);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[%s] %s', [BODIES[I], SweepMissed]);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('calls that took a dead-key body as a result', '', Missed);
+end;
+
 
 initialization
   Randomize;

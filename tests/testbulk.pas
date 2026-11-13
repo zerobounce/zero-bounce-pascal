@@ -44,7 +44,7 @@ type
         procedure TestSubmitParamProviderEmpty;
         procedure TestSubmitParamProviderPartial;
         procedure TestSubmitParamProviderFull;
-        procedure TestSubmitParamRemoveDuplicateOnlyWhenSpecified;
+        procedure TestSubmitParamRemoveDuplicateIsAlwaysSent;
         procedure TestSubmitParamAllowPhase2;
         procedure TestSubmitParamScoringOmitsAllowPhase2;
 
@@ -167,9 +167,8 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'api_key', MOCK_API_KEY);
         ExpectKeyInParamsMap(ParamsMap, 'email_address_column', '1');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'false');
-        { A zero-filled record does not choose remove_duplicate: the API's
-          default (true) applies. It used to send false. }
-        NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
+        { A zero-filled record sends remove_duplicate=false, as 3.0.x did. }
+        ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
 
         NotExpectKeyInParamsMap(ParamsMap, 'first_name_column');
         NotExpectKeyInParamsMap(ParamsMap, 'last_name_column');
@@ -190,7 +189,7 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'email_address_column', '2');
         ExpectKeyInParamsMap(ParamsMap, 'first_name_column', '1');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'false');
-        NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
+        ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
 
         NotExpectKeyInParamsMap(ParamsMap, 'last_name_column');
         NotExpectKeyInParamsMap(ParamsMap, 'gender_column');
@@ -200,7 +199,7 @@ begin
     end;
 end;
 
-procedure TTestBulk.TestSubmitParamRemoveDuplicateOnlyWhenSpecified;
+procedure TTestBulk.TestSubmitParamRemoveDuplicateIsAlwaysSent;
 var
     Params: TZbBulkParams;
     ParamsMap: TStringMapping;
@@ -221,11 +220,29 @@ begin
         finally
             ParamsMap.Free;
         end;
+        { RemoveDuplicateSpecified is ignored: the value is sent either way,
+          as in 3.0.x. }
         Params.RemoveDuplicateSpecified := False;
         ParamsMap := FileParamsMapFromRecord(Params, Endpoint);
         try
-            NotExpectKeyInParamsMap(ParamsMap, 'remove_duplicate');
+            ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
             ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'true');
+        finally
+            ParamsMap.Free;
+        end;
+        Params.RemoveDuplicate := True;
+        ParamsMap := FileParamsMapFromRecord(Params, Endpoint);
+        try
+            ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'true');
+        finally
+            ParamsMap.Free;
+        end;
+        { A zero-filled record (the 3.0.x examples) sends the released
+          default, false. }
+        FillChar(Params, SizeOf(Params), 0);
+        ParamsMap := FileParamsMapFromRecord(Params, Endpoint);
+        try
+            ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'false');
         finally
             ParamsMap.Free;
         end;
