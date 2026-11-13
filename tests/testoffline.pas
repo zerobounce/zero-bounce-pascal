@@ -3043,8 +3043,11 @@ const
     '{"Credits":5.0}', '{"Credits":1e3}', '{"Credits":2147483648}', '{"Credits":-2147483649}',
     '{"Credits":9223372036854775808}', '{"Credits":99999999999999999999}');
   { A score sent as a string must hold an integer. }
-  SCORES: array[0..4] of String = ('{"email":"a@b.c","score":5.5}', '{"email":"a@b.c","score":"5.5"}',
-    '{"email":"a@b.c","score":"abc"}', '{"email":"a@b.c","score":" 9"}', '{"email":"a@b.c","score":""}');
+  SCORES: array[0..7] of String = ('{"email":"a@b.c","score":5.5}', '{"email":"a@b.c","score":"5.5"}',
+    '{"email":"a@b.c","score":"abc"}', '{"email":"a@b.c","score":" 9"}', '{"email":"a@b.c","score":""}',
+    { Outside the Integer range: the score is an Integer, so these are errors too. }
+    '{"email":"a@b.c","score":99999999999}', '{"email":"a@b.c","score":2147483648}',
+    '{"email":"a@b.c","score":-2147483649}');
   VALIDATE: array[0..10] of String = ('{}', '{"address":true,"status":"valid"}',
     '{"address":"a@b.c","status":5}', '{"status":"valid"}', '{"address":"a@b.c"}',
     '{"address":null,"status":"valid"}', '{"address":"a@b.c","status":null}',
@@ -3127,8 +3130,8 @@ end;
 function ModelFieldNames: TStringList;
 const
   UNITS: array[0..3] of String = ('zbstructures.pas', 'zbgeneric.pas', 'zbvalidation.pas', 'zbbulk.pas');
-  READERS: array[0..4] of String = ('GetString(''', 'GetInteger(''', 'GetBoolean(''', 'GetArray(''',
-    'GetRequiredString(''');
+  READERS: array[0..6] of String = ('GetString(''', 'GetInteger(''', 'GetBoolean(''', 'GetArray(''',
+    'GetRequiredString(''', 'GetOptionalArray(''', 'GetMessageText(''');
 var
   SrcDir, Text, Name: String;
   Source: TStringList;
@@ -3408,7 +3411,7 @@ const
     zerobounce.net/docs (the credit balance, validate, file status, send file
     and delete file pages), and the repo's own fixtures for the answers the
     site gives no success example of. }
-  TYPED_EXAMPLES: array[0..16] of TTypedExample = (
+  TYPED_EXAMPLES: array[0..19] of TTypedExample = (
     (Call: 'credits'; Body: '{"Credits":2375323}'),
     (Call: 'credits'; Body: '{"Credits":"-1"}'),
     (Call: 'validate'; Body: '{'#10'      "address": "john.doe@zerobounce.net",'#10'      "status": "valid",'#10 +
@@ -3423,6 +3426,34 @@ const
     (Call: 'validate'; Body: '{"address":"a@example.com","Message":"Greylisted email, we will retry"}'),
     (Call: 'validatepost'; Body: '{"address":"a@example.com","status":"valid","sub_status":"","free_email":false,' +
       '"catchall_domain":false,"domain_age_days":"9692","mx_found":"true","firstname":"zero"}'),
+    (Call: 'batch'; Body: '{'#10'      "email_batch": ['#10'          {'#10 +
+      '              "address": "john.doe@zerobounce.net",'#10'              "status": "valid",'#10 +
+      '              "sub_status": "",'#10'              "free_email": false,'#10'              "catchall_domain": true,'#10 +
+      '              "did_you_mean": null,'#10'              "account": "johndoe",'#10'              "domain": "zerobounce.net",'#10 +
+      '              "domain_age_days": "3431",'#10'              "active_in_days": "30",'#10 +
+      '              "active_first_seen": "2026-02-25",'#10'              "smtp_provider": "g-suite",'#10 +
+      '              "mx_found": "true",'#10'              "mx_record": "aspmx.l.google.com",'#10 +
+      '              "firstname": "dan",'#10'              "lastname": "cotet",'#10'              "gender": "male",'#10 +
+      '              "country": null,'#10'              "region": null,'#10'              "city": null,'#10'              "zipcode": null,'#10 +
+      '              "processed_at": "2026-06-18 07:05:00.033"'#10'          },'#10 +
+      '          {'#10'              "address": "invalid@example.com",'#10'              "status": "invalid",'#10 +
+      '              "sub_status": "mailbox_not_found",'#10'              "free_email": false,'#10 +
+      '              "did_you_mean": null,'#10'              "account": null,'#10'              "domain": null,'#10 +
+      '              "domain_age_days": "9692",'#10'              "active_in_days": "365",'#10 +
+      '              "active_first_seen": "2026-02-25",'#10'              "smtp_provider": "example",'#10 +
+      '              "mx_found": "true",'#10'              "mx_record": "mx.example.com",'#10'              "catchall_domain": false,'#10 +
+      '              "firstname": "zero",'#10'              "lastname": "bounce",'#10'              "gender": "male",'#10 +
+      '              "country": null,'#10'              "region": null,'#10'              "city": null,'#10'              "zipcode": null,'#10 +
+      '              "processed_at": "2020-09-17 17:43:11.830"'#10'          },'#10 +
+      '          {'#10'              "address": "disposable@example.com",'#10'              "status": "do_not_mail",'#10 +
+      '              "sub_status": "disposable",'#10'              "free_email": false,'#10'              "did_you_mean": null,'#10 +
+      '              "account": null,'#10'              "domain": null,'#10'              "domain_age_days": "9692",'#10 +
+      '              "active_in_days": "365",'#10'              "active_first_seen": "2026-02-25",'#10 +
+      '              "smtp_provider": "example",'#10'              "mx_found": "true",'#10'              "mx_record": "mx.example.com",'#10 +
+      '              "catchall_domain": false,'#10'              "firstname": "zero",'#10'              "lastname": "bounce",'#10 +
+      '              "gender": "male",'#10'              "country": null,'#10'              "region": null,'#10'              "city": null,'#10 +
+      '              "zipcode": null,'#10'              "processed_at": "2020-09-17 17:43:11.830"'#10'          }'#10 +
+      '      ],'#10'      "errors": []'#10'  }'),
     (Call: 'batch'; Body: '{"email_batch":[{"address":"valid@example.com","status":"valid","sub_status":"",' +
       '"free_email":false,"did_you_mean":null,"account":null,"domain":null,"domain_age_days":"9692",' +
       '"smtp_provider":"example","catchall_domain":false,"mx_found":"true","mx_record":"mx.example.com",' +
@@ -3452,6 +3483,24 @@ const
       '        "file_name": "test2",'#10'        "file_id": "b222a0fd-90d5-416c-8f1a-9cc3851fc823"'#10'    }'),
     (Call: 'usage'; Body: '{"total":10,"status_valid":10,"status_invalid":0,"sub_status_toxic":0,' +
       '"start_date":"1/12/2010","end_date":"12/1/2030"}'),
+    (Call: 'usage'; Body: '{'#10'      "total": 120,'#10'      "status_valid": 17,'#10'      "status_invalid": 69,'#10 +
+      '      "status_catch_all": 9,'#10'      "status_do_not_mail": 16,'#10'      "status_spamtrap": 0,'#10'      "status_unknown": 6,'#10 +
+      '      "sub_status_toxic": 0,'#10'      "sub_status_disposable": 1,'#10'      "sub_status_role_based": 1,'#10 +
+      '      "sub_status_possible_trap": 0,'#10'      "sub_status_global_suppression": 14,'#10'      "sub_status_timeout_exceeded": 0,'#10 +
+      '      "sub_status_mail_server_temporary_error": 0,'#10'      "sub_status_mail_server_did_not_respond": 0,'#10 +
+      '      "sub_status_greylisted": 6,'#10'      "sub_status_antispam_system": 0,'#10'      "sub_status_does_not_accept_mail": 27,'#10 +
+      '      "sub_status_exception_occurred": 0,'#10'      "sub_status_failed_syntax_check": 20,'#10 +
+      '      "sub_status_mailbox_not_found": 12,'#10'      "sub_status_unroutable_ip_address": 0,'#10'      "sub_status_possible_typo": 0,'#10 +
+      '      "sub_status_no_dns_entries": 10,'#10'      "sub_status_role_based_catch_all": 0,'#10 +
+      '      "sub_status_mailbox_quota_exceeded": 0,'#10'      "sub_status_forcible_disconnect": 0,'#10 +
+      '      "sub_status_failed_smtp_connection": 0,'#10'      "sub_status_leading_period_removed": 0,'#10 +
+      '      "sub_status_alias_address": 2,'#10'      "sub_status_mx_forward": 0,'#10'      "sub_status_alternate": 0,'#10 +
+      '      "sub_status_blocked": 0,'#10'      "sub_status_allowed": 0,'#10'      "start_date": "1/1/2023",'#10'      "end_date": "1/30/2024"'#10'    }'),
+    (Call: 'status'; Body: '{'#10'    "success": true,'#10'    "file_id": "aaaaaaaa-zzzz-xxxx-yyyy-5003727fffff",'#10 +
+      '    "file_name": "Your file name.csv",'#10'    "upload_date": "2023-04-28T15:25:41Z",'#10 +
+      '    "file_status": "Complete",'#10'    "file_phase_2_status": "N/A",'#10 +
+      '    "complete_percentage": "100%",'#10 +
+      '    "return_url": "Your return URL if provided when calling sendfile API"'#10'  }'),
     (Call: 'activity'; Body: '{"found":true,"active_in_days":"180"}'),
     (Call: 'score'; Body: '{"email":"a@example.com","score":10}'),
     (Call: 'find'; Body: '{"email":"john.doe@example.com","email_confidence":"high","domain":"",' +
@@ -3605,9 +3654,8 @@ begin
               { Fields this SDK has always needed present (3.0.1 too): the
                 batch lists, other_domain_formats, and the dates and
                 percentage it converts. }
-              Required := Required or (Key = 'email_batch') or (Key = 'errors') or
-                (Key = 'other_domain_formats') or (Key = 'upload_date') or
-                (Key = 'complete_percentage') or (Key = 'start_date') or (Key = 'end_date');
+              Required := Required or (Key = 'complete_percentage') or (Key = 'start_date') or
+                (Key = 'end_date');
               { activity's found is not read: ZbActivityData returns
                 active_in_days only. }
               if Key = 'found' then
@@ -3615,7 +3663,8 @@ begin
                 Value.Free;
                 Continue;
               end;
-              AlsoTakes := ((Key = 'Credits') or (Key = 'score')) and (NestedKind(Value) = 'int');
+              AlsoTakes := (((Key = 'Credits') or (Key = 'score')) and (NestedKind(Value) = 'int')) or
+                ((Key = 'message') and (Value.JSONType = jtArray));
               ExpectOk := ((Value.JSONType = jtNull) and (Key <> '') and not Required) or AlsoTakes;
               if Parent.JSONType = jtObject then
                 TJSONObject(Parent).Elements[Key] := Value
@@ -3638,7 +3687,7 @@ begin
   finally
     UseDefaultUrls;
   end;
-  { 17 examples, about 540 substitutions when this was written. }
+  { 20 examples, about 540 substitutions when this was written. }
   AssertTrue(Format('only %d substitutions', [Checked]), Checked >= 500);
   AssertEquals('nested values of the wrong type that a typed call took', '', Missed);
 end;

@@ -24,6 +24,9 @@ type
         procedure TestFileFeedbackParsePartial;
         procedure TestFileStatusParse;
         procedure TestGetFileJsonIndicatesError;
+        procedure TestNullAndMissingListsReadAsEmpty;
+        procedure TestNullUploadDateReadsAsNoDate;
+        procedure TestMessageListIsJoinedWithLineFeed;
     end;
 
 implementation
@@ -188,6 +191,53 @@ begin
     AssertFalse(ZbGetFileJsonIndicatesError('{ "file_id": "a" }'));
 end;
 
+
+{ standard section 3: null (or a missing list) in an optional list field reads
+  as the empty list, never an error. Fails before the fix: "Field ... not found"
+  for email_batch, errors and other_domain_formats. }
+procedure TTestDeserialization.TestNullAndMissingListsReadAsEmpty;
+var
+    BatchResult: TZBBatchValidation;
+    DomainResult: TZbDomainSearchResponse;
+begin
+    BatchResult := ZbBatchValidationFromJson('{"email_batch":null,"errors":null}');
+    AssertEquals('null email_batch length', BatchResult.EmailBatchLength, 0);
+    AssertEquals('null errors length', BatchResult.ErrorsLength, 0);
+    BatchResult := ZbBatchValidationFromJson('{"email_batch":[]}');
+    AssertEquals('missing errors length', BatchResult.ErrorsLength, 0);
+    BatchResult := ZbBatchValidationFromJson('{"errors":[]}');
+    AssertEquals('missing email_batch length', BatchResult.EmailBatchLength, 0);
+
+    DomainResult := TZbDomainSearchResponseFromJson('{"domain":"example.com","other_domain_formats":null}');
+    AssertEquals('null other_domain_formats length', Length(DomainResult.OtherDomainFormats), 0);
+    DomainResult := TZbDomainSearchResponseFromJson('{"domain":"example.com"}');
+    AssertEquals('missing other_domain_formats length', Length(DomainResult.OtherDomainFormats), 0);
+end;
+
+{ A null upload_date is no date (0), as file_status and the Python/C SDKs read it. }
+procedure TTestDeserialization.TestNullUploadDateReadsAsNoDate;
+var
+    parsed: TZbFileStatus;
+begin
+    parsed := ZbFileStatusFromJson('{"success":true,"file_id":"a","upload_date":null,"complete_percentage":"0%"}');
+    AssertEquals('null upload_date', parsed.UploadDate, 0.0);
+end;
+
+{ sendfile's message may be one string or a list of strings: the list is
+  joined with a line feed. Fails before the fix with a field-type error. }
+procedure TTestDeserialization.TestMessageListIsJoinedWithLineFeed;
+var
+    parsed: TZbFileFeedback;
+begin
+    parsed := ZbFileFeedbackFromJson('{"success":false,"message":["First error","Second error"]}');
+    AssertEquals('joined message', parsed.Message, 'First error' + #10 + 'Second error');
+    parsed := ZbFileFeedbackFromJson('{"success":false,"message":["Only"]}');
+    AssertEquals('single item', parsed.Message, 'Only');
+    parsed := ZbFileFeedbackFromJson('{"success":false,"message":null}');
+    AssertEquals('null message', parsed.Message, '');
+    parsed := ZbFileFeedbackFromJson('{"success":true,"message":"File Accepted"}');
+    AssertEquals('string message', parsed.Message, 'File Accepted');
+end;
 
 initialization
     RegisterTest(TTestDeserialization);

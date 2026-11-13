@@ -39,6 +39,14 @@ type
           integer or as a JSON string (whose text is returned as it is);
           raises for a missing, null or other JSON value. }
         function GetIntegerText(Key: String): String;
+        { Whether the key is present with a JSON null. }
+        function IsNullValue(Key: String): Boolean;
+        { The array field Key, or nil when it is missing or null: an optional
+          list reads as empty. Raises for any other JSON type. }
+        function GetOptionalArray(Key: String): TJSONArray;
+        { A message field: a JSON string as it is, a list of strings joined
+          with a line feed, or '' for a missing or null field. }
+        function GetMessageText(Key: String): String;
         function KeyCount: Integer;
         function KeyAt(Index: Integer): String;
     end;
@@ -702,6 +710,84 @@ implementation
         {$ENDIF}
     end;
 
+    function TZbJson.IsNullValue(Key: String): Boolean;
+    var
+        JValue: TZbJSONValue;
+    begin
+        JValue := GetValue(Key);
+        {$IFDEF FPC}
+        Result := (JValue <> nil) and JValue.IsNull;
+        {$ELSE}
+        Result := (JValue <> nil) and JValue.Null;
+        {$ENDIF}
+    end;
+
+    function TZbJson.GetOptionalArray(Key: String): TJSONArray;
+    var
+        JValue: TZbJSONValue;
+    begin
+        Result := nil;
+        JValue := GetValue(Key);
+        if JValue = nil then
+            Exit;
+        {$IFDEF FPC}
+        if JValue.IsNull then
+            Exit;
+        if JValue.JSONType <> jtArray then
+            ZbRaiseFieldType(Key);
+        {$ELSE}
+        if JValue.Null then
+            Exit;
+        if not (JValue is TJSONArray) then
+            ZbRaiseFieldType(Key);
+        {$ENDIF}
+        Result := TJSONArray(JValue);
+    end;
+
+    function TZbJson.GetMessageText(Key: String): String;
+    var
+        JValue: TZbJSONValue;
+        I: Integer;
+    begin
+        Result := '';
+        JValue := GetValue(Key);
+        if JValue = nil then
+            Exit;
+        {$IFDEF FPC}
+        if JValue.IsNull then
+            Exit;
+        if JValue.JSONType <> jtArray then
+        begin
+            Result := GetString(Key);
+            Exit;
+        end;
+        for I := 0 to TJSONArray(JValue).Count - 1 do
+        begin
+            if TJSONArray(JValue).Items[I].JSONType <> jtString then
+                ZbRaiseFieldType(Key);
+            if I > 0 then
+                Result := Result + #10;
+            Result := Result + TJSONArray(JValue).Items[I].AsString;
+        end;
+        {$ELSE}
+        if JValue.Null then
+            Exit;
+        if not (JValue is TJSONArray) then
+        begin
+            Result := GetString(Key);
+            Exit;
+        end;
+        for I := 0 to TJSONArray(JValue).Count - 1 do
+        begin
+            if not (TJSONArray(JValue).Items[I] is TJSONString) then
+                ZbRaiseFieldType(Key);
+            if I > 0 then
+                Result := Result + #10;
+            Result := Result + TJSONString(TJSONArray(JValue).Items[I]).Value;
+        end;
+        {$ENDIF}
+    end;
+
     function TZbJson.GetRequiredString(Key: String): String;
     var
         JValue: TZbJSONValue;
@@ -959,58 +1045,54 @@ implementation
         JsonObj: TZbJSon;
         JArray: TJSONArray;
         IIndex: Integer;
-        Found: Boolean;
         AListItem: TJSONObject;
     begin
         JsonObj := TZbJson.Create(JsonContent);
-
-        // parse emails validations
-        Found := JsonObj.GetArray('email_batch', JArray);
-        if not Found then
-            raise Exception.Create(
-                'Field "email_batch" not found while parsing batch validation response'
-            );
-        Result.EmailBatchLength := JArray.Count;
-        if Result.EmailBatchLength > 0 then
-        begin
-            SetLength(Result.EmailBatch, Result.EmailBatchLength);
-            for IIndex := 0 to Result.EmailBatchLength - 1 do
+        try
+            // parse emails validations; a missing or null list is empty
+            JArray := JsonObj.GetOptionalArray('email_batch');
+            Result.EmailBatchLength := 0;
+            if JArray <> nil then
+                Result.EmailBatchLength := JArray.Count;
+            if Result.EmailBatchLength > 0 then
             begin
-                {$IFDEF FPC}
-                AListItem := JArray.Objects[IIndex];
-                {$ELSE}
-                AListItem := JArray[IIndex] as TJSONObject;
-                {$ENDIF}
-                Result.EmailBatch[IIndex] := ZbValidationFromJson(
-                    TZbJson.CreateWrap(AListItem)
-                );
+                SetLength(Result.EmailBatch, Result.EmailBatchLength);
+                for IIndex := 0 to Result.EmailBatchLength - 1 do
+                begin
+                    {$IFDEF FPC}
+                    AListItem := JArray.Objects[IIndex];
+                    {$ELSE}
+                    AListItem := JArray[IIndex] as TJSONObject;
+                    {$ENDIF}
+                    Result.EmailBatch[IIndex] := ZbValidationFromJson(
+                        TZbJson.CreateWrap(AListItem)
+                    );
+                end;
             end;
-        end;
 
-        // parse errors
-        JArray.Free;
-        Found := JsonObj.GetArray('errors', JArray);
-        if not Found then
-            raise Exception.Create(
-                'Field "errors" not found while parsing batch validation response'
-            );
-        Result.ErrorsLength := JArray.Count;
-        if Result.ErrorsLength > 0 then
-        begin
-            SetLength(Result.Errors, Result.ErrorsLength);
-            for IIndex := 0 to Result.ErrorsLength - 1 do
+            // parse errors; a missing or null list is empty
+            JArray := JsonObj.GetOptionalArray('errors');
+            Result.ErrorsLength := 0;
+            if JArray <> nil then
+                Result.ErrorsLength := JArray.Count;
+            if Result.ErrorsLength > 0 then
             begin
-                {$IFDEF FPC}
-                AListItem := JArray.Objects[IIndex];
-                {$ELSE}
-                AListItem := JArray[IIndex] as TJSONObject;
-                {$ENDIF}
-                Result.Errors[IIndex] := ZbBatchErrorFromJson(
-                    TZbJson.CreateWrap(AListItem)
-                );
+                SetLength(Result.Errors, Result.ErrorsLength);
+                for IIndex := 0 to Result.ErrorsLength - 1 do
+                begin
+                    {$IFDEF FPC}
+                    AListItem := JArray.Objects[IIndex];
+                    {$ELSE}
+                    AListItem := JArray[IIndex] as TJSONObject;
+                    {$ENDIF}
+                    Result.Errors[IIndex] := ZbBatchErrorFromJson(
+                        TZbJson.CreateWrap(AListItem)
+                    );
+                end;
             end;
+        finally
+            JsonObj.Free;
         end;
-        JArray.Free;
     end;
 
     function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
@@ -1111,7 +1193,7 @@ implementation
         JsonObj := TZbJSon.Create(JsonContent);
         try
             Result.Success := JsonObj.GetBoolean('success');
-            Result.Message := JsonObj.GetString('message');
+            Result.Message := JsonObj.GetMessageText('message');
             Result.FileName := JsonObj.GetString('file_name');
             Result.FileId := JsonObj.GetString('file_id');
         finally
@@ -1133,7 +1215,11 @@ implementation
             Result.FilePhase2Status := JsonObj.GetString('file_phase_2_status');
             Result.ErrorReason := JsonObj.GetString('error_reason');
             Result.ReturnUrl := JsonObj.GetString('return_url');
-            Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
+            { A null upload_date is no date; a missing one is still an error. }
+            if JsonObj.IsNullValue('upload_date') then
+                Result.UploadDate := 0
+            else
+                Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
 
             // Percentage comes as a string; will parse it to float
             PercentageAuxArray := SplitString(
@@ -1171,7 +1257,6 @@ implementation
     var
         JsonObj: TZbJSon;
         JArray: TJSONArray;
-        Found: boolean;
         IIndex: Integer;
         AListItem: TJSONObject;
     begin
@@ -1183,12 +1268,9 @@ implementation
         Result.DidYouMean := JsonObj.GetString('did_you_mean');
         Result.FailureReason := JsonObj.GetString('failure_reason');
 
-        Found := JsonObj.GetArray('other_domain_formats', JArray);
-        if not Found then
-            raise Exception.Create(
-                'Field "other_domain_formats" not found while parsing "find mail" response'
-            );
-        if JArray.Count > 0 then
+        { A missing or null list is empty. }
+        JArray := JsonObj.GetOptionalArray('other_domain_formats');
+        if (JArray <> nil) and (JArray.Count > 0) then
         begin
             SetLength(Result.OtherDomainFormats, JArray.Count);
             for IIndex := 0 to JArray.Count - 1 do
