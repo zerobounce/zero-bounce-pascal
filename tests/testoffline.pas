@@ -45,13 +45,14 @@ type
     procedure TestTypedCallsRejectFieldsOfTheWrongType;
     procedure TestEveryFieldAModelReadsIsTypeChecked;
     procedure TestDocumentedExamplesStillParse;
+    procedure TestEveryNestedValueOfAnExampleIsTypeChecked;
     procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
   end;
 
 implementation
 
 uses
-  Sockets, SyncObjs, StrUtils;
+  Sockets, SyncObjs, StrUtils, fpjson, jsonparser;
 
 type
   TRecorded = record
@@ -2851,7 +2852,9 @@ end;
 
 procedure TTestOffline.TestTypedCallsRejectJsonOfTheWrongShape;
 const
-  BODIES: array[0..8] of String = ('0', '1.5', 'true', 'false', 'null', '"x"', '[]', '[{}]', ' [ ] ');
+  { Arrays a decoder could read into a record by position too. }
+  BODIES: array[0..13] of String = ('0', '1.5', 'true', 'false', 'null', '"x"', '[]', '[{}]', ' [ ] ',
+    '["x"]', '["a@example.com",10]', '[true,"3"]', '["7"]', '["a@b.c","valid"]');
 var
   I: Integer;
   Missed: String;
@@ -3032,9 +3035,16 @@ end;
 
 procedure TTestOffline.TestTypedCallsRejectFieldsOfTheWrongType;
 const
-  CREDITS: array[0..12] of String = ('{}', '{"Credits":null}', '{"Credits":true}', '{"Credits":5}',
+  { A JSON integer is an answer only when it is a whole number in the range
+    of Integer: no fraction or exponent, nothing past High(Integer). }
+  CREDITS: array[0..17] of String = ('{}', '{"Credits":null}', '{"Credits":true}',
     '{"Credits":5.5}', '{"Credits":"abc"}', '{"Credits":"5.0"}', '{"Credits":""}', '{"Credits":" 5"}',
-    '{"Credits":"5abc"}', '{"Credits":"99999999999999999999"}', '{"Credits":[1]}', '{"Credits":{}}');
+    '{"Credits":"5abc"}', '{"Credits":"99999999999999999999"}', '{"Credits":[1]}', '{"Credits":{}}',
+    '{"Credits":5.0}', '{"Credits":1e3}', '{"Credits":2147483648}', '{"Credits":-2147483649}',
+    '{"Credits":9223372036854775808}', '{"Credits":99999999999999999999}');
+  { A score sent as a string must hold an integer. }
+  SCORES: array[0..4] of String = ('{"email":"a@b.c","score":5.5}', '{"email":"a@b.c","score":"5.5"}',
+    '{"email":"a@b.c","score":"abc"}', '{"email":"a@b.c","score":" 9"}', '{"email":"a@b.c","score":""}');
   VALIDATE: array[0..10] of String = ('{}', '{"address":true,"status":"valid"}',
     '{"address":"a@b.c","status":5}', '{"status":"valid"}', '{"address":"a@b.c"}',
     '{"address":null,"status":"valid"}', '{"address":"a@b.c","status":null}',
@@ -3080,6 +3090,15 @@ begin
       try ZbBatchValidateEmails(Emails); ExpectFieldError('ZbBatchValidateEmails', Body, nil);
       except on E: Exception do ExpectFieldError('ZbBatchValidateEmails', Body, E); end;
     end;
+    for I := Low(SCORES) to High(SCORES) do
+    begin
+      ZBMockResponse(200, SCORES[I], 'application/json');
+      try ZbScoreEmail('a@b.c'); ExpectFieldError('ZbScoreEmail', SCORES[I], nil);
+      except on E: Exception do ExpectFieldError('ZbScoreEmail', SCORES[I], E); end;
+    end;
+    ZBMockResponse(200, '{"email":"a@b.c","score":"10"}', 'application/json');
+    try AssertEquals(10, ZbScoreEmail('a@b.c').Score);
+    except on E: Exception do ExpectFieldError('ZbScoreEmail "10" read', E.Message, nil); end;
     ZBMockResponse(200, '{"total":5.5}', 'application/json');
     try ZbGetApiUsage; ExpectFieldError('ZbGetApiUsage', 'total 5.5', nil);
     except on E: Exception do ExpectFieldError('ZbGetApiUsage', 'total 5.5', E); end;
@@ -3326,6 +3345,16 @@ begin
     try AssertEquals(123456, ZbGetCredits); except on E: Exception do Fail('credits', E); end;
     Serve('{"Credits":"-1"}');
     try AssertEquals(-1, ZbGetCredits); except on E: Exception do Fail('credits -1', E); end;
+    { Credits as a JSON integer: zerobounce.net's own getcredits example,
+      verbatim, and the ends of the Integer range. }
+    Serve('{"Credits":2375323}');
+    try AssertEquals(2375323, ZbGetCredits); except on E: Exception do Fail('credits 2375323', E); end;
+    Serve('{"Credits":-1}');
+    try AssertEquals(-1, ZbGetCredits); except on E: Exception do Fail('credits int -1', E); end;
+    Serve('{"Credits":2147483647}');
+    try AssertEquals(2147483647, ZbGetCredits); except on E: Exception do Fail('credits max', E); end;
+    Serve('{"Credits":-2147483648}');
+    try AssertEquals(Low(Integer), ZbGetCredits); except on E: Exception do Fail('credits min', E); end;
     Serve(Usage);
     try AssertEquals(10, ZbGetApiUsage.Total); except on E: Exception do Fail('usage', E); end;
     Serve('{"found":true,"active_in_days":"180"}');
@@ -3365,6 +3394,253 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('documented examples that did not parse', '', Missed);
+end;
+
+{ -- E7 / X1: every nested value of every example is type-checked -------- }
+
+type
+  TTypedExample = record
+    Call, Body: String;
+  end;
+
+const
+  { Every documented example answer a typed call parses: copied verbatim from
+    zerobounce.net/docs (the credit balance, validate, file status, send file
+    and delete file pages), and the repo's own fixtures for the answers the
+    site gives no success example of. }
+  TYPED_EXAMPLES: array[0..16] of TTypedExample = (
+    (Call: 'credits'; Body: '{"Credits":2375323}'),
+    (Call: 'credits'; Body: '{"Credits":"-1"}'),
+    (Call: 'validate'; Body: '{'#10'      "address": "john.doe@zerobounce.net",'#10'      "status": "valid",'#10 +
+      '      "sub_status": "",'#10'      "free_email": false,'#10'      "catchall_domain": true,'#10 +
+      '      "did_you_mean": null,'#10'      "account": "johndoe",'#10'      "domain": "zerobounce.net",'#10 +
+      '      "domain_age_days": "3431",'#10'      "active_in_days": "30",'#10 +
+      '      "active_first_seen": "2026-02-25",'#10'      "smtp_provider": "g-suite",'#10 +
+      '      "mx_found": "true",'#10'      "mx_record": "aspmx.l.google.com",'#10 +
+      '      "firstname": "dan",'#10'      "lastname": "cotet",'#10'      "gender": "male",'#10 +
+      '      "country": null,'#10'      "region": null,'#10'      "city": null,'#10'      "zipcode": null,'#10 +
+      '      "processed_at": "2026-06-18 07:05:00.033"'#10'  }'),
+    (Call: 'validate'; Body: '{"address":"a@example.com","Message":"Greylisted email, we will retry"}'),
+    (Call: 'validatepost'; Body: '{"address":"a@example.com","status":"valid","sub_status":"","free_email":false,' +
+      '"catchall_domain":false,"domain_age_days":"9692","mx_found":"true","firstname":"zero"}'),
+    (Call: 'batch'; Body: '{"email_batch":[{"address":"valid@example.com","status":"valid","sub_status":"",' +
+      '"free_email":false,"did_you_mean":null,"account":null,"domain":null,"domain_age_days":"9692",' +
+      '"smtp_provider":"example","catchall_domain":false,"mx_found":"true","mx_record":"mx.example.com",' +
+      '"firstname":"zero","lastname":"bounce","gender":"male","country":"United States",' +
+      '"region":"Florida","city":"West Palm Beach","zipcode":"33401",' +
+      '"processed_at":"2023-03-23 13:30:28.105"}],' +
+      '"errors":[{"error":"Mock error message","email_address":"invalid@example.com"}]}'),
+    (Call: 'send'; Body: '{'#10'      "success": true,'#10'      "message": "File Accepted",'#10 +
+      '      "file_name": "Your file name.csv",'#10 +
+      '      "file_id": "aaaaaaaa-zzzz-xxxx-yyyy-5003727fffff"'#10'    }'),
+    (Call: 'status'; Body: '{'#10'    "success": true,'#10'    "file_id": "aaaaaaaa-zzzz-xxxx-yyyy-5003727fffff",'#10 +
+      '    "file_name": "Your file name.csv",'#10'    "upload_date": "2023-04-28T15:25:41Z",'#10 +
+      '    "file_status": "Complete",'#10'    "file_phase_2_status": "Complete",'#10 +
+      '    "complete_percentage": "100%",'#10 +
+      '    "return_url": "Your return URL if provided when calling sendfile API"'#10'  }'),
+    (Call: 'delete'; Body: '{'#10'    "success": true,'#10'    "message": "File Deleted",'#10'    "file_name": "test2",'#10 +
+      '    "file_id": "b222a0fd-90d5-416c-8f1a-9cc3851fc823"'#10'  }'),
+    (Call: 'scoringsend'; Body: '{'#10'          "success": true,'#10'          "message": "File Accepted",'#10 +
+      '          "file_name": "Your file name.csv",'#10 +
+      '          "file_id": "aaaaaaaa-zzzz-xxxx-yyyy-5003727fffff"'#10'      }'),
+    (Call: 'scoringstatus'; Body: '{'#10'          "success": true,'#10 +
+      '          "file_id": "aaaaaaaa-zzzz-xxxx-yyyy-5003727fffff",'#10 +
+      '          "file_name": "Your file name.csv",'#10'          "upload_date": "2023-04-28T15:25:41Z",'#10 +
+      '          "file_status": "Complete",'#10'          "complete_percentage": "100%",'#10 +
+      '          "return_url": "Your return URL if provided when calling sendfile API"'#10'      }'),
+    (Call: 'scoringdelete'; Body: '{'#10'        "success": true,'#10'        "message": "File Deleted",'#10 +
+      '        "file_name": "test2",'#10'        "file_id": "b222a0fd-90d5-416c-8f1a-9cc3851fc823"'#10'    }'),
+    (Call: 'usage'; Body: '{"total":10,"status_valid":10,"status_invalid":0,"sub_status_toxic":0,' +
+      '"start_date":"1/12/2010","end_date":"12/1/2030"}'),
+    (Call: 'activity'; Body: '{"found":true,"active_in_days":"180"}'),
+    (Call: 'score'; Body: '{"email":"a@example.com","score":10}'),
+    (Call: 'find'; Body: '{"email":"john.doe@example.com","email_confidence":"high","domain":"",' +
+      '"company_name":"Internet Assigned Numbers Authority","did_you_mean":"","failure_reason":""}'),
+    (Call: 'domain'; Body: '{"domain":"example.com","company_name":"","format":"first.last","confidence":"high",' +
+      '"did_you_mean":"","failure_reason":"","other_domain_formats":[{"format":"first_last",' +
+      '"confidence":"high"},{"format":"first","confidence":"medium"}]}'));
+
+{ Runs the typed call Call against the mocked body: '' for a result, else
+  what OutcomeOf reports. }
+function RunTypedExample(const Call: String): String;
+var
+  Emails: array[0..0] of TZbEmailAndIp;
+  Params: TZbBulkParams;
+begin
+  Emails[0].Email := 'valid@example.com';
+  Emails[0].Ip := '';
+  FillChar(Params, SizeOf(Params), 0);
+  Params.EmailAddressColumn := 1;
+  Result := '';
+  try
+    if Call = 'credits' then ZbGetCredits
+    else if Call = 'validate' then ZbValidateEmail('a@example.com')
+    else if Call = 'validatepost' then CallTransport(tpFormPost)
+    else if Call = 'batch' then ZbBatchValidateEmails(Emails)
+    else if Call = 'send' then ZbBulkValidationFileSubmit('email', Params)
+    else if Call = 'status' then ZbBulkValidationFileStatusCheck('fid')
+    else if Call = 'delete' then ZbBulkValidationResultDelete('fid')
+    else if Call = 'scoringsend' then ZbAiScoringFileSubmit('email', Params)
+    else if Call = 'scoringstatus' then ZbAiScoringFileStatusCheck('fid')
+    else if Call = 'scoringdelete' then ZbAiScoringResultDelete('fid')
+    else if Call = 'usage' then ZbGetApiUsage
+    else if Call = 'activity' then ZbActivityData('a@example.com')
+    else if Call = 'score' then ZbScoreEmail('a@example.com')
+    else if Call = 'find' then ZbFindEmailByDomain('example.com', 'A', 'B', 'C')
+    else if Call = 'domain' then ZbDomainSearchByDomain('example.com')
+    else raise Exception.Create('no example call ' + Call);
+  except on E: Exception do
+    Result := OutcomeOf(E);
+  end;
+end;
+
+{ The K-th value below Root in a pre-order walk (objects' members and
+  arrays' items; Root itself not counted), with its parent, its key ('' for
+  an array item), its index in the parent and its path. Counter counts the
+  values seen; Want < 0 only counts them. }
+function FindNestedSlot(Node: TJSONData; const Path: String; var Counter: Integer; Want: Integer;
+  out Parent: TJSONData; out Key: String; out Index: Integer; out Found: TJSONData; out FoundPath: String): Boolean;
+var
+  I: Integer;
+  Child: TJSONData;
+  ChildKey, ChildPath: String;
+begin
+  Result := False;
+  if not (Node.JSONType in [jtObject, jtArray]) then
+    Exit;
+  for I := 0 to Node.Count - 1 do
+  begin
+    Child := Node.Items[I];
+    if Node.JSONType = jtObject then
+    begin
+      ChildKey := TJSONObject(Node).Names[I];
+      ChildPath := Path + '.' + ChildKey;
+    end
+    else
+    begin
+      ChildKey := '';
+      ChildPath := Path + '[' + IntToStr(I) + ']';
+    end;
+    if Counter = Want then
+    begin
+      Parent := Node;
+      Key := ChildKey;
+      Index := I;
+      Found := Child;
+      FoundPath := ChildPath;
+      Exit(True);
+    end;
+    Inc(Counter);
+    if FindNestedSlot(Child, ChildPath, Counter, Want, Parent, Key, Index, Found, FoundPath) then
+      Exit(True);
+  end;
+end;
+
+{ The JSON type a value has, with integers and fractions apart. }
+function NestedKind(Data: TJSONData): String;
+begin
+  if Data.JSONType = jtNumber then
+  begin
+    if Data is TJSONFloatNumber then
+      Result := 'float'
+    else
+      Result := 'int';
+  end
+  else
+    Result := IntToStr(Ord(Data.JSONType));
+end;
+
+procedure TTestOffline.TestEveryNestedValueOfAnExampleIsTypeChecked;
+const
+  REPLACEMENTS: array[0..6] of String = ('null', 'true', '5', '5.5', '"x"', '[]', '{}');
+var
+  E, K, R, Counter, Slots, Index, Checked: Integer;
+  Root, Copy, Parent, Found, Value: TJSONData;
+  Key, FoundPath, Outcome, Missed: String;
+  Greylist, Required, AlsoTakes, ExpectOk: Boolean;
+begin
+  { Standard section 3: a value of another JSON type than the documented
+    one, at any path of an example (a nested object, an array item, a batch
+    row, a row's field), is an API error with status 200. null is taken only
+    for an optional object field; an array item that is null is a wrong type
+    too. Credits and a score also take a JSON integer. }
+  Missed := '';
+  Checked := 0;
+  try
+    UseDefaultUrls;
+    ZBInitialize('nested-sweep');
+    for E := Low(TYPED_EXAMPLES) to High(TYPED_EXAMPLES) do
+    begin
+      ZBMockResponse(200, TYPED_EXAMPLES[E].Body, 'application/json');
+      Outcome := RunTypedExample(TYPED_EXAMPLES[E].Call);
+      if Outcome <> '' then
+      begin
+        Missed := Missed + Format('example %d does not parse (%s); ', [E, Outcome]);
+        Continue;
+      end;
+      Root := GetJSON(TYPED_EXAMPLES[E].Body);
+      try
+        Greylist := TJSONObject(Root).IndexOfName('Message') >= 0;
+        Slots := 0;
+        FindNestedSlot(Root, '$', Slots, -1, Parent, Key, Index, Found, FoundPath);
+        for K := 0 to Slots - 1 do
+          for R := Low(REPLACEMENTS) to High(REPLACEMENTS) do
+          begin
+            Copy := Root.Clone;
+            try
+              Counter := 0;
+              FindNestedSlot(Copy, '$', Counter, K, Parent, Key, Index, Found, FoundPath);
+              Value := GetJSON(REPLACEMENTS[R]);
+              { Same type, or a null in the example (its type is not shown
+                there): nothing to check. }
+              if (Found.JSONType = jtNull) or (NestedKind(Found) = NestedKind(Value)) then
+              begin
+                Value.Free;
+                Continue;
+              end;
+              if Greylist then
+                Required := Key = 'Message'
+              else
+                Required := (Key = 'Credits') or (Key = 'address') or (Key = 'status');
+              { Fields this SDK has always needed present (3.0.1 too): the
+                batch lists, other_domain_formats, and the dates and
+                percentage it converts. }
+              Required := Required or (Key = 'email_batch') or (Key = 'errors') or
+                (Key = 'other_domain_formats') or (Key = 'upload_date') or
+                (Key = 'complete_percentage') or (Key = 'start_date') or (Key = 'end_date');
+              { activity's found is not read: ZbActivityData returns
+                active_in_days only. }
+              if Key = 'found' then
+              begin
+                Value.Free;
+                Continue;
+              end;
+              AlsoTakes := ((Key = 'Credits') or (Key = 'score')) and (NestedKind(Value) = 'int');
+              ExpectOk := ((Value.JSONType = jtNull) and (Key <> '') and not Required) or AlsoTakes;
+              if Parent.JSONType = jtObject then
+                TJSONObject(Parent).Elements[Key] := Value
+              else
+                TJSONArray(Parent).Items[Index] := Value;
+              ZBMockResponse(200, Copy.AsJSON, 'application/json');
+              Outcome := RunTypedExample(TYPED_EXAMPLES[E].Call);
+              Inc(Checked);
+              if (ExpectOk and (Outcome <> '')) or (not ExpectOk and (Outcome <> 'E200')) then
+                Missed := Missed + Format('example %d %s = %s (%s); ',
+                  [E, FoundPath, REPLACEMENTS[R], IfThen(Outcome = '', 'accepted', Outcome)]);
+            finally
+              Copy.Free;
+            end;
+          end;
+      finally
+        Root.Free;
+      end;
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  { 17 examples, about 540 substitutions when this was written. }
+  AssertTrue(Format('only %d substitutions', [Checked]), Checked >= 500);
+  AssertEquals('nested values of the wrong type that a typed call took', '', Missed);
 end;
 
 procedure ExpectDeadKeyError(const Name: String; E: Exception);

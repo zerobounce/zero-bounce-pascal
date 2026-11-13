@@ -55,16 +55,24 @@ implementation
         UrlToAccess: string;
         response: TZbRequestResponse;
         error: ZbException;
+        Json: TZbJson;
     begin
         UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_CREDITS, '?api_key=', EncodeParam(ZbApiKey));
         response := ZBGetRequest(UrlToAccess);
 
         // attempt json parsing
         try
-            { Credits is a JSON string holding an integer ("-1" for a dead
-              key); missing, null, another JSON type, or text that is not an
-              integer ("abc", "5.0") is not an answer. }
-            CreditsText := TZbJSon.Create(response.Payload).GetRequiredString('Credits');
+            { Credits is an integer, sent as a JSON string ("-1" for a dead
+              key, "12345") or as a JSON integer (2375323 in zerobounce.net's
+              own example); missing, null, another JSON type
+              (a fraction, a boolean), text that is not an integer ("abc",
+              "5.0") or a value outside Integer is not an answer. }
+            Json := TZbJSon.Create(response.Payload);
+            try
+                CreditsText := Json.GetIntegerText('Credits');
+            finally
+                Json.Free;
+            end;
             if not ZbIsIntegerText(CreditsText) then
                 raise Exception.Create('ZeroBounce returned the field "Credits" missing or with the wrong JSON type.');
             Result := StrToInt(CreditsText);

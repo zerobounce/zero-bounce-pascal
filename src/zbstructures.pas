@@ -35,6 +35,10 @@ type
         { The string field Key, which the result cannot do without: present,
           not null, and a JSON string. Raises otherwise. }
         function GetRequiredString(Key: String): String;
+        { The decimal text of a required integer field sent as a JSON
+          integer or as a JSON string (whose text is returned as it is);
+          raises for a missing, null or other JSON value. }
+        function GetIntegerText(Key: String): String;
         function KeyCount: Integer;
         function KeyAt(Index: Integer): String;
     end;
@@ -597,6 +601,29 @@ implementation
     { Field types are part of the response shape (standard E7): a field that
       arrives with a JSON type its model does not take is not the API's answer.
       The call turns this into a ZbException with the HTTP status. }
+    { Whether Text is an optional '-' and decimal digits only, in Integer
+      range (TryStrToInt would also take ' 5', '+5' and '$1F'). }
+    function ZbDecimalInteger(const Text: String; out Value: Integer): Boolean;
+    var
+        I, Start: Integer;
+        Wide: Int64;
+    begin
+        Result := False;
+        Value := 0;
+        Start := 1;
+        if (Length(Text) > 0) and (Text[1] = '-') then
+            Start := 2;
+        if Length(Text) < Start then
+            Exit;
+        for I := Start to Length(Text) do
+            if not (Text[I] in ['0'..'9']) then
+                Exit;
+        if not TryStrToInt64(Text, Wide) or (Wide < Low(Integer)) or (Wide > High(Integer)) then
+            Exit;
+        Value := Integer(Wide);
+        Result := True;
+    end;
+
     procedure ZbRaiseFieldType(const Key: String);
     begin
         raise Exception.CreateFmt(
@@ -686,6 +713,22 @@ implementation
         if (JValue = nil) or not (JValue is TJSONString) then ZbRaiseFieldType(Key);
         {$ENDIF}
         Result := GetString(Key);
+    end;
+
+    function TZbJson.GetIntegerText(Key: String): String;
+    var
+        JValue: TZbJSONValue;
+    begin
+        JValue := GetValue(Key);
+        {$IFDEF FPC}
+        if (JValue <> nil) and ((JValue is TJSONIntegerNumber) or (JValue is TJSONInt64Number)) then
+            Exit(IntToStr(JValue.AsInt64));
+        {$ELSE}
+        if (JValue is TJSONNumber) and (Pos('.', JValue.Value) = 0) and
+            (Pos('e', LowerCase(JValue.Value)) = 0) then
+            Exit(JValue.Value);
+        {$ENDIF}
+        Result := GetRequiredString(Key);
     end;
 
     function TZbJson.GetInteger(Key: String): Integer;
@@ -1166,6 +1209,7 @@ implementation
     var
         JsonObj: TZbJson;
         ScoreValue: TZbJSONValue;
+        ScoreText: String;
     begin
         Result.Email := '';
         Result.Score := 0;
@@ -1174,20 +1218,18 @@ implementation
         try
             Result.Email := JsonObj.GetString('email');
             ScoreValue := JsonObj.GetValue('score');
-            if ScoreValue <> nil then
+            {$IFDEF FPC}
+            if (ScoreValue <> nil) and not ScoreValue.IsNull then
+            {$ELSE}
+            if (ScoreValue <> nil) and not ScoreValue.Null then
+            {$ENDIF}
             begin
+                { A score is an integer or the API's string form of one: a
+                  fraction (5.5, "5.5") or other text is not read as one. }
+                ScoreText := JsonObj.GetIntegerText('score');
+                if not ZbDecimalInteger(ScoreText, Result.Score) then
+                    ZbRaiseFieldType('score');
                 Result.HasScore := True;
-                {$IFDEF FPC}
-                if ScoreValue.JSONType = jtNumber then
-                    Result.Score := Trunc(ScoreValue.AsFloat)
-                else
-                    Result.Score := StrToInt(ScoreValue.AsString);
-                {$ELSE}
-                if ScoreValue is TJSONNumber then
-                    Result.Score := TJSONNumber(ScoreValue).AsInt
-                else
-                    Result.Score := StrToInt(ScoreValue.Value);
-                {$ENDIF}
             end;
         finally
             JsonObj.Free;
