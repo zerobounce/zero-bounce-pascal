@@ -320,14 +320,16 @@ implementation
     var
         J: TZbJson;
         I, K: Integer;
-        Known, HasText: Boolean;
+        Known: Boolean;
     begin
         Result := False;
         J := ZbObjectWithoutSuccess(Body);
         if J = nil then
             Exit;
         try
-            HasText := False;
+            { Message-only is defined by the keys alone: a message of any
+              value (text, blank, null or a list) is an error (standard E3). }
+            Result := J.KeyCount > 0;
             for I := 0 to J.KeyCount - 1 do
             begin
                 Known := False;
@@ -335,11 +337,11 @@ implementation
                     if J.KeyAt(I) = MESSAGE_KEYS[K] then
                         Known := True;
                 if not Known then
+                begin
+                    Result := False;
                     Exit;
-                if J.GetText(J.KeyAt(I)) <> '' then
-                    HasText := True;
+                end;
             end;
-            Result := HasText;
         finally
             J.Free;
         end;
@@ -597,7 +599,14 @@ implementation
         try
             for I := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
                 if Text = '' then
-                    Text := J.GetText(MESSAGE_KEYS[I]);
+                begin
+                    try
+                        Text := J.GetMessageText(MESSAGE_KEYS[I]);
+                    except
+                        on Exception do
+                            Text := '';
+                    end;
+                end;
         finally
             J.Free;
         end;
@@ -931,8 +940,15 @@ implementation
         Result.SubStatusLeadingPeriodRemoved :=       JsonObj.GetInteger('sub_status_leading_period_removed');
         Result.SubStatusAliasAddress :=               JsonObj.GetInteger('sub_status_alias_address');
 
-        Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
-        Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
+        { A null date is no date (0), as a null upload_date is. }
+        if JsonObj.IsNullValue('start_date') then
+            Result.StartDate := 0
+        else
+            Result.StartDate := ExtractDate(JsonObj.GetString('start_date'));
+        if JsonObj.IsNullValue('end_date') then
+            Result.EndDate := 0
+        else
+            Result.EndDate := ExtractDate(JsonObj.GetString('end_date'));
 
     end;
 
@@ -1221,14 +1237,20 @@ implementation
             else
                 Result.UploadDate := ISO8601ToDate(JsonObj.GetString('upload_date'));
 
-            // Percentage comes as a string; will parse it to float
-            PercentageAuxArray := SplitString(
-                JsonObj.GetString('complete_percentage'), '%'
-            );
-            if Length(PercentageAuxArray) > 0 then
-                Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
+            // Percentage comes as a string; will parse it to float. A null
+            // one is no percentage: -1, as a blank one is.
+            if JsonObj.IsNullValue('complete_percentage') then
+                Result.CompletePercentage := -1
             else
-                Result.CompletePercentage := -1;
+            begin
+                PercentageAuxArray := SplitString(
+                    JsonObj.GetString('complete_percentage'), '%'
+                );
+                if Length(PercentageAuxArray) > 0 then
+                    Result.CompletePercentage := StrToFloat(PercentageAuxArray[0])
+                else
+                    Result.CompletePercentage := -1;
+            end;
         finally
             JsonObj.Free;
         end;

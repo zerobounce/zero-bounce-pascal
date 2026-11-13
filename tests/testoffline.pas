@@ -46,6 +46,8 @@ type
     procedure TestEveryFieldAModelReadsIsTypeChecked;
     procedure TestDocumentedExamplesStillParse;
     procedure TestEveryNestedValueOfAnExampleIsTypeChecked;
+    procedure TestAMessageOnlyFinderOrDomainBodyIsAnErrorWhateverItsValue;
+    procedure TestEveryHtmlSniffMarkerRefusesADownloadServedAsCsv;
     procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
   end;
 
@@ -3651,11 +3653,6 @@ begin
                 Required := Key = 'Message'
               else
                 Required := (Key = 'Credits') or (Key = 'address') or (Key = 'status');
-              { Fields this SDK has always needed present (3.0.1 too): the
-                batch lists, other_domain_formats, and the dates and
-                percentage it converts. }
-              Required := Required or (Key = 'complete_percentage') or (Key = 'start_date') or
-                (Key = 'end_date');
               { activity's found is not read: ZbActivityData returns
                 active_in_days only. }
               if Key = 'found' then
@@ -3690,6 +3687,86 @@ begin
   { 20 examples, about 540 substitutions when this was written. }
   AssertTrue(Format('only %d substitutions', [Checked]), Checked >= 500);
   AssertEquals('nested values of the wrong type that a typed call took', '', Missed);
+end;
+
+{ C: a finder or domain-search body whose only keys are message keys is an
+  error with status 200, whatever the message value. }
+procedure TTestOffline.TestAMessageOnlyFinderOrDomainBodyIsAnErrorWhateverItsValue;
+const
+  BODIES: array[0..5] of String = (
+    '{"message":"Invalid API key"}', '{"message":""}', '{"message":null}',
+    '{"message":["First","Second"]}', '{"Message":"Dead key"}', '{"detail":"  "}');
+var
+  B, C, Checked: Integer;
+  Missed: String;
+begin
+  Missed := '';
+  Checked := 0;
+  try
+    UseDefaultUrls;
+    ZBInitialize('message-only-key');
+    for B := Low(BODIES) to High(BODIES) do
+    begin
+      ZBMockResponse(200, BODIES[B], 'application/json');
+      for C := 0 to 3 do
+      begin
+        Inc(Checked);
+        try
+          case C of
+            0: ZbFindEmailByDomain('example.com', 'A', 'B', 'C');
+            1: ZbFindEmailByCompanyName('Example', 'A', 'B');
+            2: ZbDomainSearchByDomain('example.com');
+            3: ZbDomainSearchByCompanyName('Example');
+          end;
+          Missed := Missed + Format('call %d took %s as an answer; ', [C, BODIES[B]]);
+        except
+          on E: Exception do
+            if not ((E is ZbException) and (ZbException(E).StatusCode = 200)) then
+              Missed := Missed + Format('call %d on %s: %s; ', [C, BODIES[B], E.Message]);
+        end;
+      end;
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('finder and domain-search calls', 24, Checked);
+  AssertEquals('message-only bodies that a finder or domain search did not refuse with status 200', '', Missed);
+end;
+
+{ E: each marker of the HTML check (<!doctype html, <html, <head, <body), on
+  its own, in a body served as text/csv, is an HTML page: each download
+  refuses it with its status. }
+procedure ExpectHtmlMarkerRefused(const Name: String; E: Exception);
+begin
+  if not IsDownloadCall(Name) then
+    Exit;
+  if (E = nil) or not (E is ZbException) or (ZbException(E).StatusCode <> 200) then
+    SweepMissed := SweepMissed + Name + ' (not refused with status 200); ';
+end;
+
+procedure TTestOffline.TestEveryHtmlSniffMarkerRefusesADownloadServedAsCsv;
+const
+  MARKERS: array[0..3] of String = ('<!DOCTYPE html>', '<html>', '<head>', '<body>');
+var
+  M: Integer;
+  Missed: String;
+begin
+  Missed := '';
+  try
+    for M := Low(MARKERS) to High(MARKERS) do
+    begin
+      UseDefaultUrls;
+      ZBInitialize('html-marker-key');
+      ZbWarmupInitialize('html-marker-warmup-key');
+      ZBMockResponse(200, 'Access denied by proxy ' + MARKERS[M], 'text/csv');
+      SweepEveryPublicCall(@ExpectHtmlMarkerRefused);
+      if SweepMissed <> '' then
+        Missed := Missed + Format('[%s] %s', [MARKERS[M], SweepMissed]);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertEquals('downloads that took an HTML page served as text/csv', '', Missed);
 end;
 
 procedure ExpectDeadKeyError(const Name: String; E: Exception);
