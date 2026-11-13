@@ -46,7 +46,9 @@ type
     procedure TestEveryFieldAModelReadsIsTypeChecked;
     procedure TestDocumentedExamplesStillParse;
     procedure TestEveryNestedValueOfAnExampleIsTypeChecked;
+    procedure TestEveryNonRequiredKeyOfAnExampleMayBeMissing;
     procedure TestAMessageOnlyFinderOrDomainBodyIsAnErrorWhateverItsValue;
+    procedure TestAMessageOnlyListIsJoinedWithALineFeed;
     procedure TestEveryHtmlSniffMarkerRefusesADownloadServedAsCsv;
     procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
   end;
@@ -3731,6 +3733,98 @@ begin
   end;
   AssertEquals('finder and domain-search calls', 24, Checked);
   AssertEquals('message-only bodies that a finder or domain search did not refuse with status 200', '', Missed);
+end;
+
+{ standard B: a missing optional field reads exactly like a null one. Every
+  key of every documented example is removed in turn (top level, nested
+  objects and batch rows); each call without the key that is not required
+  must still be accepted. Required: Credits, address, status, and Message in
+  a greylist answer. }
+procedure TTestOffline.TestEveryNonRequiredKeyOfAnExampleMayBeMissing;
+var
+  E, K, Counter, Slots, Index, Checked: Integer;
+  Root, Copy, Parent, Found: TJSONData;
+  Key, FoundPath, Outcome, Missed: String;
+  Greylist, Required: Boolean;
+begin
+  Missed := '';
+  Checked := 0;
+  try
+    UseDefaultUrls;
+    ZBInitialize('missing-key-sweep');
+    for E := Low(TYPED_EXAMPLES) to High(TYPED_EXAMPLES) do
+    begin
+      Root := GetJSON(TYPED_EXAMPLES[E].Body);
+      try
+        Greylist := TJSONObject(Root).IndexOfName('Message') >= 0;
+        Slots := 0;
+        FindNestedSlot(Root, '$', Slots, -1, Parent, Key, Index, Found, FoundPath);
+        for K := 0 to Slots - 1 do
+        begin
+          Copy := Root.Clone;
+          try
+            Counter := 0;
+            FindNestedSlot(Copy, '$', Counter, K, Parent, Key, Index, Found, FoundPath);
+            if (Parent = nil) or (Parent.JSONType <> jtObject) or (Key = '') then
+              Continue;
+            if Greylist then
+              Required := Key = 'Message'
+            else
+              Required := (Key = 'Credits') or (Key = 'address') or (Key = 'status');
+            if Required then
+              Continue;
+            TJSONObject(Parent).Delete(TJSONObject(Parent).IndexOfName(Key));
+            ZBMockResponse(200, Copy.AsJSON, 'application/json');
+            Outcome := RunTypedExample(TYPED_EXAMPLES[E].Call);
+            Inc(Checked);
+            if Outcome <> '' then
+              Missed := Missed + Format('example %d without %s (%s); ', [E, FoundPath, Outcome]);
+          finally
+            Copy.Free;
+          end;
+        end;
+      finally
+        Root.Free;
+      end;
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+  AssertTrue(Format('only %d keys removed', [Checked]), Checked >= 40);
+  AssertEquals('missing optional fields that a call refused', '', Missed);
+end;
+
+{ standard B/E3: a message-only list is the error text, one item per line
+  (joined with a line feed), with the status 200. Removing the join, or
+  taking only the first item, fails this test. }
+procedure TTestOffline.TestAMessageOnlyListIsJoinedWithALineFeed;
+begin
+  try
+    UseDefaultUrls;
+    ZBInitialize('message-list-key');
+    ZBMockResponse(200, '{"message":["First error","Second error"]}', 'application/json');
+    try
+      ZbFindEmailByDomain('example.com', 'A', 'B', 'C');
+      AssertTrue('a message-only list was taken as an answer', False);
+    except
+      on E: Exception do
+      begin
+        AssertTrue('error type', E is ZbException);
+        AssertEquals('status', 200, ZbException(E).StatusCode);
+        AssertEquals('joined text', 'Http Error: First error' + #10 + 'Second error', E.Message);
+      end;
+    end;
+    ZBMockResponse(200, '{"Message":["Only one"]}', 'application/json');
+    try
+      ZbDomainSearchByDomain('example.com');
+      AssertTrue('a message-only list was taken as an answer', False);
+    except
+      on E: Exception do
+        AssertEquals('single item text', 'Http Error: Only one', E.Message);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
 end;
 
 { E: each marker of the HTML check (<!doctype html, <html, <head, <body), on

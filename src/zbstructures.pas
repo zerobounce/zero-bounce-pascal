@@ -719,15 +719,17 @@ implementation
         {$ENDIF}
     end;
 
+    { A missing key reads like a null one (standard B): an optional field
+      the API leaves out is the empty value, never an error. }
     function TZbJson.IsNullValue(Key: String): Boolean;
     var
         JValue: TZbJSONValue;
     begin
         JValue := GetValue(Key);
         {$IFDEF FPC}
-        Result := (JValue <> nil) and JValue.IsNull;
+        Result := (JValue = nil) or JValue.IsNull;
         {$ELSE}
-        Result := (JValue <> nil) and JValue.Null;
+        Result := (JValue = nil) or JValue.Null;
         {$ENDIF}
     end;
 
@@ -940,7 +942,7 @@ implementation
         Result.SubStatusLeadingPeriodRemoved :=       JsonObj.GetInteger('sub_status_leading_period_removed');
         Result.SubStatusAliasAddress :=               JsonObj.GetInteger('sub_status_alias_address');
 
-        { A null date is no date (0), as a null upload_date is. }
+        { A null or missing date is no date (0), as a null upload_date is. }
         if JsonObj.IsNullValue('start_date') then
             Result.StartDate := 0
         else
@@ -1231,7 +1233,7 @@ implementation
             Result.FilePhase2Status := JsonObj.GetString('file_phase_2_status');
             Result.ErrorReason := JsonObj.GetString('error_reason');
             Result.ReturnUrl := JsonObj.GetString('return_url');
-            { A null upload_date is no date; a missing one is still an error. }
+            { A null or missing upload_date is no date. }
             if JsonObj.IsNullValue('upload_date') then
                 Result.UploadDate := 0
             else

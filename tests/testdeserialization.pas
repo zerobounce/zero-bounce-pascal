@@ -26,6 +26,9 @@ type
         procedure TestGetFileJsonIndicatesError;
         procedure TestNullAndMissingListsReadAsEmpty;
         procedure TestNullUploadDateReadsAsNoDate;
+        procedure TestMissingUploadDateReadsAsNoDate;
+        procedure TestMissingApiUsageDatesReadAsNoDate;
+        procedure TestMissingCompletePercentageReadsAsMinusOne;
         procedure TestMessageListIsJoinedWithLineFeed;
     end;
 
@@ -221,6 +224,39 @@ var
 begin
     parsed := ZbFileStatusFromJson('{"success":true,"file_id":"a","upload_date":null,"complete_percentage":"0%"}');
     AssertEquals('null upload_date', parsed.UploadDate, 0.0);
+end;
+
+{ standard B: a missing optional date reads exactly like a null one (no date,
+  0), never an error. Fails before the fix with a date-conversion error. }
+procedure TTestDeserialization.TestMissingUploadDateReadsAsNoDate;
+var
+    parsed: TZbFileStatus;
+begin
+    parsed := ZbFileStatusFromJson('{"success":true,"file_id":"a","complete_percentage":"0%"}');
+    AssertEquals('missing upload_date', parsed.UploadDate, 0.0);
+end;
+
+{ A missing complete_percentage reads like a null one: -1, no percentage. }
+procedure TTestDeserialization.TestMissingCompletePercentageReadsAsMinusOne;
+var
+    parsed: TZbFileStatus;
+begin
+    parsed := ZbFileStatusFromJson('{"success":true,"file_id":"a","upload_date":null}');
+    AssertEquals('missing complete_percentage', parsed.CompletePercentage, -1.0);
+end;
+
+procedure TTestDeserialization.TestMissingApiUsageDatesReadAsNoDate;
+var
+    usage: TApiUsage;
+    withoutDates: String;
+begin
+    withoutDates := '{"total":7,"status_valid":5}';
+    usage := ZbApiUsageFromJson(withoutDates);
+    AssertEquals('missing start_date', usage.StartDate, 0.0);
+    AssertEquals('missing end_date', usage.EndDate, 0.0);
+    usage := ZbApiUsageFromJson('{"total":7,"start_date":null,"end_date":null}');
+    AssertEquals('null start_date', usage.StartDate, 0.0);
+    AssertEquals('null end_date', usage.EndDate, 0.0);
 end;
 
 { sendfile's message may be one string or a list of strings: the list is
