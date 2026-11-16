@@ -53,6 +53,15 @@ type
     procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
     procedure TestAContentEncodingIsNotReadAsAFile;
     procedure TestARequestWithNoMockLeavesNoLastBodyOrHeader;
+    procedure TestAnAccentedKeyInAnErrorMessageIsRedactedWithoutCwstring;
+    procedure TestTheFoldDropsCombiningMarksFromBothSides;
+    procedure TestHtmlCharacterReferencesAreDecodedInGeneral;
+    procedure TestAKeyEchoedAsAQuotEntityInAnHtmlTitleIsOmitted;
+    procedure TestMoreInvisibleCodePointsAreRefusedAndTheKeyKept;
+    procedure TestARefusedUrlLeavesNoBodyOrHeaderOfAnEarlierMock;
+    procedure TestAJsonErrorBodyGivesItsMessageAndACsvBodyNone;
+    procedure TestOnlyTheTopLevelSuccessFieldDecidesAFailure;
+    procedure TestTheMultipartMockSetsUrlCalledOnTheResult;
   end;
 
 implementation
@@ -737,7 +746,7 @@ begin
   ClearRecorded;
   AssertTrue(Pos('file-key', ZbGetListEvaluatorResult('fid')) > 0);
   ClearRecorded;
-  ZbAddFilter('exclude', 'domain', 'example.com');
+  ZbAddFilter('block', 'domain', 'example.com');
   AssertEquals('/v2/filters/add', OnlyRequest.Path);
   ClearRecorded;
   ZbListFilters(False);
@@ -1499,6 +1508,404 @@ begin
     end;
   finally
     ClearRecorded;
+    UseDefaultUrls;
+  end;
+end;
+
+{ One code point as the UTF-8 bytes of a string. }
+function Utf8Of(CodePoint: Integer): String;
+begin
+  if CodePoint < $80 then
+    Result := Chr(CodePoint)
+  else if CodePoint < $800 then
+    Result := Chr($C0 or (CodePoint shr 6)) + Chr($80 or (CodePoint and $3F))
+  else if CodePoint < $10000 then
+    Result := Chr($E0 or (CodePoint shr 12)) + Chr($80 or ((CodePoint shr 6) and $3F)) +
+      Chr($80 or (CodePoint and $3F))
+  else
+    Result := Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
+      Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
+end;
+
+{ The message of the ZbException a GET of the current mock raises, or
+  '(no exception)'. }
+function MockedGetMessage: String;
+begin
+  Result := '(no exception)';
+  try
+    ZBGetRequest(ZbApiBaseURL + '/getcredits?api_key=ignored');
+  except
+    on E: ZbException do
+      Result := E.Message;
+  end;
+end;
+
+procedure TTestOffline.TestAnAccentedKeyInAnErrorMessageIsRedactedWithoutCwstring;
+const
+  { A key with an e acute, and one with a capital I with a dot above. }
+  KEYS: array[0..1] of String = ('ke' + #$C3#$A9 + 'y-secret-1', 'ki' + #$C4#$B0 + '-secret-2');
+var
+  I: Integer;
+  Message: String;
+begin
+  { This unit, and the console program, do not use cwstring: only ZbUtility
+    links it. Without it FPC's conversion between UTF-8 and UTF-16 turns
+    everything past ASCII into '?', so the message the JSON reader hands back
+    has lost the accent and the key is not found in it. }
+  try
+    for I := Low(KEYS) to High(KEYS) do
+    begin
+      UseDefaultUrls;
+      ZBInitialize(KEYS[I]);
+      ZBMockResponse(200, '{"error":"Invalid API key ' + KEYS[I] + ' given"}', 'application/json');
+      Message := MockedGetMessage;
+      AssertEquals('key ' + IntToStr(I), 'Http Error: Invalid API key REDACTED given', Message);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestTheFoldDropsCombiningMarksFromBothSides;
+const
+  DOT = #$CC#$87;
+  ACUTE = #$CC#$81;
+var
+  Secret: String;
+
+  procedure Masked(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [REDACTED] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
+begin
+  { U+0130: a plain i, and i plus U+0307. }
+  Secret := 'pass' + #$C4#$B0 + 'word-7';
+  Masked('U+0130 as a plain i', 'passiword-7');
+  Masked('U+0130 as i and a dot', 'passi' + DOT + 'word-7');
+  Masked('U+0130 as itself', Secret);
+  Masked('U+0130 as I and a dot, upper case', 'PASSI' + DOT + 'WORD-7');
+  { The sharp s, as SS. }
+  Secret := 'stra' + #$C3#$9F + 'e-pass-8';
+  Masked('sharp s as SS', 'STRASSE-PASS-8');
+  Masked('sharp s as ss', 'strasse-pass-8');
+  { An e acute, as e plus U+0301. }
+  Secret := 'caf' + #$C3#$A9 + '-key-9';
+  Masked('e acute as e and an acute', 'cafe' + ACUTE + '-key-9');
+  Masked('e acute as E and an acute', 'CAFE' + ACUTE + '-KEY-9');
+  Masked('e acute as a plain e', 'cafe-key-9');
+  Masked('e acute as itself', Secret);
+  { The other way round: the secret is written with the mark. }
+  Secret := 'cafe' + ACUTE + '-key-10';
+  Masked('e and an acute against an e acute', 'caf' + #$C3#$A9 + '-key-10');
+  Masked('e and an acute against e and an acute', 'cafe' + ACUTE + '-key-10');
+  { A mark in the middle of the echo, and a letter of another block. }
+  Secret := 'ab12-cd';
+  Masked('a mark inside the echo', 'a' + ACUTE + 'b12-cd');
+  Secret := #$E1#$BA#$A1 + 'bc-5';
+  Masked('a with a dot below, decomposed', 'a' + #$CC#$A3 + 'bc-5');
+  { A secret that starts with a combining mark: it is dropped, and the echo
+    that writes an i in front of the mark is masked as the rest of the secret
+    reads. }
+  Secret := DOT + 'secrettext-3';
+  AssertEquals('leading U+0307', 'echo [i' + DOT + 'REDACTED] end',
+    ZbMaskSecret('echo [i' + DOT + 'secrettext-3] end', Secret));
+  AssertEquals('leading U+0307, as it is', 'echo [' + DOT + 'REDACTED] end',
+    ZbMaskSecret('echo [' + DOT + 'secrettext-3] end', Secret));
+  AssertEquals('leading U+0307, without it', 'echo [REDACTED] end',
+    ZbMaskSecret('echo [secrettext-3] end', Secret));
+  { Marks the echo carries after a masked character are masked with it. }
+  AssertEquals('marks after the key', 'x REDACTED y',
+    ZbMaskSecret('x pass-11' + DOT + ACUTE + ' y', 'pass-11'));
+  { Text with marks and no echo of the key stays as it was. }
+  AssertEquals('unrelated', 'e' + ACUTE + 'i' + DOT + ' stays',
+    ZbMaskSecret('e' + ACUTE + 'i' + DOT + ' stays', 'unrelated-12'));
+end;
+
+procedure TTestOffline.TestHtmlCharacterReferencesAreDecodedInGeneral;
+type
+  TCase = record
+    Secret, Spelling: String;
+  end;
+const
+  QUOTE_KEY = 'ab"cd-9z';
+  APOS_KEY = 'ab''cd-9z';
+  GT_KEY = 'ab>cd-9z';
+var
+  Cases: array of TCase;
+  I: Integer;
+  AcuteKey: String;
+
+  procedure Add(const Secret, Spelling: String);
+  begin
+    SetLength(Cases, Length(Cases) + 1);
+    Cases[High(Cases)].Secret := Secret;
+    Cases[High(Cases)].Spelling := Spelling;
+  end;
+
+  procedure AddAll(const Secret, Before, After: String; const Refs: array of String);
+  var
+    K: Integer;
+  begin
+    for K := Low(Refs) to High(Refs) do
+      Add(Secret, Before + Refs[K] + After);
+  end;
+
+begin
+  AcuteKey := 'ab' + #$C3#$A9 + 'cd-9z';
+  AddAll(QUOTE_KEY, 'ab', 'cd-9z', ['&#34;', '&#034;', '&#0000034;', '&#x22;', '&#X22;', '&#x0022;',
+    '&quot;', '&QUOT;', '&Quot;']);
+  AddAll(APOS_KEY, 'ab', 'cd-9z', ['&#39;', '&#039;', '&#x27;', '&#X27;', '&apos;', '&APOS;',
+    '\x{27}', '\x{027}', '\47', '\047', '\x27', '&#x00027;']);
+  AddAll(AcuteKey, 'ab', 'cd-9z', ['&#233;', '&#xE9;', '&#xe9;', '&#XE9;', '&#0233;']);
+  AddAll(GT_KEY, 'ab', 'cd-9z', ['&gt;', '&GT;', '&Gt;', '&#62;', '&#x3e;']);
+  AddAll('ab<cd-9z', 'ab', 'cd-9z', ['&lt;', '&LT;', '&#60;']);
+  AddAll('ab&cd-9z', 'ab', 'cd-9z', ['&amp;', '&AMP;', '&#38;']);
+  for I := 0 to High(Cases) do
+    AssertEquals(Cases[I].Spelling, ZB_SECRET_OMITTED_MESSAGE,
+      ZbMaskSecret('echo [' + Cases[I].Spelling + '] end', Cases[I].Secret));
+  { What is not a reference stays: no semicolon, no digits, a code point past
+    U+10FFFF, a surrogate. }
+  AssertEquals('no semicolon', 'echo ab&#34cd-9z',
+    ZbMaskSecret('echo ab&#34cd-9z', QUOTE_KEY));
+  AssertEquals('no digits', 'echo ab&#;cd-9z', ZbMaskSecret('echo ab&#;cd-9z', QUOTE_KEY));
+  AssertEquals('past U+10FFFF', 'echo ab&#99999999999;cd-9z',
+    ZbMaskSecret('echo ab&#99999999999;cd-9z', QUOTE_KEY));
+  AssertEquals('a surrogate', 'echo ab&#xD800;cd-9z', ZbMaskSecret('echo ab&#xD800;cd-9z', QUOTE_KEY));
+  AssertEquals('an unknown name', 'echo ab&nbsp;cd-9z', ZbMaskSecret('echo ab&nbsp;cd-9z', QUOTE_KEY));
+end;
+
+procedure TTestOffline.TestAKeyEchoedAsAQuotEntityInAnHtmlTitleIsOmitted;
+const
+  KEY = 'ab"cd-title-1';
+var
+  Message: String;
+begin
+  try
+    UseDefaultUrls;
+    ZBInitialize(KEY);
+    ZBMockResponse(200,
+      '<html><head><title>Bad key ab&quot;cd-title-1 here</title></head><body>x</body></html>',
+      'text/html');
+    Message := MockedGetMessage;
+    AssertTrue(Message, Pos(ZB_SECRET_OMITTED_MESSAGE, Message) > 0);
+    AssertEquals(Message, 0, Pos('cd-title-1', Message));
+    AssertEquals(Message, 0, Pos('quot', Message));
+    { The numeric spellings of the same quote. }
+    ZBMockResponse(200,
+      '<html><head><title>Bad key ab&#34;cd-title-1 here</title></head><body>x</body></html>',
+      'text/html');
+    Message := MockedGetMessage;
+    AssertTrue(Message, Pos(ZB_SECRET_OMITTED_MESSAGE, Message) > 0);
+    ZBMockResponse(200,
+      '<html><head><title>Bad key ab&#X22;cd-title-1 here</title></head><body>x</body></html>',
+      'text/html');
+    Message := MockedGetMessage;
+    AssertTrue(Message, Pos(ZB_SECRET_OMITTED_MESSAGE, Message) > 0);
+    { Control: a title with no key in it is quoted. }
+    ZBMockResponse(200, '<html><head><title>Bad gateway</title></head><body>x</body></html>', 'text/html');
+    Message := MockedGetMessage;
+    AssertEquals('Http Error: ZeroBounce returned an HTML error page ("Bad gateway") instead of an API response.',
+      Message);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestMoreInvisibleCodePointsAreRefusedAndTheKeyKept;
+const
+  { U+110CD, U+13430, U+1343F, U+13447 and U+13455: one of each range. }
+  POINTS: array[0..4] of Integer = ($110CD, $13430, $1343F, $13447, $13455);
+  REFUSED = 'api_key has surrounding whitespace or control characters';
+var
+  I, J: Integer;
+  Keys: array of String;
+  Raised: Boolean;
+  Message: String;
+begin
+  SetLength(Keys, 0);
+  for I := Low(POINTS) to High(POINTS) do
+  begin
+    SetLength(Keys, Length(Keys) + 3);
+    Keys[High(Keys) - 2] := 'ab' + Utf8Of(POINTS[I]) + 'cd';
+    Keys[High(Keys) - 1] := Utf8Of(POINTS[I]) + 'abcd';
+    Keys[High(Keys)] := 'abcd' + Utf8Of(POINTS[I]);
+  end;
+  try
+    for J := 0 to High(Keys) do
+    begin
+      ZBInitialize('keep-this-key-3');
+      Raised := False;
+      Message := '';
+      try
+        ZBInitialize(Keys[J]);
+      except
+        on E: ZbException do
+        begin
+          Raised := True;
+          Message := E.Message;
+        end;
+      end;
+      AssertTrue('key ' + IntToStr(J) + ' was accepted', Raised);
+      AssertEquals('key ' + IntToStr(J), REFUSED, Message);
+      AssertEquals('the key already set stays', 'keep-this-key-3', ZbApiKey);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestARefusedUrlLeavesNoBodyOrHeaderOfAnEarlierMock;
+const
+  BAD_URL = 'http://example.com/refused';
+var
+  Call: Integer;
+  Form: TStringList;
+  Message: String;
+begin
+  try
+    UseDefaultUrls;
+    for Call := 0 to 4 do
+    begin
+      { A mock records its request. }
+      ZBMockResponse(200, '{"Credits":"1"}');
+      ZBSendRequestWithHeader('PUT', 'https://api.zerobounce.net/v2/x', 'mock-body', 'text/plain',
+        'X-Test', 'mock-value');
+      AssertEquals('mock body', 'mock-body', ZbLastRequestBody);
+      AssertEquals('mock header', 'X-Test: mock-value', ZbLastRequestHeader);
+      { A request that is refused for its URL, whatever the mock. }
+      Message := '(no exception)';
+      Form := TStringList.Create;
+      try
+        Form.Add('a=b');
+        try
+          case Call of
+            0: ZBGetRequest(BAD_URL);
+            1: ZBPostRequest(BAD_URL, '{"a":1}');
+            2: ZBFormPostRequest(BAD_URL, 'a=b');
+            3: ZBSendRequestWithHeader('PUT', BAD_URL, 'body', 'text/plain', 'X-Test', 'value');
+            4: ZBPostRequest(BAD_URL, Form, 'a,b');
+          end;
+        except
+          on E: ZbException do
+            Message := E.Message;
+        end;
+      finally
+        Form.Free;
+      end;
+      AssertEquals('call ' + IntToStr(Call), 'url must be an https:// URL', Message);
+      AssertEquals('call ' + IntToStr(Call) + ' body', '', ZbLastRequestBody);
+      AssertEquals('call ' + IntToStr(Call) + ' header', '', ZbLastRequestHeader);
+    end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestAJsonErrorBodyGivesItsMessageAndACsvBodyNone;
+const
+  CSV = 'email,name'#10'ada@example.com,Ada'#10;
+var
+  Long: String;
+
+  procedure Expect(const What: String; Status: Integer; const Body, ContentType, Expected: String);
+  begin
+    ZBMockResponse(Status, Body, ContentType);
+    AssertEquals(What, Expected, MockedGetMessage);
+  end;
+
+begin
+  try
+    UseDefaultUrls;
+    Expect('success false, message', 200, '{"success":false,"message":"File cannot be found."}',
+      'application/json', 'Http Error: File cannot be found.');
+    Expect('400, message', 400, '{"success":false,"message":"File cannot be found."}',
+      'application/json', 'Http Error: File cannot be found.');
+    Expect('500, error', 500, '{"error":"Invalid API key"}', 'application/json',
+      'Http Error: Invalid API key');
+    Expect('500, error_message', 500, '{"error_message":"Quota used up"}', 'application/json',
+      'Http Error: Quota used up');
+    Expect('message before error', 500, '{"error":"second","message":"first"}', 'application/json',
+      'Http Error: first');
+    Expect('an empty message is skipped', 500, '{"message":"  ","error":"the error"}', 'application/json',
+      'Http Error: the error');
+    Expect('a message that is not a string', 500, '{"message":{"a":1}}', 'application/json',
+      'Http Error: {"message":{"a":1}}');
+    Expect('a list is not a message', 500, '{"error":["a","b"]}', 'application/json',
+      'Http Error: {"error":["a","b"]}');
+    { Too long to be quoted: stays the generic sentence, a message or not. }
+    Long := '{"success":false,"message":"' + StringOfChar('x', 1000) + '"}';
+    Expect('over 1000 characters', 500, Long, 'application/json',
+      'Http Error: ZeroBounce returned an error response.');
+    { A CSV body is a file: it is not put into the message. }
+    Expect('CSV, text/csv', 500, CSV, 'text/csv', 'Http Error: ZeroBounce returned an error response.');
+    Expect('CSV, text/csv; charset', 500, CSV, 'text/csv; charset=utf-8',
+      'Http Error: ZeroBounce returned an error response.');
+    Expect('CSV, no content type', 500, CSV, '', 'Http Error: ZeroBounce returned an error response.');
+    Expect('CSV, text/plain', 500, CSV, 'text/plain', 'Http Error: ZeroBounce returned an error response.');
+    { A line of text with a comma in it is a message. }
+    Expect('a message with a comma', 500, 'Error: Invalid key, try again', 'text/plain',
+      'Http Error: Invalid key, try again');
+    { An HTML page labelled text/csv is still an HTML page. }
+    Expect('HTML as text/csv', 500, '<html><head><title>Bad gateway</title></head></html>', 'text/csv',
+      'Http Error: ZeroBounce returned an HTML error page ("Bad gateway") instead of an API response.');
+    { A JSON body labelled text/csv still gives its message. }
+    Expect('JSON as text/csv', 500, '{"message":"Hello there"}', 'text/csv', 'Http Error: Hello there');
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestOnlyTheTopLevelSuccessFieldDecidesAFailure;
+const
+  NESTED_FIRST = '{"meta":{"success":true},"success":false,"message":"File cannot be found."}';
+begin
+  { The first "success" in the text is the one of a nested object. }
+  AssertTrue('nested true first', ZbSuccessMeansFailure(NESTED_FIRST));
+  AssertFalse('nested false first', ZbSuccessMeansFailure('{"meta":{"success":false},"success":true}'));
+  AssertFalse('nested false only', ZbSuccessMeansFailure('{"meta":{"success":false},"Credits":"5"}'));
+  AssertFalse('a list of objects', ZbSuccessMeansFailure('{"rows":[{"success":false}],"success":true}'));
+  AssertFalse('in a string value', ZbSuccessMeansFailure('{"message":"x \"success\": false","a":1}'));
+  AssertFalse('in a string value, plain', ZbSuccessMeansFailure('{"message":"\"success\":false"}'));
+  AssertTrue('upper case key', ZbSuccessMeansFailure('{"Success":"False"}'));
+  AssertTrue('space before the colon', ZbSuccessMeansFailure('{"success" : false}'));
+  AssertTrue('false as a string', ZbSuccessMeansFailure('{"success":"false"}'));
+  AssertTrue('an escaped key', ZbSuccessMeansFailure('{"succ\u0065ss":false}'));
+  AssertTrue('cut short', ZbSuccessMeansFailure('{"success":false,"mess'));
+  AssertFalse('true', ZbSuccessMeansFailure('{"success":true}'));
+  AssertFalse('no success', ZbSuccessMeansFailure('{"message":"x"}'));
+  AssertFalse('not an object', ZbSuccessMeansFailure('[{"success":false}]'));
+  AssertFalse('empty', ZbSuccessMeansFailure(''));
+  try
+    UseDefaultUrls;
+    { On the wire: the top-level false raises. }
+    ZBMockResponse(200, NESTED_FIRST, 'application/json');
+    AssertEquals('Http Error: File cannot be found.', MockedGetMessage);
+    { ... and a nested false beside a top-level true does not. }
+    ZBMockResponse(200, '{"meta":{"success":false},"success":true,"Credits":"5"}', 'application/json');
+    AssertEquals('(no exception)', MockedGetMessage);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestTheMultipartMockSetsUrlCalledOnTheResult;
+const
+  URL = 'https://bulkapi.zerobounce.net/v2/sendfile';
+var
+  Form: TStringList;
+  Response: TZbRequestResponse;
+begin
+  Form := TStringList.Create;
+  try
+    UseDefaultUrls;
+    Form.Add('a=b');
+    ZBMockResponse(200, '{"success":true}', 'application/json');
+    Response := ZBPostRequest(URL, Form, 'x,y');
+    AssertEquals('result', URL, Response.UrlCalled);
+    AssertEquals('mock', URL, ZbResponseMock.UrlCalled);
+  finally
+    Form.Free;
     UseDefaultUrls;
   end;
 end;

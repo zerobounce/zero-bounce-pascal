@@ -27,8 +27,8 @@ type
         { When AllowPhase2Specified, sends allow_phase_2 (validation bulk sendfile only). }
         AllowPhase2Specified: Boolean;
         AllowPhase2: Boolean;
-        { Kept for source compatibility and ignored: RemoveDuplicate is always
-          sent, as in the released 3.0.x. }
+        { Ignored: RemoveDuplicate is always sent. No released package had
+          this field. }
         RemoveDuplicateSpecified: Boolean;
         { Sent as return_url on bulk and scoring sendfile when not empty. Last
           in the record, so record constants written for the older layout

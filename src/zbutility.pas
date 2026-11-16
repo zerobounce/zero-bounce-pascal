@@ -5,6 +5,16 @@ unit ZbUtility;
 interface
 
 uses
+    {$IFDEF FPC}
+    {$IFDEF UNIX}
+    { Gives every program that links the SDK a widestring manager. Without it
+      FPC converts text between UTF-8 and UTF-16 by dropping everything past
+      ASCII to '?', so the message of an error body that quotes a key with an
+      accent in it comes back from the JSON reader with the accent gone and
+      the key unmasked. }
+    cwstring,
+    {$ENDIF}
+    {$ENDIF}
     Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
     openssl, opensslsockets, fphttpclient, httpprotocol, ssockets, sslsockets, dynlibs
@@ -725,27 +735,126 @@ end;
         end;
     end;
 
+    function ZbJsonUnescapeView(const Text: String): String; forward;
+
+    { Where the JSON string that opens at Text[At] ('"') ends: the index of its
+      closing quote, or Length(Text) + 1 for one that never closes. }
+    function ZbJsonStringEnd(const Text: String; At: Integer): Integer;
+    begin
+        Result := At + 1;
+        while Result <= Length(Text) do
+        begin
+            if Text[Result] = '\' then
+                Inc(Result, 2)
+            else if Text[Result] = '"' then
+                Exit
+            else
+                Inc(Result);
+        end;
+        Result := Length(Text) + 1;
+    end;
+
     function ZbSuccessMeansFailure(const Body: String): Boolean;
     var
-        Trimmed, Lowered: String;
-        Marker: Integer;
+        Trimmed, Key, Value: String;
+        I, Close, Depth, After: Integer;
     begin
         Result := False;
         Trimmed := Trim(Body);
         if (Trimmed = '') or (Trimmed[1] <> '{') then
             Exit;
-        Lowered := LowerCase(Trimmed);
-        Marker := Pos('"success"', Lowered);
-        if Marker = 0 then
+        { Only the "success" field of the object itself counts: a nested object
+          (a "meta" block, say) may carry one of its own. Read the text as the
+          scanner of a JSON reader would, string by string, so that a
+          "success" inside a string or a deeper level is never taken for it. }
+        Depth := 0;
+        I := 1;
+        while I <= Length(Trimmed) do
+        begin
+            case Trimmed[I] of
+                '{', '[':
+                    Inc(Depth);
+                '}', ']':
+                    Dec(Depth);
+                '"':
+                begin
+                    Close := ZbJsonStringEnd(Trimmed, I);
+                    After := Close + 1;
+                    while (After <= Length(Trimmed)) and (Trimmed[After] in [' ', #9, #10, #13]) do
+                        Inc(After);
+                    if (Depth = 1) and (After <= Length(Trimmed)) and (Trimmed[After] = ':') then
+                    begin
+                        Key := LowerCase(ZbJsonUnescapeView(Copy(Trimmed, I + 1, Close - I - 1)));
+                        if Key = 'success' then
+                        begin
+                            { The value is either a JSON false or the string
+                              "false", in any case. }
+                            Inc(After);
+                            while (After <= Length(Trimmed)) and (Trimmed[After] in [' ', #9, #10, #13]) do
+                                Inc(After);
+                            Value := LowerCase(Copy(Trimmed, After, 7));
+                            if (Copy(Value, 1, 5) = 'false') or (Copy(Value, 1, 7) = '"false"') then
+                                Exit(True);
+                        end;
+                    end;
+                    I := Close;
+                end;
+            end;
+            Inc(I);
+        end;
+    end;
+
+    { The text of a JSON object's "message", "error" or "error_message" when it
+      is a non-empty string (the first of them in that order), else ''. A
+      number, an object or a list there is not a message. }
+    function ZbJsonErrorText(const Body: String): String;
+    const
+        KEYS: array[0..2] of String = ('message', 'error', 'error_message');
+    var
+        J: TZbJson;
+        I: Integer;
+    begin
+        Result := '';
+        try
+            J := TZbJson.Create(Body);
+        except
             Exit;
-        { Only the value that follows the key matters, and it is either a JSON
-          false or the string "false". }
-        Lowered := Copy(Lowered, Marker + 9, 20);
-        Marker := Pos(':', Lowered);
-        if Marker = 0 then
-            Exit;
-        Lowered := Trim(Copy(Lowered, Marker + 1, Length(Lowered) - Marker));
-        Result := (Copy(Lowered, 1, 5) = 'false') or (Copy(Lowered, 1, 7) = '"false"');
+        end;
+        try
+            for I := Low(KEYS) to High(KEYS) do
+            begin
+                Result := J.GetText(KEYS[I]);
+                if Result <> '' then
+                    Exit;
+            end;
+        finally
+            J.Free;
+        end;
+    end;
+
+    { Whether a body is rows of comma-separated values: a text of at least two
+      lines, the first two of which each hold a comma. A one-line message with
+      a comma in it is not. }
+    function ZbBodyLooksLikeCsv(const Body: String): Boolean;
+    var
+        Lines: TStringList;
+    begin
+        Result := False;
+        Lines := TStringList.Create;
+        try
+            Lines.Text := Trim(Copy(Body, 1, 4000));
+            Result := (Lines.Count >= 2) and (Pos(',', Lines[0]) > 0) and (Pos(',', Lines[1]) > 0);
+        finally
+            Lines.Free;
+        end;
+    end;
+
+    function ZbContentTypeIsCsv(const ContentType: String): Boolean;
+    var
+        Lower: String;
+    begin
+        Lower := LowerCase(ContentType);
+        Result := (Pos('text/csv', Lower) > 0) or (Pos('application/csv', Lower) > 0);
     end;
 
     function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
@@ -771,8 +880,19 @@ end;
               called invalid. }
             if Length(Trimmed) > 1000 then
                 Exit('ZeroBounce returned an error response.');
+            { The API's own words, when the body says them in a field, instead
+              of the whole object. }
+            if Trimmed[1] = '{' then
+            begin
+                Result := ZbJsonErrorText(Trimmed);
+                if Result <> '' then
+                    Exit;
+            end;
             Exit(Trimmed);
         end;
+        { Rows of a file are not a message. }
+        if ZbBodyLooksLikeCsv(Trimmed) then
+            Exit('ZeroBounce returned an error response.');
         if Length(Trimmed) > 1000 then
             Exit('ZeroBounce returned a response that is not valid JSON.');
         Result := ZbStripErrorPrefix(Trimmed);
@@ -833,6 +953,10 @@ end;
            (Pos('Access violation', AMessage) = 0) and
            (Pos(Copy(Trim(response.Payload), 1, 24), AMessage) = 0) then
             NewMessage := AMessage
+        else if ZbContentTypeIsCsv(response.ContentType) and
+                (ZbDownloadKind(response.Payload, response.ContentType) = zdkFile) then
+            { A file, not a message, whatever its first line looks like. }
+            NewMessage := 'ZeroBounce returned an error response.'
         else
             NewMessage := ZbMessageFromBody(response.Payload, response.StatusCode);
         { Transport errors quote the URL, which carries api_key. }
@@ -948,12 +1072,66 @@ end;
             Result := -1;
     end;
 
+    {$IFNDEF FPC}
+    { Delphi: the bytes a %XX or a \xHH wrote, in a row, are UTF-8 text, as
+      they are on FPC where the string holds bytes; they are not one UTF-16
+      unit each. Pending collects them; ZbFlushBytes appends what they spell
+      to Text. }
+    procedure ZbFlushBytes(var Pending: TBytes; var Text: String);
+    begin
+        if Length(Pending) = 0 then
+            Exit;
+        Text := Text + TEncoding.UTF8.GetString(Pending);
+        SetLength(Pending, 0);
+    end;
+
+    procedure ZbPendByte(var Pending: TBytes; B: Integer);
+    begin
+        SetLength(Pending, Length(Pending) + 1);
+        Pending[High(Pending)] := Byte(B);
+    end;
+    {$ENDIF}
+
     { Text URL-decoded: each %XX as its byte, and '+' as a space when
       PlusAsSpace is set (a form body). }
     function ZbUrlDecodeView(const Text: String; PlusAsSpace: Boolean): String;
     var
         I, N, Hi, Lo: Integer;
+        {$IFNDEF FPC}
+        Pending: TBytes;
+        {$ENDIF}
     begin
+        {$IFNDEF FPC}
+        { Delphi: the bytes of a run of %XX are assembled and read as UTF-8; a
+          character of the text itself is kept as it is. }
+        N := 0;
+        Result := '';
+        Pending := nil;
+        I := 1;
+        while I <= Length(Text) do
+        begin
+            Hi := -1;
+            Lo := -1;
+            if (Text[I] = '%') and (I + 2 <= Length(Text)) then
+            begin
+                Hi := ZbHexDigit(Text[I + 1]);
+                Lo := ZbHexDigit(Text[I + 2]);
+            end;
+            if (Hi >= 0) and (Lo >= 0) then
+            begin
+                ZbPendByte(Pending, Hi * 16 + Lo);
+                Inc(I, 3);
+                Continue;
+            end;
+            ZbFlushBytes(Pending, Result);
+            if PlusAsSpace and (Text[I] = '+') then
+                Result := Result + ' '
+            else
+                Result := Result + Text[I];
+            Inc(I);
+        end;
+        ZbFlushBytes(Pending, Result);
+        {$ELSE}
         SetLength(Result, Length(Text));
         I := 1;
         N := 0;
@@ -982,6 +1160,7 @@ end;
             end;
         end;
         SetLength(Result, N);
+        {$ENDIF}
     end;
 
     function ZbHex4(const Text: String; At: Integer): Integer;
@@ -1020,7 +1199,12 @@ end;
             Result := Chr($F0 or (CodePoint shr 18)) + Chr($80 or ((CodePoint shr 12) and $3F)) +
                 Chr($80 or ((CodePoint shr 6) and $3F)) + Chr($80 or (CodePoint and $3F));
         {$ELSE}
-        Result := Char(CodePoint);
+        { Above U+FFFF it is a surrogate pair, not one truncated unit. }
+        if CodePoint >= $10000 then
+            Result := Char($D800 + ((CodePoint - $10000) shr 10)) +
+                Char($DC00 + ((CodePoint - $10000) and $3FF))
+        else
+            Result := Char(CodePoint);
         {$ENDIF}
     end;
 
@@ -1069,21 +1253,49 @@ end;
       \uXXXX, surrogate pairs included on FPC) and the other spellings a
       server or a language may write: \' \xHH (one byte), \u and \U with
       up to 8 hex digits in curly brackets (at most U+10FFFF), \UXXXXXXXX,
-      \UXXXX and the octal byte \NNN. Anything else is kept. *)
+      \UXXXX, \x{...} (a code point, as \u{...} is), and the octal byte \NNN
+      or \NN. Anything else is kept. *)
     function ZbJsonUnescapeView(const Text: String): String;
     const
         ESCAPES = '"\/bfnrt''';
     var
-        I, K, CodePoint, Low, Len, Count: Integer;
+        I, K, CodePoint, Low, Len, Count, Value: Integer;
         Decoded: String;
+        {$IFNDEF FPC}
+        Pending: TBytes;
+        {$ENDIF}
+
+        { One byte of an escape. FPC strings hold bytes. Delphi's hold UTF-16
+          units, so the bytes wait in Pending until what follows them is not
+          a byte, and are then read as UTF-8. }
+        procedure AddByte(B: Integer);
+        begin
+            {$IFDEF FPC}
+            Result := Result + Char(B);
+            {$ELSE}
+            ZbPendByte(Pending, B);
+            {$ENDIF}
+        end;
+
+        procedure FlushBytes;
+        begin
+            {$IFNDEF FPC}
+            ZbFlushBytes(Pending, Result);
+            {$ENDIF}
+        end;
+
     begin
         Decoded := '"\/'#8#12#10#13#9#39;
         Result := '';
+        {$IFNDEF FPC}
+        Pending := nil;
+        {$ENDIF}
         I := 1;
         while I <= Length(Text) do
         begin
             if (Text[I] <> '\') or (I = Length(Text)) then
             begin
+                FlushBytes;
                 Result := Result + Text[I];
                 Inc(I);
                 Continue;
@@ -1091,6 +1303,7 @@ end;
             K := Pos(Text[I + 1], ESCAPES);
             if K > 0 then
             begin
+                FlushBytes;
                 Result := Result + Decoded[K];
                 Inc(I, 2);
                 Continue;
@@ -1128,25 +1341,40 @@ end;
                         end;
                     end;
                 'x':
-                    if (I + 3 <= Length(Text)) and (ZbHexDigit(Text[I + 2]) >= 0) and
+                    if (I + 2 <= Length(Text)) and (Text[I + 2] = '{') then
+                    begin
+                        (* \x{27}: a code point, as \u{27} is. *)
+                        CodePoint := ZbBracedCodePoint(Text, I + 2, Len);
+                        Inc(Len, 2);
+                    end
+                    else if (I + 3 <= Length(Text)) and (ZbHexDigit(Text[I + 2]) >= 0) and
                        (ZbHexDigit(Text[I + 3]) >= 0) then
                     begin
                         { One byte, not a code point: \xC3\xA9 is the two bytes
                           of one UTF-8 character. }
-                        Result := Result + Char(ZbHexDigit(Text[I + 2]) * 16 + ZbHexDigit(Text[I + 3]));
+                        AddByte(ZbHexDigit(Text[I + 2]) * 16 + ZbHexDigit(Text[I + 3]));
                         Inc(I, 4);
                         Continue;
                     end;
-                '0'..'3':
-                    if (I + 3 <= Length(Text)) and (Text[I + 2] in ['0'..'7']) and
-                       (Text[I + 3] in ['0'..'7']) then
+                '0'..'7':
+                    if (I + 2 <= Length(Text)) and (Text[I + 2] in ['0'..'7']) then
                     begin
-                        Result := Result + Char((Ord(Text[I + 1]) - 48) * 64 +
-                            (Ord(Text[I + 2]) - 48) * 8 + (Ord(Text[I + 3]) - 48));
-                        Inc(I, 4);
+                        { Three digits when the first is 0 to 3 and a third
+                          follows (\047), else two (\47). }
+                        Value := (Ord(Text[I + 1]) - 48) * 8 + (Ord(Text[I + 2]) - 48);
+                        Len := 3;
+                        if (Text[I + 1] in ['0'..'3']) and (I + 3 <= Length(Text)) and
+                           (Text[I + 3] in ['0'..'7']) then
+                        begin
+                            Value := Value * 8 + (Ord(Text[I + 3]) - 48);
+                            Len := 4;
+                        end;
+                        AddByte(Value);
+                        Inc(I, Len);
                         Continue;
                     end;
             end;
+            FlushBytes;
             if (CodePoint < 0) or (Len = 0) then
             begin
                 Result := Result + Text[I];
@@ -1168,17 +1396,21 @@ end;
             {$ENDIF}
             Result := Result + ZbCodePointText(CodePoint);
         end;
+        FlushBytes;
     end;
 
-    { Text with the HTML entities of a quoted or escaped value undone, in any
-      letter case: &#39; &#x27; &apos; &amp; &lt;. Used to search for a secret
-      only: a server may HTML-escape the request it echoes back. }
+    { Text with the HTML character references of a quoted or escaped value
+      undone, in any letter case: the numeric ones, decimal or hexadecimal,
+      with any number of leading zeros (&#34; &#039; &#233; &#x22; &#X27;),
+      and &quot; &gt; &lt; &amp; &apos;. Used to search for a secret only: a
+      server may HTML-escape the request it echoes back. }
     function ZbHtmlEntityView(const Text: String): String;
     const
-        ENTITIES: array[0..4] of String = ('&#39;', '&#x27;', '&apos;', '&amp;', '&lt;');
-        DECODED: array[0..4] of String = ('''', '''', '''', '&', '<');
+        NAMES: array[0..4] of String = ('&quot;', '&gt;', '&lt;', '&amp;', '&apos;');
+        DECODED: array[0..4] of String = ('"', '>', '<', '&', '''');
     var
-        I, K: Integer;
+        I, K, J, Digit, Radix: Integer;
+        CodePoint: Int64;
         Matched: Boolean;
     begin
         Result := '';
@@ -1187,14 +1419,47 @@ end;
         begin
             Matched := False;
             if Text[I] = '&' then
-                for K := Low(ENTITIES) to High(ENTITIES) do
-                    if LowerCase(Copy(Text, I, Length(ENTITIES[K]))) = ENTITIES[K] then
+            begin
+                if (I + 2 <= Length(Text)) and (Text[I + 1] = '#') then
+                begin
+                    { A numeric reference: &#, an optional x, digits, ';'. }
+                    J := I + 2;
+                    Radix := 10;
+                    if (Text[J] = 'x') or (Text[J] = 'X') then
                     begin
-                        Result := Result + DECODED[K];
-                        Inc(I, Length(ENTITIES[K]));
-                        Matched := True;
-                        Break;
+                        Radix := 16;
+                        Inc(J);
                     end;
+                    CodePoint := 0;
+                    K := J;
+                    while K <= Length(Text) do
+                    begin
+                        Digit := ZbHexDigit(Text[K]);
+                        if (Digit < 0) or (Digit >= Radix) then
+                            Break;
+                        { Past U+10FFFF it stops growing. }
+                        if CodePoint <= $10FFFF then
+                            CodePoint := CodePoint * Radix + Digit;
+                        Inc(K);
+                    end;
+                    if (K > J) and (K <= Length(Text)) and (Text[K] = ';') and (CodePoint <= $10FFFF) and
+                       not ((CodePoint >= $D800) and (CodePoint <= $DFFF)) then
+                    begin
+                        Result := Result + ZbCodePointText(Integer(CodePoint));
+                        I := K + 1;
+                        Matched := True;
+                    end;
+                end
+                else
+                    for K := Low(NAMES) to High(NAMES) do
+                        if LowerCase(Copy(Text, I, Length(NAMES[K]))) = NAMES[K] then
+                        begin
+                            Result := Result + DECODED[K];
+                            Inc(I, Length(NAMES[K]));
+                            Matched := True;
+                            Break;
+                        end;
+            end;
             if not Matched then
             begin
                 Result := Result + Text[I];
@@ -1280,15 +1545,83 @@ end;
         end;
     end;
 
-    { The folded text of one character: ZbSimpleFold, except that the sharp s
-      (and its capital) becomes 'ss', so an echo that upper-cases a secret
-      with one matches it. }
+    const
+        { The letter a precomposed Latin character is built on, for U+00C0 to
+          U+024F and for U+1E00 to U+1EFF: its first letter in canonical
+          decomposition (a + U+0301 for U+00E1), lower case. '-' where there is
+          none. Together with the dropping of combining marks (ZbIsCombiningMark)
+          this makes 'e' + U+0301 and U+00E9 one and the same text. }
+        ZB_BASE_LATIN_1 =
+            'aaaaaa-ceeeeiiii-nooooo--uuuuy--aaaaaa-ceeeeiiii-nooooo--uuuuy-y' +
+            'aaaaaaccccccccdd--eeeeeeeeeegggggggghh--iiiiiiiii---jjkk-llllll-' +
+            '---nnnnnn---oooooo--rrrrrrsssssssstttt--uuuuuuuuuuuuwwyyyzzzzzz-' +
+            '--------------------------------oo-------------uu---------------' +
+            '-------------aaiioouuuuuuuuuu-aaaa----ggkkoooo--j---gg--nnaa----' +
+            'aaaaeeeeiiiioooorrrruuuusstt--hh------aaeeooooooooyy------------' +
+            '----------------';
+        ZB_BASE_LATIN_ADDITIONAL =
+            'aabbbbbbccddddddddddeeeeeeeeeeffgghhhhhhhhhhiiiikkkkkkllllllllmm' +
+            'mmmmnnnnnnnnoooooooopppprrrrrrrrssssssssssttttttttuuuuuuuuuuvvvv' +
+            'wwwwwwwwwwxxxxyyzzzzzzhtwy------aaaaaaaaaaaaaaaaaaaaaaaaeeeeeeee' +
+            'eeeeeeeeiiiioooooooooooooooooooooooouuuuuuuuuuuuuuyyyyyyyy------';
+
+    { The letter a precomposed character is built on (the character itself when
+      it is not one): the Latin tables above, and the Greek and Cyrillic
+      letters with a tonos, a diaeresis or a breve, as their lower-case
+      forms. }
+    function ZbBaseLetter(CodePoint: Integer): Integer;
+    var
+        Base: Char;
+    begin
+        Result := CodePoint;
+        Base := '-';
+        if (CodePoint >= $C0) and (CodePoint <= $24F) then
+            Base := ZB_BASE_LATIN_1[CodePoint - $C0 + 1]
+        else if (CodePoint >= $1E00) and (CodePoint <= $1EFF) then
+            Base := ZB_BASE_LATIN_ADDITIONAL[CodePoint - $1E00 + 1]
+        else
+            case CodePoint of
+                $390, $3AF, $3CA: Result := $3B9;
+                $3AC: Result := $3B1;
+                $3AD: Result := $3B5;
+                $3AE: Result := $3B7;
+                $3B0, $3CB, $3CD: Result := $3C5;
+                $3CC: Result := $3BF;
+                $3CE: Result := $3C9;
+                $439, $45D: Result := $438;
+                $450, $451: Result := $435;
+                $453: Result := $433;
+                $457: Result := $456;
+                $45C: Result := $43A;
+                $45E: Result := $443;
+            end;
+        if Base <> '-' then
+            Result := Ord(Base);
+    end;
+
+    { Whether a code point is a combining mark: the diacritical blocks (U+0300
+      to U+036F and its extensions) and the combining marks for symbols and
+      half marks. They are not part of what a person reads as the letter, and
+      an echo may write the same letter with or without one. }
+    function ZbIsCombiningMark(CodePoint: Integer): Boolean;
+    begin
+        case CodePoint of
+            $300..$36F, $1AB0..$1AFF, $1DC0..$1DFF, $20D0..$20FF, $FE20..$FE2F:
+                Result := True;
+        else
+            Result := False;
+        end;
+    end;
+
+    { The folded text of one character: ZbSimpleFold, then the letter a
+      precomposed one is built on, except that the sharp s (and its capital)
+      becomes 'ss', so an echo that upper-cases a secret with one matches it. }
     function ZbFoldUnit(CodePoint: Integer): String;
     begin
         if (CodePoint = $DF) or (CodePoint = $1E9E) then
             Result := 'ss'
         else
-            Result := ZbCodePointText(ZbSimpleFold(CodePoint));
+            Result := ZbCodePointText(ZbBaseLetter(ZbSimpleFold(CodePoint)));
     end;
 
     { One character at Text[At]: its code point and how many string units it
@@ -1402,13 +1735,17 @@ end;
         while I <= Length(Text) do
         begin
             ZbNextCharacter(Text, I, CodePoint, Len);
-            { A combining dot above that follows an i is what the full fold of
-              U+0130 leaves behind ('i' + U+0307): drop it, and let the i's span
-              cover it, so the echo is masked whole. A secret holding U+0130
-              folds to a plain i, which this then matches either way. }
-            if (CodePoint = $307) and (Used > 0) and (Folded[Used] = 'i') then
+            { A combining mark is dropped, from the secret and from an echo
+              alike, so a letter with an accent and the same letter followed by
+              the mark read as one text: U+0130 folds to a plain i and so does
+              'i' + U+0307 (what its full lower-case is), and U+00E9 and
+              'e' + U+0301 both fold to e. The character before it takes the
+              mark into its span, so an echo is masked whole. A mark with
+              nothing before it is covered by no span and stays. }
+            if ZbIsCombiningMark(CodePoint) then
             begin
-                Spans[2 * Used - 1] := I + Len - 1;
+                if Used > 0 then
+                    Spans[2 * Used - 1] := I + Len - 1;
                 Inc(I, Len);
                 Continue;
             end;
@@ -1603,7 +1940,8 @@ end;
         case CodePoint of
             $7F..$A0, $AD, $34F, $600..$605, $61C, $6DD, $70F, $890, $891, $8E2, $115F, $1160, $1680, $17B4, $17B5, $180B..$180F,
             $2000..$200F, $2028..$202F, $205F..$206F, $3000, $3164, $FE00..$FE0F, $FEFF,
-            $FFA0, $FFF9..$FFFB, $110BD, $1BCA0..$1BCA3, $1D173..$1D17A, $E0000..$E0FFF:
+            $FFA0, $FFF9..$FFFB, $110BD, $110CD, $13430..$1343F, $13447..$13455,
+            $1BCA0..$1BCA3, $1D173..$1D17A, $E0000..$E0FFF:
                 Result := True;
         else
             Result := False;
@@ -1787,6 +2125,10 @@ end;
         ZbLastRequestHeader := '';
     end;
 
+    const
+        { What a body in a content encoding this client does not read says. }
+        ZB_ENCODING_MESSAGE = 'The response from ZeroBounce used a content encoding this client does not read.';
+
     {$IFDEF FPC}
     { A body shorter than its Content-Length was cut off: the connection closed
       part-way through. fphttpclient hands back whatever arrived without
@@ -1803,7 +2145,7 @@ end;
           be taken for text (or saved as the file). Only "identity" is read. }
         Encoding := Trim(Client.GetHeader(Client.ResponseHeaders, 'Content-Encoding'));
         if (Encoding <> '') and (CompareText(Encoding, 'identity') <> 0) then
-            raise ZbException.Create('The response from ZeroBounce used a content encoding this client does not read.');
+            raise ZbException.Create(ZB_ENCODING_MESSAGE);
         { A chunked body ends with an empty chunk, after which fphttpclient
           reads no more. Reaching the end of the connection first means it was
           cut short mid-stream. }
@@ -1817,6 +2159,30 @@ end;
             Exit;
         raise ZbException.Create(Format(
             'The response from ZeroBounce was cut short: %d of %d bytes received', [Received, Expected]));
+    end;
+    {$ENDIF}
+
+    {$IFNDEF FPC}
+    { Delphi's HTTP client may already have inflated a gzip body, so a
+      Content-Encoding header says nothing here. What matters is whether the
+      body it hands over is still gzip: it starts with the gzip magic bytes
+      1F 8B. Text it has turned into text is kept. }
+    procedure ZbRequireNotGzip(const Response: IHTTPResponse);
+    var
+        Magic: array[0..1] of Byte;
+        Stream: TStream;
+        Gzip: Boolean;
+    begin
+        Gzip := False;
+        Stream := Response.ContentStream;
+        if (Stream <> nil) and (Stream.Size >= 2) then
+        begin
+            Stream.Position := 0;
+            Gzip := (Stream.Read(Magic, 2) = 2) and (Magic[0] = $1F) and (Magic[1] = $8B);
+            Stream.Position := 0;
+        end;
+        if Gzip then
+            raise ZbException.Create(ZB_ENCODING_MESSAGE);
     end;
     {$ENDIF}
 
@@ -1842,6 +2208,9 @@ end;
         {$ENDIF}
         error: ZbException;
     begin
+        { Before anything can refuse the request: a URL that is not https
+          must not leave the body and header of an earlier request behind. }
+        ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
@@ -1906,6 +2275,7 @@ end;
                 on E: Exception do
                   raise ZbTransportError(E);
               end;
+              ZbRequireNotGzip(Response);
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -1930,6 +2300,9 @@ end;
         {$ENDIF}
         error: ZbException;
     begin
+        { Before anything can refuse the request: a URL that is not https
+          must not leave the body and header of an earlier request behind. }
+        ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
@@ -1992,6 +2365,8 @@ end;
                   raise ZbTransportError(E);
               end;
 
+              ZbRequireNotGzip(Response);
+
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -2047,6 +2422,7 @@ end;
     function ZBSendRequestWithHeader(Method, url, Body, ContentType,
         HeaderName, HeaderValue: String): TZbRequestResponse;
     begin
+        ZbClearLastRequest;
         ZbRequireApiKey;
         Result := ZBSendForeignKeyRequest(
             Method, url, Body, ContentType, HeaderName, HeaderValue
@@ -2065,6 +2441,7 @@ end;
         Response: IHTTPResponse;
         {$ENDIF}
     begin
+        ZbClearLastRequest;
         url := ZbCheckedUrl(url);
         ZbLastRequestMethod := Method;
         { The body and the header can carry a key: kept only for a test that
@@ -2151,6 +2528,7 @@ end;
                     on E: Exception do
                         raise ZbTransportError(E);
                 end;
+                ZbRequireNotGzip(Response);
                 Result.Payload := Response.ContentAsString();
                 Result.StatusCode := Response.StatusCode;
                 Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -2174,6 +2552,9 @@ end;
         Response: IHTTPResponse;
         {$ENDIF}
     begin
+        { Before anything can refuse the request: a URL that is not https
+          must not leave the body and header of an earlier request behind. }
+        ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         ZbLastRequestMethod := 'POST';
@@ -2241,6 +2622,8 @@ end;
                   raise ZbTransportError(E);
               end;
 
+              ZbRequireNotGzip(Response);
+
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;
               Result.ContentType := Response.HeaderValue['Content-Type'];
@@ -2278,26 +2661,45 @@ end;
         function FormDataFromTString(): TMultiPartFormData;
         var
           SIterator: TStringsEnumerator;
-          ASplit: TStringDynArray;
+          Line: String;
+          At: Integer;
         begin
           Result := TMultiPartFormData.Create(False);
-
-          SIterator := TStringsEnumerator.Create(FormData);
-          while (SIterator.MoveNext) do
-          begin
-            ASplit := SplitString(SIterator.GetCurrent, FormData.NameValueSeparator);
-            Result.AddField(ASplit[0], ASplit[1]);
+          try
+            SIterator := TStringsEnumerator.Create(FormData);
+            try
+              while (SIterator.MoveNext) do
+              begin
+                { The name is what comes before the first separator and the
+                  value is the rest of the line, further '=' included: a
+                  return_url of https://cb.example/x?a=1&b=2 is sent whole. A
+                  line with no separator is a name with an empty value. }
+                Line := SIterator.GetCurrent;
+                At := Pos(FormData.NameValueSeparator, Line);
+                if At > 0 then
+                  Result.AddField(Copy(Line, 1, At - 1), Copy(Line, At + 1, MaxInt))
+                else
+                  Result.AddField(Line, '');
+              end;
+            finally
+              SIterator.Free;
+            end;
+          except
+            Result.Free;
+            raise;
           end;
-
         end;
         {$ENDIF}
     begin
+        { Before anything can refuse the request: a URL that is not https
+          must not leave the body and header of an earlier request behind. }
+        ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         if ZbResponseMock.StatusCode <> 0 then
         begin
-            Result := ZbResponseMock;
             ZbResponseMock.UrlCalled := url;
+            Result := ZbResponseMock;
         end
         else
         begin
@@ -2372,6 +2774,8 @@ end;
                     raise error;
                   end;
               end;
+
+              ZbRequireNotGzip(Response);
 
               Result.Payload := Response.ContentAsString();
               Result.StatusCode := Response.StatusCode;

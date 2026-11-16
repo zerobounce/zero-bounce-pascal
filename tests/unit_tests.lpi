@@ -73,6 +73,31 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="BaseTest"/>
       </Unit>
+      <Unit>
+        <Filename Value="testpriority3.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestPriority3"/>
+      </Unit>
+      <Unit>
+        <Filename Value="testoffline.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestOffline"/>
+      </Unit>
+      <Unit>
+        <Filename Value="testbulkjobs.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestBulkJobs"/>
+      </Unit>
+      <Unit>
+        <Filename Value="testwarmup.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestWarmup"/>
+      </Unit>
+      <Unit>
+        <Filename Value="testbehaviour.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestBehaviour"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

@@ -59,6 +59,9 @@ implementation
     begin
         UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_CREDITS, '?api_key=', EncodeParam(ZbApiKey));
         response := ZBGetRequest(UrlToAccess);
+        (* A message alone, such as {"message":"Invalid API key"}, is the
+          API's refusal, with the response's status, not a missing field. *)
+        ZbRaiseIfNoResult(response);
 
         // attempt json parsing
         try
@@ -200,7 +203,13 @@ implementation
                 Json := TZbJSon.Create(response.Payload);
                 ActiveInDaysString := Json.GetString('active_in_days');
                 if ActiveInDaysString <> '' then
-                    Result := StrToInt(ActiveInDaysString)
+                begin
+                    { As credits: StrToInt would take '+5', ' 5', '$1F' and
+                      '0x10'. }
+                    if not ZbIsIntegerText(ActiveInDaysString) then
+                        raise Exception.Create('ZeroBounce returned the field "active_in_days" missing or with the wrong JSON type.');
+                    Result := StrToInt(ActiveInDaysString);
+                end
                 else
                     Result := -1;
             finally

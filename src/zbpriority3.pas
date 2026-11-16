@@ -221,6 +221,42 @@ const
             Form.AddPair(Key, StrBool(Value));
     end;
 
+    { The documented filter vocabulary, in the case the docs use. Anything
+      else, including another letter case, is refused before a request goes
+      out, so a typo is never sent as a rule the API may read some other way. }
+    procedure P3RequireFilterFields(const Rule, Target: String);
+    begin
+        if (Rule <> 'allow') and (Rule <> 'block') then
+            raise ZbException.Create('Invalid parameter: rule must be allow or block');
+        if (Target <> 'email') and (Target <> 'domain') and
+           (Target <> 'mx') and (Target <> 'tld') then
+            raise ZbException.Create(
+                'Invalid parameter: target must be email, domain, mx or tld'
+            );
+    end;
+
+    { Characters, not storage units. FPC's String is a UTF-8 AnsiString, so
+      Length counts bytes and a Cyrillic letter is two of them; skip the
+      continuation bytes. Where String is UTF-16 (Delphi, or FPC with
+      unicode strings) Length counts units, which is a character for the
+      BMP; a surrogate pair is still one character, so skip the low half. }
+    function P3CharCount(const Value: String): Integer;
+    var
+        I: Integer;
+    begin
+        Result := 0;
+        for I := 1 to Length(Value) do
+        begin
+            {$IF DEFINED(FPC) AND NOT DEFINED(UNICODE)}
+            if (Ord(Value[I]) and $C0) <> $80 then
+                Inc(Result);
+            {$ELSE}
+            if (Ord(Value[I]) < $DC00) or (Ord(Value[I]) > $DFFF) then
+                Inc(Result);
+            {$IFEND}
+        end;
+    end;
+
     { ZbListEvaluatorURL without a trailing slash. }
     function P3ListEvaluatorBase: String;
     begin
@@ -583,6 +619,7 @@ function ZbAddFilter(const Rule, Target, Value: String): String;
 var
     Form: TStrings;
 begin
+    P3RequireFilterFields(Rule, Target);
     Form := TStringList.Create;
     Form.AddPair('api_key', ZbApiKey);
     Form.AddPair('rule', Rule);
@@ -609,6 +646,7 @@ function ZbDeleteFilter(const Rule, Target, Value: String): String;
 var
     Form: TStrings;
 begin
+    P3RequireFilterFields(Rule, Target);
     Form := TStringList.Create;
     Form.AddPair('api_key', ZbApiKey);
     Form.AddPair('rule', Rule);
@@ -904,7 +942,7 @@ var
 begin
     if Trim(Name) = '' then
         raise ZbException.Create('Empty parameter: name');
-    if Length(Name) > ZB_IPT_NAME_MAX_LENGTH then
+    if P3CharCount(Name) > ZB_IPT_NAME_MAX_LENGTH then
         raise ZbException.Create(Format(
             'Invalid parameter: name must be at most %d characters',
             [ZB_IPT_NAME_MAX_LENGTH]

@@ -47,6 +47,8 @@ type
         procedure TestEmailFinderFileNeedsOneOfTheNameColumns;
         procedure TestCreateInboxPlacementTestSendsProvidersAndSeeds;
         procedure TestCreateInboxPlacementTestChecksItsArguments;
+        procedure TestCreateInboxPlacementTestCountsCharactersNotBytes;
+        procedure TestFiltersCheckRuleAndTargetBeforeSending;
         procedure TestListInboxPlacementTestsFiltersAndBounds;
         procedure TestListEvaluatorFlowFollowsZbListEvaluatorURL;
         procedure TestFormPostSuccessFalseRaises;
@@ -987,6 +989,122 @@ begin
     Options.TestType := 3;
     ZbCreateInboxPlacementTest('Launch', @Options);
     AssertEquals('{"name":"Launch","testType":3}', ZbLastRequestBody);
+end;
+
+{ Length counts UTF-8 bytes on FPC, so a Cyrillic name of 40 letters (80
+  bytes) was refused although the limit is 64 characters. }
+function CyrillicName(Count: Integer): String;
+var
+    I: Integer;
+begin
+    Result := '';
+    for I := 1 to Count do
+        {$IF DEFINED(FPC) AND NOT DEFINED(UNICODE)}
+        Result := Result + #$D0#$B6;
+        {$ELSE}
+        Result := Result + WideChar($0436);
+        {$IFEND}
+end;
+
+procedure TTestBulkJobs.TestCreateInboxPlacementTestCountsCharactersNotBytes;
+var
+    Raised: Boolean;
+begin
+    MockOk(OK_JSON);
+    ZbResponseMock.UrlCalled := '';
+
+    ZbCreateInboxPlacementTest(CyrillicName(40), nil);
+    AssertEndpointCalled('/api/ipt/test');
+    ZbResponseMock.UrlCalled := '';
+    ZbLastRequestBody := '';
+    ZbCreateInboxPlacementTest(CyrillicName(64), nil);
+    AssertEndpointCalled('/api/ipt/test');
+
+    ZbResponseMock.UrlCalled := '';
+    ZbLastRequestBody := '';
+    Raised := False;
+    try
+        ZbCreateInboxPlacementTest(CyrillicName(65), nil);
+    except on e: ZbException do
+        begin
+            Raised := True;
+            AssertEquals(
+                'Invalid parameter: name must be at most 64 characters', e.Message
+            );
+        end;
+    end;
+    AssertTrue('a 65-character name should be rejected', Raised);
+    AssertEquals('no request should have been sent', '', ZbResponseMock.UrlCalled);
+    AssertEquals('', ZbLastRequestBody);
+
+    Raised := False;
+    try
+        ZbCreateInboxPlacementTest(StringOfChar('x', 65), nil);
+    except on e: ZbException do
+        Raised := True;
+    end;
+    AssertTrue('a 65-character ASCII name should be rejected', Raised);
+end;
+
+{ Rule and target are checked before anything is sent; the case is the docs'. }
+procedure TTestBulkJobs.TestFiltersCheckRuleAndTargetBeforeSending;
+const
+    Rules: array[0..3] of String = ('bogus', 'Allow', '', 'exclude');
+    Targets: array[0..3] of String = ('bogus', 'Email', '', 'ip');
+    GoodTargets: array[0..3] of String = ('email', 'domain', 'mx', 'tld');
+var
+    I: Integer;
+
+    procedure ExpectRefused(const What, Rule, Target: String; Add: Boolean);
+    var
+        Raised: Boolean;
+    begin
+        MockOk(OK_JSON);
+        ZbResponseMock.UrlCalled := '';
+        ZbLastRequestBody := '';
+        Raised := False;
+        try
+            if Add then
+                ZbAddFilter(Rule, Target, 'a@example.com')
+            else
+                ZbDeleteFilter(Rule, Target, 'a@example.com');
+        except on e: ZbException do
+            Raised := True;
+        end;
+        AssertTrue(What + ' should raise', Raised);
+        AssertEquals(What + ' should send no request', '', ZbResponseMock.UrlCalled);
+        AssertEquals(What + ' should send no body', '', ZbLastRequestBody);
+    end;
+
+begin
+    for I := Low(Rules) to High(Rules) do
+    begin
+        ExpectRefused('add rule=' + Rules[I], Rules[I], 'email', True);
+        ExpectRefused('delete rule=' + Rules[I], Rules[I], 'email', False);
+        ExpectRefused('add target=' + Targets[I], 'allow', Targets[I], True);
+        ExpectRefused('delete target=' + Targets[I], 'block', Targets[I], False);
+    end;
+
+    MockOk(OK_JSON);
+    ZbLastRequestBody := '';
+    ZbAddFilter('allow', 'email', 'a@example.com');
+    AssertEndpointCalled('/filters/add');
+    AssertBodyField('rule', 'allow');
+    AssertBodyField('target', 'email');
+    AssertBodyField('value', 'a@example.com');
+
+    { Every documented pair is accepted, by both calls. }
+    for I := Low(GoodTargets) to High(GoodTargets) do
+    begin
+        ZbLastRequestBody := '';
+        ZbAddFilter('allow', GoodTargets[I], 'x');
+        AssertBodyField('target', GoodTargets[I]);
+        ZbLastRequestBody := '';
+        ZbDeleteFilter('block', GoodTargets[I], 'x');
+        AssertEndpointCalled('/filters/delete');
+        AssertBodyField('rule', 'block');
+        AssertBodyField('target', GoodTargets[I]);
+    end;
 end;
 
 { Op 45. LIVE: the page size parameter is page_size; pageSize is accepted and

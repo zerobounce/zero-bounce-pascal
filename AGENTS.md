@@ -2,14 +2,14 @@
 
 ## Layout
 
-- `src/zbutility.pas`: the HTTP layer, the base URLs and the response mock. `ZBGetRequest` / `ZBPostRequest` are the originals; `ZBSendRequest` takes an explicit method and an optional body, which the form-encoded bulk jobs and the Inbox Placement Tester's PUT and DELETE need. `ZBFormPostRequest` wraps it.
+- `src/zbutility.pas`: the HTTP layer, the base URLs and the response mock. `ZBGetRequest` / `ZBPostRequest` are the originals; `ZBSendRequest` takes an explicit method and an optional body, which the form-encoded bulk jobs and the Inbox Placement Tester's PUT and DELETE need. `ZBFormPostRequest` is a separate implementation and does not call `ZBSendRequest`.
 - `src/zbvalidation.pas`: single and batch validation, plus `TZbValidateOptions`.
 - `src/zbbulk.pas`: the multipart bulk uploads, their status checks and `getfile`.
 - `src/zbgeneric.pas`: credits, API usage, activity data, real-time AI scoring (`ZbScoreEmail`, `ZbScoreEmailPost`), the email finder and the domain search.
 - `src/zbpriority3.pas`: the bulk email finder and domain search, the filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester.
 - `src/zbwarmup.pas`: the Warmup API. A separate product on its own host with its own team-scoped key and an `API-Key` header, so it has its own `ZbWarmupInitialize` and never touches `ZbApiKey`.
 - `src/zbstructures.pas`: the records and their JSON parsers.
-- `tests/testpriority3.pas`, `tests/testbulkjobs.pas`, `tests/testwarmup.pas`, `tests/testoffline.pas`: the offline suites for the above. Their requests are answered by `ZbResponseMock`; `testoffline.pas` points the base URLs at a loopback stub server instead and covers transport, error-body and secret-redaction cases across the units.
+- `tests/testpriority3.pas`, `tests/testbulkjobs.pas`, `tests/testwarmup.pas`, `tests/testoffline.pas`, `tests/testbehaviour.pas`: the offline suites for the above. Their requests are answered by `ZbResponseMock`; `testoffline.pas` points the base URLs at a loopback stub server instead and covers transport, error-body and secret-redaction cases across the units.
 - `live/live_api.lpr`: the opt-in live suite. Its own program, outside `tests/`, so the offline suite never builds or runs it.
 
 ## Build and test
@@ -61,8 +61,8 @@ The `.o` and `.ppu` files at the repo root are build artifacts, not sources.
 - **A `"success": false` field on an HTTP 200 is a failure.** `getfile` and `deletefile` report an unknown or deleted file id that way. `ZbSuccessMeansFailure` catches it in `ZbFinishResponse`, and `ZbException.StatusCode` carries the HTTP status.
 - **`ZbExportSFTPFile` sends `export_path`**, not the `export_bucket` that `ZbExportS3File` sends.
 - **Safety rails in `ZbUtility`.** `ZbCheckedApiKey` rejects a key with surrounding whitespace or control characters, `ZbRequireHttpsUrl` parses the URL and allows https, or plain http only when the host is exactly `127.0.0.1`, `localhost` or `[::1]` (a local stub), and refuses user information, `ZbPathSegment` rejects `.` and `..`, redirects are never followed, and `RedactSecrets` keeps the key out of exceptions: `ZbException.AfterConstruction` applies it to `Message` and `Payload` of every `ZbException`, whatever constructor built it. Use them rather than adding a second rail beside them.
-- **Optional record fields use a `Has...` flag.** Pascal records have no nullable scalars, so every optional option carries a companion boolean and is only sent when that flag is set.
-- **Offline tests only.** Never call the live API from a test under `tests/`. `ZbResponseMock` short-circuits every request function; `ZbLastRequestMethod`, `ZbLastRequestBody` and `ZbLastRequestHeader` record what would have been sent.
+- **Optional record fields use a `...Specified` flag** (`AllowPhase2Specified`, `ActivityDataSpecified`, `HasHeaderRowSpecified`). Pascal records have no nullable scalars, so every optional option carries a companion boolean and is only sent when that flag is set. `HasHeaderRow` is the value, not the flag.
+- **Offline tests only.** Never call the live API from a test under `tests/`. `ZbResponseMock` short-circuits every request function. While a mock is installed, `ZBSendForeignKeyRequest` records `ZbLastRequestMethod`, `ZbLastRequestBody` and `ZbLastRequestHeader`, and `ZBFormPostRequest` records the method and the body. Every request function clears `ZbLastRequestBody` and `ZbLastRequestHeader` before it checks the URL, so a refused URL does not keep an earlier request. `ZbLastRequestMethod` stays as the last call that set it.
 - **Never from the live suite:** creating an Inbox Placement test (it cannot be deleted while running), setting the Inbox Placement webhook (it cannot be cleared), or ZB managed Warmup onboarding (it provisions a mailbox). Everything the `ZEROBOUNCE_LIVE_CHANGES=1` tier creates is removed again in the same run.
 
 ## Releasing

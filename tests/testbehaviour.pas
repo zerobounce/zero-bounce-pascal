@@ -13,7 +13,7 @@ unit TestBehaviour;
 interface
 
 uses
-    Classes, SysUtils, fpcunit, testregistry,
+    Classes, SysUtils, DateUtils, fpcunit, testregistry,
     BaseTest, ZbUtility, ZbStructures, ZbGeneric, ZbValidation, ZbBulk, ZbPriority3, ZbWarmup;
 
 type
@@ -65,6 +65,12 @@ type
         procedure TestMoreInvisibleCodePointsAreRefused;
         procedure TestAShortMessageWithAnAngleBracketIsKept;
         procedure TestALongJsonBodyIsNotCalledInvalid;
+        procedure TestProcessedAtKeepsItsDayAndItsMilliseconds;
+        procedure TestActivityDaysAreDecimalTextOnly;
+        procedure TestCreditsRaisesOnAMessageAlone;
+        procedure TestANullSuccessKeyDoesNotHideAMessage;
+        procedure TestCompletePercentageParsesWithADotInACommaLocale;
+        procedure TestJsonWrappersFreeWhatTheyCreate;
     end;
 
 implementation
@@ -865,14 +871,16 @@ end;
 procedure TTestBehaviour.TestWhatIsNotAnEscapeIsNotDecoded;
 const
     SECRET = 'ab''cd-9z';
-    NOT_DECODED: array[0..6] of String = (
-        'ab%u0027cd-9z', 'ab\u{000000027}cd-9z', 'ab\u{110000}cd-9z', 'ab\U{}cd-9z', 'ab\x2cd-9z',
-        'ab\47cd-9z', 'ab&#x0027;cd-9z');
+    NOT_DECODED: array[0..4] of String = (
+        'ab%u0027cd-9z', 'ab\u{000000027}cd-9z', 'ab\u{110000}cd-9z', 'ab\U{}cd-9z', 'ab\x2cd-9z');
 var
     I: Integer;
 begin
     for I := Low(NOT_DECODED) to High(NOT_DECODED) do
         AssertEquals(NOT_DECODED[I], 'echo ' + NOT_DECODED[I], ZbMaskSecret('echo ' + NOT_DECODED[I], SECRET));
+    { \47 is the apostrophe, and &#x0027; is the same character with leading zeros. }
+    AssertEquals(ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo ab\47cd-9z', SECRET));
+    AssertEquals(ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo ab&#x0027;cd-9z', SECRET));
     { A mid-key ASCII space is still sent, in the form the API takes. }
     ZBInitialize('ab cd-9z');
     ZBMockResponse(200, '{"Credits":"5"}', 'application/json');
@@ -1131,8 +1139,8 @@ begin
     { Armenian: capital U+0531 against small U+0561, and U+0556 against U+0586. }
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D4#$B1 + #$D5#$96 + '-9 b', #$D5#$A1 + #$D6#$86 + '-9'));
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D5#$A1 + #$D6#$86 + '-9 b', #$D4#$B1 + #$D5#$96 + '-9'));
-    { The dot above is dropped only after an i. }
-    AssertEquals('REDACTED' + #$CC#$87 + #$CC#$87, ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
+    { A combining mark is covered by the character it sits on. }
+    AssertEquals('REDACTED', ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
     AssertEquals('REDACTED-after', ZbMaskSecret('PASSi' + #$CC#$87 + '-after', 'pass' + #$C4#$B0));
     AssertEquals('REDACTED', ZbMaskSecret('i' + #$CC#$87, 'i'));
     { Text that has no echo stays as it was. }
@@ -1276,6 +1284,165 @@ begin
         AssertEquals('leftover temporary files: ' + Leftovers.Text, 0, Leftovers.Count);
     finally
         Leftovers.Free;
+    end;
+end;
+
+procedure TTestBehaviour.TestProcessedAtKeepsItsDayAndItsMilliseconds;
+const
+    HEAD = '{"address":"a@example.com","status":"valid",';
+var
+    Parsed: TZbValidationResult;
+    Y, Mo, D, H, Mi, S, Ms: Word;
+    Round: Integer;
+begin
+    { Repeated, so a part left unread would show whatever the stack held. }
+    for Round := 1 to 5 do
+    begin
+        { No fraction: the time as given, and .000. }
+        Parsed := ZbValidationFromJson(HEAD + '"processed_at":"2023-01-12 22:02:02"}');
+        DecodeDateTime(Parsed.ProcessedAt, Y, Mo, D, H, Mi, S, Ms);
+        AssertEquals('year', 2023, Y);
+        AssertEquals('month', 1, Mo);
+        AssertEquals('day is not the month', 12, D);
+        AssertEquals('hour', 22, H);
+        AssertEquals('minute', 2, Mi);
+        AssertEquals('second', 2, S);
+        AssertEquals('no fraction is .000', 0, Ms);
+        { A fraction stays what it was. }
+        Parsed := ZbValidationFromJson(HEAD + '"processed_at":"2023-01-12 22:02:02.592"}');
+        DecodeDateTime(Parsed.ProcessedAt, Y, Mo, D, H, Mi, S, Ms);
+        AssertEquals('day with a fraction', 12, D);
+        AssertEquals('second with a fraction', 2, S);
+        AssertEquals('milliseconds', 592, Ms);
+    end;
+end;
+
+procedure TTestBehaviour.TestActivityDaysAreDecimalTextOnly;
+const
+    BAD: array[0..3] of String = ('+5', ' 5', '$1F', '0x10');
+var
+    I: Integer;
+    Raised: Boolean;
+begin
+    for I := Low(BAD) to High(BAD) do
+    begin
+        ZBMockResponse(200, '{"found":true,"active_in_days":"' + BAD[I] + '"}', 'application/json');
+        Raised := False;
+        try
+            ZbActivityData('a@example.com');
+        except
+            on E: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(BAD[I] + ' status', 200, E.StatusCode);
+            end;
+        end;
+        AssertTrue('active_in_days ' + BAD[I] + ' was taken as a count', Raised);
+    end;
+    ZBMockResponse(200, '{"found":false,"active_in_days":null}', 'application/json');
+    AssertEquals(-1, ZbActivityData('a@example.com'));
+    ZBMockResponse(200, '{"found":true,"active_in_days":"12"}', 'application/json');
+    AssertEquals(12, ZbActivityData('a@example.com'));
+end;
+
+procedure TTestBehaviour.TestCreditsRaisesOnAMessageAlone;
+var
+    Raised: Boolean;
+begin
+    ZBMockResponse(200, '{"message":"Invalid API key"}', 'application/json');
+    Raised := False;
+    try
+        ZbGetCredits;
+    except
+        on E: ZbException do
+        begin
+            Raised := True;
+            AssertEquals('status', 200, E.StatusCode);
+            AssertTrue('the API text is the message: ' + E.Message, Pos('Invalid API key', E.Message) > 0);
+        end;
+    end;
+    AssertTrue('a message alone was taken as credits', Raised);
+    ZBMockResponse(200, '{"Credits":"-1"}', 'application/json');
+    AssertEquals(-1, ZbGetCredits);
+end;
+
+procedure TTestBehaviour.TestANullSuccessKeyDoesNotHideAMessage;
+var
+    Index: Integer;
+    Text: String;
+    Status: Integer;
+begin
+    Text := '';
+    for Index := FINDER_FIRST to FINDER_LAST do
+    begin
+        AssertTrue(NO_RESULT_NAMES[Index] + ' hid a message behind a null success',
+            NoResultCall(Index, '{"success":null,"message":"Invalid domain"}', Text, Status));
+        AssertEquals(NO_RESULT_NAMES[Index] + ' status', 200, Status);
+        AssertTrue(NO_RESULT_NAMES[Index] + ' text: ' + Text, Pos('Invalid domain', Text) > 0);
+        AssertFalse(NO_RESULT_NAMES[Index] + ' refused {"domain":null}: ' + Text,
+            NoResultCall(Index, '{"domain":null}', Text, Status));
+    end;
+    { A real success on a file status is still not an error. }
+    for Index := STATUS_FIRST to STATUS_LAST do
+        AssertFalse(NO_RESULT_NAMES[Index] + ' refused success true: ' + Text,
+            NoResultCall(Index, '{"success":true}', Text, Status));
+end;
+
+procedure TTestBehaviour.TestCompletePercentageParsesWithADotInACommaLocale;
+var
+    Saved: Char;
+    Status: TZbFileStatus;
+begin
+    Saved := DefaultFormatSettings.DecimalSeparator;
+    DefaultFormatSettings.DecimalSeparator := ',';
+    try
+        Status := ZbFileStatusFromJson('{"success":true,"file_id":"a","complete_percentage":"45.5%"}');
+        AssertEquals('percentage', 45.5, Status.CompletePercentage, 0.0001);
+        AssertEquals('the locale is left as it was', ',', DefaultFormatSettings.DecimalSeparator);
+    finally
+        DefaultFormatSettings.DecimalSeparator := Saved;
+    end;
+    Status := ZbFileStatusFromJson('{"success":true,"file_id":"a","complete_percentage":"45.5%"}');
+    AssertEquals('percentage in the saved locale', 45.5, Status.CompletePercentage, 0.0001);
+end;
+
+procedure TTestBehaviour.TestJsonWrappersFreeWhatTheyCreate;
+const
+    VALID = '{"address":"a@example.com","status":"valid","processed_at":"2023-01-12 22:02:02.592"}';
+    BATCH = '{"email_batch":[' + VALID + ',' + VALID + '],"errors":[{"error":"bad","email_address":"x"}]}';
+    FINDER = '{"email":"a@example.com","domain":"example.com","email_confidence":"high"}';
+    SEARCH = '{"domain":"example.com","other_domain_formats":[{"format":"first","confidence":"high"},' +
+        '{"format":"last","confidence":"low"}]}';
+    USAGE = '{"total":1,"start_date":"1/1/2023","end_date":"1/2/2023"}';
+var
+    Before, After: PtrUInt;
+    I: Integer;
+    Held: TZbJson;
+    Parsed: TZbValidationResult;
+    procedure RunAll;
+    begin
+        ZbValidationFromJson(VALID);
+        ZbBatchErrorFromJson('{"error":"bad","email_address":"x"}');
+        ZbApiUsageFromJson(USAGE);
+        TZbFindEmailResponseFromJson(FINDER);
+        TZbDomainSearchResponseFromJson(SEARCH);
+        ZbBatchValidationFromJson(BATCH);
+    end;
+begin
+    RunAll;
+    Before := GetFPCHeapStatus.CurrHeapUsed;
+    for I := 1 to 50 do
+        RunAll;
+    After := GetFPCHeapStatus.CurrHeapUsed;
+    AssertEquals('heap grew over 50 rounds of parsing', 0, Int64(After) - Int64(Before));
+    { The object a caller passes in is theirs: still readable afterwards. }
+    Held := TZbJson.Create(VALID);
+    try
+        Parsed := ZbValidationFromJson(Held);
+        AssertEquals('a@example.com', Parsed.Address);
+        AssertEquals('the caller still holds its object', 'valid', Held.GetString('status'));
+    finally
+        Held.Free;
     end;
 end;
 
