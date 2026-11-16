@@ -220,7 +220,8 @@ procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
   validatebatch, activity, scoring and getapiusage): raises a ZbException
   with the response's status when an HTTP 200 body has nothing but a message
   (message, Message, error, error_message, Error or detail, of any value), is
-  an empty object, or has a message beside fields that are all null. The text
+  an empty object, or has every field that is not a message null, with or
+  without a message ({"Credits":null} included). ZbGetCredits uses it too. The text
   is the message when it is a string, else
   'ZeroBounce returned an unexpected JSON response.'. A body that is not a
   JSON object is left to the parser of the call. Not for validate, which
@@ -817,11 +818,24 @@ implementation
     end;
 
     function TZbJson.GetValue(Key: String): TZbJSONValue;
+    {$IFNDEF FPC}
+    var
+        I: Integer;
+    {$ENDIF}
     begin
         {$IFDEF FPC}
         Result := FJSONObject.Find(Key);
         {$ELSE}
-        Result := FJSONObject.FindValue(Key);
+        { The exact key. FindValue reads its argument as a JSON path, so a key
+          a.b would be looked up as b inside a, and an empty one is the
+          object itself. }
+        Result := nil;
+        for I := 0 to FJSONObject.Count - 1 do
+            if FJSONObject.Pairs[I].JsonString.Value = Key then
+            begin
+                Result := FJSONObject.Pairs[I].JsonValue;
+                Exit;
+            end;
         {$ENDIF}
     end;
 
@@ -956,6 +970,7 @@ implementation
     function TZbJson.GetInteger(Key: String): Integer;
     var
         JValue: TZbJSONValue;
+        Wide: Int64;
     begin
         Result := 0;
         JValue := GetValue(Key);
@@ -966,13 +981,21 @@ implementation
         { A JSON integer: fpjson would read true as 1, 5.5 as 6 and "5" as 5. }
         if not ((JValue is TJSONIntegerNumber) or (JValue is TJSONInt64Number)) then
             ZbRaiseFieldType(Key);
-        Result := JValue.AsInteger;
+        { fpjson reads a TJSONInt64Number through AsInteger, which cuts
+          4294967297 down to 1: a value outside Integer is not a count. }
+        Wide := JValue.AsInt64;
+        if (Wide < Low(Integer)) or (Wide > High(Integer)) then
+            ZbRaiseFieldType(Key);
+        Result := Integer(Wide);
         {$ELSE}
         if JValue.Null then exit;
         if not (JValue is TJSONNumber) or (Pos('.', JValue.Value) > 0) or
             (Pos('e', LowerCase(JValue.Value)) > 0) then
             ZbRaiseFieldType(Key);
-        Result := JValue.AsType<Integer>;
+        if not TryStrToInt64(JValue.Value, Wide) or (Wide < Low(Integer)) or
+            (Wide > High(Integer)) then
+            ZbRaiseFieldType(Key);
+        Result := Integer(Wide);
         {$ENDIF}
     end;
 
@@ -1016,9 +1039,17 @@ implementation
             {$ENDIF}
         begin
             {$IFDEF FPC}
-            SScanf(DateString, '%d/%d/%d', [@Month, @Day, @Year]);
+            { Every part starts at 0 and the count is checked: a short string
+              such as 11/17 is not a date, whatever the stack held. }
+            Day := 0;
+            Month := 0;
+            Year := 0;
+            if SScanf(DateString, '%d/%d/%d', [@Month, @Day, @Year]) <> 3 then
+                raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
             {$ELSE}
             ASplit := SplitString(DateString, '/');
+            if Length(ASplit) < 3 then
+                raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
             Month := StrToInt(ASplit[0]);
             Day := StrToInt(ASplit[1]);
             Year := StrToInt(ASplit[2]);
@@ -1102,6 +1133,8 @@ implementation
             { An Integer: SScanf's %d stores an Integer, which a Word would
               not hold. }
             Milis: Integer;
+            Text, Fraction: String;
+            Separator, DotPos, Digits, I: Integer;
             {$IFNDEF FPC}
             ASplitMain: TStringDynArray;
             ASplitAux: TStringDynArray;
@@ -1116,30 +1149,53 @@ implementation
             Minute := 0;
             Second := 0;
             Milis := 0;
-            // %Y-%m-%d %H:%M:%S.%3f
+            Text := DateString;
+            { The date and the time are told apart by a space or a T. }
+            Separator := Pos('T', Text);
+            if Separator > 0 then
+                Text[Separator] := ' ';
+            { The fraction is a decimal of seconds, not a count of
+              milliseconds: .5 is 500, .12 is 120 and .592 is 592. More than
+              three digits is not a time. }
+            DotPos := Pos('.', Text);
+            if DotPos > 0 then
+            begin
+                Fraction := Copy(Text, DotPos + 1, MaxInt);
+                Text := Copy(Text, 1, DotPos - 1);
+                Digits := 0;
+                while (Digits < Length(Fraction)) and (Fraction[Digits + 1] in ['0'..'9']) do
+                    Inc(Digits);
+                if (Digits < 1) or (Digits > 3) or (Digits <> Length(Fraction)) then
+                    raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
+                Milis := StrToInt(Copy(Fraction, 1, Digits));
+                for I := Digits to 2 do
+                    Milis := Milis * 10;
+            end;
+            // %Y-%m-%d %H:%M:%S
             {$IFDEF FPC}
             SScanf(
-                DateString,
-                '%d-%d-%d %d:%d:%d.%d',
-                [@Year, @Month, @Day, @Hour, @Minute, @Second, @Milis]
+                Text,
+                '%d-%d-%d %d:%d:%d',
+                [@Year, @Month, @Day, @Hour, @Minute, @Second]
             );
             {$ELSE}
             // no sscanf in Delphi
-            ASplitMain := SplitString(DateString, ' ');
+            ASplitMain := SplitString(Text, ' ');
+            if Length(ASplitMain) < 2 then
+                raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
 
             // %Y-%m-%d
             ASplitAux := SplitString(ASplitMain[0], '-');
+            if Length(ASplitAux) < 3 then
+                raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
             Year := StrToInt(ASplitAux[0]);
             Month := StrToInt(ASplitAux[1]);
             Day := StrToInt(ASplitAux[2]);
 
-            // %H:%M:%S.%3f
-            ASplitAux := SplitString(ASplitMain[1], '.');
-            if Length(ASplitAux) = 1 then
-                Milis := 0
-            else
-                Milis := StrToInt(ASplitAux[1]);
-            ASplitAux := SplitString(ASplitAux[0], ':');
+            // %H:%M:%S
+            ASplitAux := SplitString(ASplitMain[1], ':');
+            if Length(ASplitAux) < 3 then
+                raise EConvertError.CreateFmt('Invalid date/timestamp : "%s"', [DateString]);
             Hour := StrToInt(ASplitAux[0]);
             Minute := StrToInt(ASplitAux[1]);
             Second := StrToInt(ASplitAux[2]);
@@ -1350,9 +1406,10 @@ implementation
                 end;
                 {$ENDIF}
             end;
-            { Any message, error or error_message that is not null or blank
-              (a JSON object in place of a file is an error anyway). }
-            if HasText('message') or HasText('error') or HasText('error_message') then
+            { Any message, error, error_message, Message, Error or detail that
+              is not null or blank (a JSON object in place of a file is an error anyway). }
+            if HasText('message') or HasText('error') or HasText('error_message') or
+               HasText('Message') or HasText('Error') or HasText('detail') then
             begin
                 Result := True;
                 Exit;
@@ -1418,7 +1475,9 @@ implementation
                 PercentageAuxArray := SplitString(
                     JsonObj.GetString('complete_percentage'), '%'
                 );
-                if Length(PercentageAuxArray) > 0 then
+                { "" and "%" carry no number: -1, as null does. SplitString
+                  gives [''] or ['', ''] for them, never an empty array. }
+                if (Length(PercentageAuxArray) > 0) and (Trim(PercentageAuxArray[0]) <> '') then
                     Result.CompletePercentage := StrToFloat(PercentageAuxArray[0], PercentageFormat)
                 else
                     Result.CompletePercentage := -1;

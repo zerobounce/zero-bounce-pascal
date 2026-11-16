@@ -469,6 +469,7 @@ function WarmupCsv(const Path, Query, DownloadPath: String): String;
 var
     Response: TZbRequestResponse;
     Directory: String;
+    Error: ZbException;
 begin
     Response := WarmupSend('GET', Path, Query, '');
     Result := Response.Payload;
@@ -477,12 +478,24 @@ begin
       padding (white space, a BOM, a no-break space) is skipped. A real file
       that begins with spaces is still saved unchanged. }
     if ZbDownloadKind(Response.Payload, Response.ContentType) <> zdkFile then
-        raise ZbException.FromResponse('', Response);
+    begin
+        { An HTTP error, as the bulk and finder downloads mark it. }
+        Error := ZbException.FromResponse('', Response);
+        Error.MarkHttpError;
+        raise Error;
+    end;
     if DownloadPath = '' then
         Exit;
     Directory := ExtractFilePath(DownloadPath);
     if (Directory <> '') and not DirectoryExists(Directory) then
+    begin
+        { ForceDirectories answers False when it cannot create the directory
+          (a file in the way, no permission): say so as a failed replace does,
+          and leave a file already at DownloadPath alone. }
         ForceDirectories(Directory);
+        if not DirectoryExists(Directory) then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+    end;
     WriteFileReplacing(DownloadPath, Result);
 end;
 

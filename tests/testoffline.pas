@@ -62,6 +62,14 @@ type
     procedure TestAJsonErrorBodyGivesItsMessageAndACsvBodyNone;
     procedure TestOnlyTheTopLevelSuccessFieldDecidesAFailure;
     procedure TestTheMultipartMockSetsUrlCalledOnTheResult;
+    procedure TestTheFoldReadsEveryCaseOfALetterTheTablesMiss;
+    procedure TestLigaturesAndHangulFoldLikeTheirSpelledOutForms;
+    procedure TestAKeyOfOnlyCombiningMarksIsRefusedAndStillMasked;
+    procedure TestAnHtmlTitleHoldingALatin1NameIsRedacted;
+    procedure TestEveryRequestFunctionRecordsItsMethod;
+    procedure TestTheLastBodyAndHeaderBelongToTheThread;
+    procedure TestALongMessageWithNoPayloadIsKept;
+    procedure TestAJsonArrayIsNotAMessage;
   end;
 
 implementation
@@ -1372,13 +1380,15 @@ end;
 procedure TTestOffline.TestAContentEncodingIsNotReadAsAFile;
 type
   TDownload = (dlValidation, dlValidationWithOptions, dlScoring, dlScoringWithOptions,
-    dlEmailFinder, dlDomainSearch, dlWarmupSeeds);
+    dlEmailFinder, dlDomainSearch, dlWarmupSeeds, dlWarmupStatistics);
 const
   DOWNLOAD_NAMES: array[TDownload] of String = (
     'ZbBulkValidationResultFetch', 'ZbBulkValidationResultFetch(options)', 'ZbAiScoringResultFetch',
     'ZbAiScoringResultFetch(options)', 'ZbEmailFinderResultFetch', 'ZbDomainSearchResultFetch',
-    'ZbWarmupDownloadSeeds'
+    'ZbWarmupDownloadSeeds', 'ZbWarmupDownloadStatistics'
   );
+  { What a file already at the path holds before a Warmup download. }
+  KEPT = 'kept-before-the-download';
   ENCODING_MESSAGE = 'The response from ZeroBounce used a content encoding this client does not read.';
   { Keys the stub answers with a Content-Encoding header. }
   REFUSED_KEYS: array[0..2] of String = ('enc-gzip-', 'enc-gzipcut-', 'enc-upper-');
@@ -1399,6 +1409,47 @@ var
       dlEmailFinder: ZbEmailFinderResultFetch('fid');
       dlDomainSearch: ZbDomainSearchResultFetch('fid');
       dlWarmupSeeds: ZbWarmupDownloadSeeds(Saved);
+      dlWarmupStatistics: ZbWarmupDownloadStatistics('sender@example.com', Saved);
+    end;
+  end;
+
+  function WritesAFile(D: TDownload): Boolean;
+  begin
+    Result := D in [dlWarmupSeeds, dlWarmupStatistics];
+  end;
+
+  { A file at the path before a Warmup download, so that a refused one can be
+    seen to leave it alone; no file for the others. }
+  procedure Seed(D: TDownload);
+  var
+    Lines: TStringList;
+  begin
+    DeleteFile(Saved);
+    if not WritesAFile(D) then
+      Exit;
+    Lines := TStringList.Create;
+    try
+      Lines.Add(KEPT);
+      Lines.SaveToFile(Saved);
+    finally
+      Lines.Free;
+    end;
+  end;
+
+  { What is at the path: '' when nothing is. }
+  function SavedText: String;
+  var
+    Lines: TStringList;
+  begin
+    Result := '';
+    if not FileExists(Saved) then
+      Exit;
+    Lines := TStringList.Create;
+    try
+      Lines.LoadFromFile(Saved);
+      Result := Trim(Lines.Text);
+    finally
+      Lines.Free;
     end;
   end;
 
@@ -1434,27 +1485,39 @@ begin
       for K := Low(REFUSED_KEYS) to High(REFUSED_KEYS) do
       begin
         UseStub(REFUSED_KEYS[K] + IntToStr(Ord(Download)));
+        Seed(Download);
         Try_(Download);
         AssertTrue(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ': an encoded body should be an error', Raised);
         AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K], ENCODING_MESSAGE, Message);
         AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ' status', 0, Status);
         AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ' header value in message', 0,
           Pos('gzip', LowerCase(Message)));
-        AssertFalse(DOWNLOAD_NAMES[Download] + ' saved an encoded body', FileExists(Saved));
+        if WritesAFile(Download) then
+          AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ' kept the file at the path',
+            KEPT, SavedText)
+        else
+          AssertFalse(DOWNLOAD_NAMES[Download] + ' saved an encoded body', FileExists(Saved));
       end;
       { "identity" is the length check as for any body: cut short... }
       UseStub('enc-identity-' + IntToStr(Ord(Download)));
+      Seed(Download);
       Try_(Download);
       AssertTrue(DOWNLOAD_NAMES[Download] + ': a cut-short identity body should be an error', Raised);
       AssertTrue(DOWNLOAD_NAMES[Download] + ': ' + Message, Pos('cut short', Message) > 0);
-      AssertFalse(DOWNLOAD_NAMES[Download] + ' saved a cut-short identity body', FileExists(Saved));
+      if WritesAFile(Download) then
+        AssertEquals(DOWNLOAD_NAMES[Download] + ' kept the file at the path after a cut-short body',
+          KEPT, SavedText)
+      else
+        AssertFalse(DOWNLOAD_NAMES[Download] + ' saved a cut-short identity body', FileExists(Saved));
       { ... and whole is the file. }
       UseStub('enc-identityok-' + IntToStr(Ord(Download)));
+      Seed(Download);
       Try_(Download);
       AssertFalse(DOWNLOAD_NAMES[Download] + ': a whole identity body is a file: ' + Message, Raised);
-      if Download = dlWarmupSeeds then
+      if WritesAFile(Download) then
       begin
-        AssertTrue('the identity body was saved', FileExists(Saved));
+        AssertTrue(DOWNLOAD_NAMES[Download] + ': the identity body was saved', FileExists(Saved));
+        AssertTrue(DOWNLOAD_NAMES[Download] + ': it replaced the file at the path', SavedText <> KEPT);
         DeleteFile(Saved);
       end;
     end;
@@ -1657,22 +1720,44 @@ begin
     '&quot;', '&QUOT;', '&Quot;']);
   AddAll(APOS_KEY, 'ab', 'cd-9z', ['&#39;', '&#039;', '&#x27;', '&#X27;', '&apos;', '&APOS;',
     '\x{27}', '\x{027}', '\47', '\047', '\x27', '&#x00027;']);
-  AddAll(AcuteKey, 'ab', 'cd-9z', ['&#233;', '&#xE9;', '&#xe9;', '&#XE9;', '&#0233;']);
+  AddAll(AcuteKey, 'ab', 'cd-9z', ['&#233;', '&#xE9;', '&#xe9;', '&#XE9;', '&#0233;',
+    '&eacute;', '&Eacute;', '&EACUTE;']);
+  { Names of the HTML 4 Latin-1 set and of the punctuation. }
+  AddAll('ab' + Utf8Of($A0) + 'cd-9z', 'ab', 'cd-9z', ['&nbsp;', '&NBSP;', '&#160;', '&#xA0;']);
+  AddAll('ab' + Utf8Of($DF) + 'cd-9z', 'ab', 'cd-9z', ['&szlig;']);
+  AddAll('ab' + Utf8Of($FF) + 'cd-9z', 'ab', 'cd-9z', ['&yuml;']);
+  AddAll('ab' + Utf8Of($B5) + 'cd-9z', 'ab', 'cd-9z', ['&micro;']);
+  AddAll('ab(cd-9z', 'ab', 'cd-9z', ['&lpar;', '&LPAR;']);
+  AddAll('ab)cd-9z', 'ab', 'cd-9z', ['&rpar;']);
+  AddAll('ab.cd-9z', 'ab', 'cd-9z', ['&period;']);
+  AddAll('ab'#10'cd-9z', 'ab', 'cd-9z', ['&NewLine;']);
+  AddAll('ab'#9'cd-9z', 'ab', 'cd-9z', ['&Tab;']);
+  { A numeric reference with no semicolon, when what follows it is not a digit. }
+  AddAll(QUOTE_KEY, 'ab', 'cd-9z', ['&#34']);
+  AddAll('ab"xy-9z', 'ab', 'xy-9z', ['&#x22', '&#X22']);
+  AddAll('ab''', 'ab', '', ['&#39', '&#x27']);
   AddAll(GT_KEY, 'ab', 'cd-9z', ['&gt;', '&GT;', '&Gt;', '&#62;', '&#x3e;']);
   AddAll('ab<cd-9z', 'ab', 'cd-9z', ['&lt;', '&LT;', '&#60;']);
   AddAll('ab&cd-9z', 'ab', 'cd-9z', ['&amp;', '&AMP;', '&#38;']);
   for I := 0 to High(Cases) do
     AssertEquals(Cases[I].Spelling, ZB_SECRET_OMITTED_MESSAGE,
       ZbMaskSecret('echo [' + Cases[I].Spelling + '] end', Cases[I].Secret));
-  { What is not a reference stays: no semicolon, no digits, a code point past
-    U+10FFFF, a surrogate. }
-  AssertEquals('no semicolon', 'echo ab&#34cd-9z',
-    ZbMaskSecret('echo ab&#34cd-9z', QUOTE_KEY));
+  { What is not a reference stays: a digit after a number with no semicolon (it
+    is a longer number), a name with no semicolon, no digits, a code point
+    past U+10FFFF, a surrogate. }
+  AssertEquals('a digit follows', 'echo ab&#345cd-9z',
+    ZbMaskSecret('echo ab&#345cd-9z', 'ab"5cd-9z'));
+  AssertEquals('a hex digit follows', 'echo ab&#x22cd-9z',
+    ZbMaskSecret('echo ab&#x22cd-9z', QUOTE_KEY));
+  AssertEquals('a name needs its semicolon', 'echo ab&quotcd-9z',
+    ZbMaskSecret('echo ab&quotcd-9z', QUOTE_KEY));
+  { %u0027 is not an encoding anything reads. }
+  AssertEquals('%u0027', 'echo ab%u0027cd-9z', ZbMaskSecret('echo ab%u0027cd-9z', APOS_KEY));
   AssertEquals('no digits', 'echo ab&#;cd-9z', ZbMaskSecret('echo ab&#;cd-9z', QUOTE_KEY));
   AssertEquals('past U+10FFFF', 'echo ab&#99999999999;cd-9z',
     ZbMaskSecret('echo ab&#99999999999;cd-9z', QUOTE_KEY));
   AssertEquals('a surrogate', 'echo ab&#xD800;cd-9z', ZbMaskSecret('echo ab&#xD800;cd-9z', QUOTE_KEY));
-  AssertEquals('an unknown name', 'echo ab&nbsp;cd-9z', ZbMaskSecret('echo ab&nbsp;cd-9z', QUOTE_KEY));
+  AssertEquals('an unknown name', 'echo ab&bogus;cd-9z', ZbMaskSecret('echo ab&bogus;cd-9z', QUOTE_KEY));
 end;
 
 procedure TTestOffline.TestAKeyEchoedAsAQuotEntityInAnHtmlTitleIsOmitted;
@@ -1773,6 +1858,7 @@ begin
         'X-Test', 'mock-value');
       AssertEquals('mock body', 'mock-body', ZbLastRequestBody);
       AssertEquals('mock header', 'X-Test: mock-value', ZbLastRequestHeader);
+      AssertEquals('mock method', 'PUT', ZbLastRequestMethod);
       { A request that is refused for its URL, whatever the mock. }
       Message := '(no exception)';
       Form := TStringList.Create;
@@ -1796,6 +1882,7 @@ begin
       AssertEquals('call ' + IntToStr(Call), 'url must be an https:// URL', Message);
       AssertEquals('call ' + IntToStr(Call) + ' body', '', ZbLastRequestBody);
       AssertEquals('call ' + IntToStr(Call) + ' header', '', ZbLastRequestHeader);
+      AssertEquals('call ' + IntToStr(Call) + ' method', '', ZbLastRequestMethod);
     end;
   finally
     UseDefaultUrls;
@@ -4243,7 +4330,9 @@ begin
                 Value.Free;
                 Continue;
               end;
-              AlsoTakes := (((Key = 'Credits') or (Key = 'score')) and (NestedKind(Value) = 'int')) or
+              AlsoTakes := (((Key = 'Credits') or (Key = 'score') or
+                ((Key = 'active_in_days') and (TYPED_EXAMPLES[E].Call = 'activity'))) and
+                (NestedKind(Value) = 'int')) or
                 ((Key = 'message') and (Value.JSONType = jtArray));
               ExpectOk := ((Value.JSONType = jtNull) and (Key <> '') and not Required) or AlsoTakes;
               if Parent.JSONType = jtObject then
@@ -4481,6 +4570,496 @@ begin
     UseDefaultUrls;
   end;
   AssertEquals('calls that took a dead-key body as a result', '', Missed);
+end;
+
+
+procedure TTestOffline.TestTheFoldReadsEveryCaseOfALetterTheTablesMiss;
+const
+  SCHWA = #$D3#$99;
+  CAPITAL_SCHWA = #$D3#$98;
+  DOT = #$CC#$87;
+var
+  Secret: String;
+
+  procedure Masked(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [REDACTED] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
+  procedure Kept(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [' + Echo + '] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
+begin
+  { Cyrillic schwa: the tables have no entry for it, the capital is U+04D8. }
+  Secret := 'k' + SCHWA + '-0001';
+  Masked('schwa as itself', 'k' + SCHWA + '-0001');
+  Masked('schwa upper-cased', 'K' + CAPITAL_SCHWA + '-0001');
+  Masked('schwa, the K alone upper-cased', 'K' + SCHWA + '-0001');
+  Masked('schwa, the schwa alone upper-cased', 'k' + CAPITAL_SCHWA + '-0001');
+  Kept('another letter', 'k-0001');
+  Secret := 'K' + CAPITAL_SCHWA + '-0001';
+  Masked('a capital schwa against a small one', 'k' + SCHWA + '-0001');
+  { What the tables already did still holds. U+0130, as a plain i and as i
+    with a dot above. }
+  Secret := 'pass' + Utf8Of($130) + 'word-7';
+  Masked('U+0130 as a plain i', 'passiword-7');
+  Masked('U+0130 as i and a dot', 'passi' + DOT + 'word-7');
+  Masked('U+0130 as I and a dot, upper case', 'PASSI' + DOT + 'WORD-7');
+  { The sharp s as SS, and the dotless i and the micro sign. }
+  Secret := 'stra' + Utf8Of($DF) + 'e-pass-8';
+  Masked('sharp s as SS', 'STRASSE-PASS-8');
+  Secret := 'stra' + Utf8Of($1E9E) + 'e-pass-8';
+  Masked('capital sharp s as ss', 'strasse-pass-8');
+  Secret := 'pass' + Utf8Of($131) + 'word-7';
+  Masked('dotless i as i', 'passiword-7');
+  Masked('dotless i as I', 'PASSIWORD-7');
+  Secret := 'passiword-7';
+  Masked('i as a dotless i', 'pass' + Utf8Of($131) + 'word-7');
+  Secret := 'a' + Utf8Of($B5) + 'b-1';
+  Masked('micro sign as Greek mu', 'a' + Utf8Of($3BC) + 'b-1');
+  Masked('micro sign as capital Greek mu', 'A' + Utf8Of($39C) + 'B-1');
+  Secret := 'a' + Utf8Of($3BC) + 'b-1';
+  Masked('Greek mu as the micro sign', 'a' + Utf8Of($B5) + 'b-1');
+  { Letters the tables miss that upper-case to something else: the long s
+    with a dot above, and the curly beta. }
+  Secret := 'a' + Utf8Of($1E9B) + 'b-2';
+  Masked('long s with a dot as S with a dot', 'A' + Utf8Of($1E60) + 'B-2');
+  Masked('long s with a dot as s with a dot', 'a' + Utf8Of($1E61) + 'b-2');
+  Secret := 'a' + Utf8Of($3D0) + 'b-3';
+  Masked('curly beta as capital beta', 'A' + Utf8Of($392) + 'B-3');
+  Masked('curly beta as beta', 'a' + Utf8Of($3B2) + 'b-3');
+  { Outside the first plane: Deseret. }
+  Secret := 'a' + Utf8Of($10428) + 'b-4';
+  Masked('Deseret small as capital', 'A' + Utf8Of($10400) + 'B-4');
+  { Folding does not depend on the locale, and a letter is not another one. }
+  Secret := 'abe-5';
+  Kept('Latin e and Cyrillic ie are not one letter', 'ab' + #$D0#$B5 + '-5');
+end;
+
+procedure TTestOffline.TestLigaturesAndHangulFoldLikeTheirSpelledOutForms;
+const
+  LIGATURES: array[0..6] of String = ('ff', 'fi', 'fl', 'ffi', 'ffl', 'st', 'st');
+var
+  Secret: String;
+  I, Syllable: Integer;
+  Jamo, Syllables: String;
+
+  procedure Masked(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [REDACTED] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
+  procedure Kept(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [' + Echo + '] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
+  { What NFD makes of a Hangul syllable. }
+  function Decomposed(Value: Integer): String;
+  var
+    Index: Integer;
+  begin
+    Index := Value - $AC00;
+    Result := Utf8Of($1100 + Index div 588) + Utf8Of($1161 + (Index mod 588) div 28);
+    if Index mod 28 <> 0 then
+      Result := Result + Utf8Of($11A7 + Index mod 28);
+  end;
+
+begin
+  { U+FB00 to U+FB06. }
+  for I := Low(LIGATURES) to High(LIGATURES) do
+  begin
+    Secret := 'key-' + Utf8Of($FB00 + I) + '-' + IntToStr(I);
+    Masked('U+FB0' + IntToStr(I) + ' spelled out', 'key-' + LIGATURES[I] + '-' + IntToStr(I));
+    Masked('U+FB0' + IntToStr(I) + ' spelled out, upper case', 'KEY-' + UpperCase(LIGATURES[I]) + '-' + IntToStr(I));
+    Masked('U+FB0' + IntToStr(I) + ' as itself', Secret);
+    Secret := 'key-' + LIGATURES[I] + '-' + IntToStr(I);
+    Masked('U+FB0' + IntToStr(I) + ' in the echo', 'key-' + Utf8Of($FB00 + I) + '-' + IntToStr(I));
+    Masked('U+FB0' + IntToStr(I) + ' in the echo, spelled upper case', 'KEY-' + UpperCase(LIGATURES[I]) + '-' + IntToStr(I));
+  end;
+  Secret := 'key-' + Utf8Of($FB00) + '-x';
+  Kept('ff is not fi', 'key-fi-x');
+  { U+0149 upper-cases to U+02BC and N. }
+  Secret := 'a' + Utf8Of($149) + '-77';
+  Masked('U+0149 upper case', 'A' + Utf8Of($2BC) + 'N-77');
+  Masked('U+0149 spelled out', 'a' + Utf8Of($2BC) + 'n-77');
+  Secret := 'a' + Utf8Of($2BC) + 'n-77';
+  Masked('U+0149 in the echo', 'a' + Utf8Of($149) + '-77');
+  { U+0345 upper-cases to a capital iota. }
+  Secret := 'ab' + Utf8Of($345) + 'cd-3';
+  Masked('U+0345 as a capital iota', 'AB' + Utf8Of($399) + 'CD-3');
+  Masked('U+0345 as an iota', 'ab' + Utf8Of($3B9) + 'cd-3');
+  Masked('U+0345 as itself', Secret);
+  Secret := 'ab' + Utf8Of($3B9) + 'cd-3';
+  Masked('an iota in the echo as U+0345', 'ab' + Utf8Of($345) + 'cd-3');
+  { The other combining marks are still dropped. }
+  Secret := 'ab' + Utf8Of($301) + 'cd-3';
+  Masked('an acute is dropped', 'abcd-3');
+
+  { Hangul: the syllable and its jamo are one text. }
+  Jamo := Utf8Of($1112) + Utf8Of($1161) + Utf8Of($11AB);
+  Secret := 'pw-' + Utf8Of($D55C) + '-5';
+  AssertEquals('the syllable is U+D55C', Jamo, Decomposed($D55C));
+  Masked('the syllable as its three jamo', 'pw-' + Jamo + '-5');
+  Masked('the syllable as itself', Secret);
+  Secret := 'pw-' + Jamo + '-5';
+  Masked('three jamo as the syllable', 'pw-' + Utf8Of($D55C) + '-5');
+  Secret := 'pw-' + Utf8Of($D55C) + '-5';
+  Kept('another syllable', 'pw-' + Utf8Of($D558) + '-5');
+  { A syllable with no final consonant has two jamo. }
+  Secret := 'pw-' + Utf8Of($AC00) + '-6';
+  Masked('a syllable with no final', 'pw-' + Utf8Of($1100) + Utf8Of($1161) + '-6');
+  { The first and the last syllable, and a long run (the folded text is
+    longer than the one it came from). }
+  Secret := Utf8Of($AC00) + Utf8Of($D7A3);
+  Masked('the first and the last syllable', Decomposed($AC00) + Decomposed($D7A3));
+  Syllables := '';
+  Jamo := '';
+  for I := 0 to 39 do
+  begin
+    Syllable := $AC00 + (I * 1009) mod 11172;
+    Syllables := Syllables + Utf8Of(Syllable);
+    Jamo := Jamo + Decomposed(Syllable);
+  end;
+  Secret := 'z' + Syllables + 'z';
+  Masked('forty syllables', 'z' + Jamo + 'z');
+  Secret := 'z' + Jamo + 'z';
+  Masked('forty syllables, the other way round', 'z' + Syllables + 'z');
+  Kept('forty syllables, one short', 'z' + Copy(Jamo, 1, Length(Jamo) - 3) + 'z');
+end;
+
+procedure TTestOffline.TestAKeyOfOnlyCombiningMarksIsRefusedAndStillMasked;
+const
+  REFUSED = 'api_key has surrounding whitespace or control characters';
+  ACUTE = #$CC#$81;
+  DOT = #$CC#$87;
+var
+  Keys: array[0..2] of String;
+  I: Integer;
+  Message: String;
+begin
+  Keys[0] := ACUTE;
+  Keys[1] := ACUTE + DOT;
+  Keys[2] := DOT + DOT + DOT + ACUTE;
+  try
+    for I := Low(Keys) to High(Keys) do
+    begin
+      ZBInitialize('keep-this-key-4');
+      Message := '(no exception)';
+      try
+        ZBInitialize(Keys[I]);
+      except
+        on E: ZbException do
+          Message := E.Message;
+      end;
+      AssertEquals('key ' + IntToStr(I), REFUSED, Message);
+      AssertEquals('the key already set stays', 'keep-this-key-4', ZbApiKey);
+      Message := '(no exception)';
+      try
+        ZbCheckedApiKey(Keys[I]);
+      except
+        on E: ZbException do
+          Message := E.Message;
+      end;
+      AssertEquals('checked key ' + IntToStr(I), REFUSED, Message);
+    end;
+    { A letter with a mark is a key. }
+    ZBInitialize('a' + ACUTE);
+    AssertEquals('a letter and a mark', 'a' + ACUTE, ZbApiKey);
+  finally
+    UseDefaultUrls;
+  end;
+  { ZbMaskSecret still masks that exact sequence of characters. }
+  AssertEquals('as it is', 'echo [REDACTED] end', ZbMaskSecret('echo [' + ACUTE + '] end', ACUTE));
+  AssertEquals('two marks', 'x REDACTED y', ZbMaskSecret('x ' + ACUTE + DOT + ' y', ACUTE + DOT));
+  AssertEquals('percent-encoded', 'x REDACTED y', ZbMaskSecret('x %CC%81 y', ACUTE));
+  AssertEquals('percent-encoded, lower case', 'x REDACTED y', ZbMaskSecret('x %cc%81 y', ACUTE));
+  AssertEquals('percent-encoded twice', ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('x %25CC%2581 y', ACUTE));
+  AssertEquals('JSON-escaped', ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('x \u0301 y', ACUTE));
+  AssertEquals('nothing to find', 'abc', ZbMaskSecret('abc', ACUTE));
+end;
+
+procedure TTestOffline.TestAnHtmlTitleHoldingALatin1NameIsRedacted;
+const
+  KEY = 'k' + #$C3#$A9 + 'y-title-2';
+var
+  Message: String;
+begin
+  try
+    UseDefaultUrls;
+    ZBInitialize(KEY);
+    ZBMockResponse(200,
+      '<html><head><title>Bad key k&eacute;y-title-2 here</title></head><body>x</body></html>',
+      'text/html');
+    Message := MockedGetMessage;
+    AssertTrue(Message, Pos(ZB_SECRET_OMITTED_MESSAGE, Message) > 0);
+    AssertEquals(Message, 0, Pos('title-2', Message));
+    ZBMockResponse(200,
+      '<html><head><title>Bad key K&Eacute;Y-TITLE-2 here</title></head><body>x</body></html>',
+      'text/html');
+    Message := MockedGetMessage;
+    AssertTrue(Message, Pos(ZB_SECRET_OMITTED_MESSAGE, Message) > 0);
+    { Control: another name is quoted, %u0027 is not decoded. }
+    ZBMockResponse(200,
+      '<html><head><title>Bad k&bogus;y here</title></head><body>x</body></html>', 'text/html');
+    Message := MockedGetMessage;
+    AssertEquals('Http Error: ZeroBounce returned an HTML error page ("Bad k&bogus;y here") instead of an API response.',
+      Message);
+    ZBInitialize('ab''cd-title-3');
+    ZBMockResponse(200,
+      '<html><head><title>Bad ab%u0027cd-title-3 here</title></head><body>x</body></html>', 'text/html');
+    Message := MockedGetMessage;
+    AssertEquals('Http Error: ZeroBounce returned an HTML error page ("Bad ab%u0027cd-title-3 here") instead of an API response.',
+      Message);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestEveryRequestFunctionRecordsItsMethod;
+const
+  BAD_URL = 'http://example.com/refused';
+  EXPECTED: array[0..5] of String = ('GET', 'POST', 'POST', 'PUT', 'POST', 'DELETE');
+var
+  Url: String;
+  Form: TStringList;
+
+  procedure Send(Call: Integer; const Where: String);
+  begin
+    case Call of
+      0: ZBGetRequest(Where);
+      1: ZBPostRequest(Where, '{"a":1}');
+      2: ZBFormPostRequest(Where, 'a=b');
+      3: ZBSendRequestWithHeader('PUT', Where, 'body', 'text/plain', 'X-Test', 'value');
+      4: ZBPostRequest(Where, Form, 'a,b');
+      5: ZBSendForeignKeyRequest('DELETE', Where, '', '', 'API-Key', 'value');
+    end;
+  end;
+
+  { What the request did is not the point: the stub's answer may well be an
+    error. }
+  procedure Swallow(Call: Integer; const Where: String);
+  begin
+    try
+      Send(Call, Where);
+    except
+      on E: Exception do
+        ;
+    end;
+  end;
+
+var
+  Call: Integer;
+begin
+  Form := TStringList.Create;
+  try
+    Form.Add('a=b');
+    EnsureStub;
+    try
+      for Call := Low(EXPECTED) to High(EXPECTED) do
+      begin
+        { A mock. }
+        UseDefaultUrls;
+        ZBMockResponse(200, '{"Credits":"1"}');
+        Send(Call, ZbApiBaseURL + '/getcredits');
+        AssertEquals('mock, call ' + IntToStr(Call), EXPECTED[Call], ZbLastRequestMethod);
+        { A refused URL leaves the method of the request before it behind
+          for no one. }
+        try
+          Send(Call, BAD_URL);
+        except
+          on E: ZbException do
+            ;
+        end;
+        AssertEquals('refused, call ' + IntToStr(Call), '', ZbLastRequestMethod);
+        { No mock: the method of the request that went out. }
+        UseStub('method-' + IntToStr(Call));
+        Url := ZbApiBaseURL + '/getcredits';
+        Swallow(Call, Url);
+        AssertEquals('stub, call ' + IntToStr(Call), EXPECTED[Call], ZbLastRequestMethod);
+        { And a request with no key set is refused before it names a method. }
+      end;
+    finally
+      ClearRecorded;
+      UseDefaultUrls;
+    end;
+  finally
+    Form.Free;
+  end;
+end;
+
+type
+  { Reads what this thread sees of the last request, then writes its own. }
+  TLastRequestProbe = class(TThread)
+  public
+    SeenBody, SeenHeader: String;
+    procedure Execute; override;
+  end;
+
+procedure TLastRequestProbe.Execute;
+begin
+  SeenBody := ZbLastRequestBody;
+  SeenHeader := ZbLastRequestHeader;
+  ZbLastRequestBody := 'thread-body';
+  ZbLastRequestHeader := 'X-Thread: 1';
+end;
+
+procedure TTestOffline.TestTheLastBodyAndHeaderBelongToTheThread;
+var
+  Probe: TLastRequestProbe;
+begin
+  try
+    UseDefaultUrls;
+    ZBMockResponse(200, '{"Credits":"1"}');
+    ZBSendRequestWithHeader('PUT', 'https://api.zerobounce.net/v2/x', 'main-body', 'text/plain',
+      'X-Main', '1');
+    { This thread sees what its own request sent. }
+    AssertEquals('body', 'main-body', ZbLastRequestBody);
+    AssertEquals('header', 'X-Main: 1', ZbLastRequestHeader);
+    Probe := TLastRequestProbe.Create(True);
+    try
+      Probe.FreeOnTerminate := False;
+      Probe.Start;
+      Probe.WaitFor;
+      { Another thread sees nothing of it, and what it writes stays there. }
+      AssertEquals('the other thread sees no body', '', Probe.SeenBody);
+      AssertEquals('the other thread sees no header', '', Probe.SeenHeader);
+    finally
+      Probe.Free;
+    end;
+    AssertEquals('body after the other thread', 'main-body', ZbLastRequestBody);
+    AssertEquals('header after the other thread', 'X-Main: 1', ZbLastRequestHeader);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestALongMessageWithNoPayloadIsKept;
+const
+  { The text of the missing CA bundle error on Linux and macOS. }
+  NO_CA_BUNDLE = 'No CA certificate bundle found to verify the TLS connection. ' +
+    'Download a PEM bundle (for example https://curl.se/ca/cacert.pem) and either ' +
+    'save it as cacert.pem beside the executable, assign its full path to ' +
+    'ZbCACertFile (unit ZbUtility) before the first request, or set the ' +
+    'SSL_CERT_FILE environment variable to that path.';
+var
+  Response: TZbRequestResponse;
+
+  function MessageOf(const AMessage, Payload: String; Status: Integer): String;
+  var
+    Error: ZbException;
+  begin
+    Response := cDefaultMock;
+    Response.StatusCode := Status;
+    Response.Payload := Payload;
+    Error := ZbException.FromResponse(AMessage, Response);
+    try
+      Result := Error.Message;
+    finally
+      Error.Free;
+    end;
+  end;
+
+begin
+  try
+    UseDefaultUrls;
+    AssertTrue('the text is longer than 299 characters', Length(NO_CA_BUNDLE) > 299);
+    { No payload: the message stays, however long. }
+    AssertEquals('no payload', NO_CA_BUNDLE, MessageOf(NO_CA_BUNDLE, '', 0));
+    AssertEquals('a payload of white space', NO_CA_BUNDLE, MessageOf(NO_CA_BUNDLE, '  ' + #10, 0));
+    AssertEquals('a very long message', StringOfChar('m', 5000), MessageOf(StringOfChar('m', 5000), '', 0));
+    { A payload: 299 characters stay, 300 do not. }
+    AssertEquals('299 with a payload', StringOfChar('m', 299), MessageOf(StringOfChar('m', 299), 'plain text body', 500));
+    AssertEquals('300 with a payload', 'plain text body', MessageOf(StringOfChar('m', 300), 'plain text body', 500));
+    AssertEquals('the long text with a payload', 'plain text body', MessageOf(NO_CA_BUNDLE, 'plain text body', 500));
+    { A message that copies the payload is dropped at any length. }
+    AssertEquals('a copy', 'plain text body', MessageOf('says: plain text body', 'plain text body', 500));
+    { Access violation is dropped with or without a payload. }
+    AssertEquals('access violation, no payload', 'Empty response from ZeroBounce (HTTP 0)',
+      MessageOf('Access violation at address 0', '', 0));
+    AssertEquals('access violation, payload', 'plain text body',
+      MessageOf('Access violation at address 0', 'plain text body', 500));
+    { The key is still masked in a long message. }
+    ZBInitialize('long-message-key-6');
+    AssertEquals('a long message with the key', StringOfChar('m', 400) + ' REDACTED',
+      MessageOf(StringOfChar('m', 400) + ' long-message-key-6', '', 0));
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestAJsonArrayIsNotAMessage;
+const
+  SENTENCE = 'ZeroBounce returned an error response.';
+
+  function RaisedBy(Call: Integer): String;
+  begin
+    Result := '(no exception)';
+    try
+      case Call of
+        0: ZbBulkValidationResultFetch('fid');
+        1: ZbAiScoringResultFetch('fid');
+        2: ZbEmailFinderResultFetch('fid');
+        3: ZbWarmupDownloadSeeds('');
+        4: ZbWarmupDownloadStatistics('sender@example.com', '');
+      end;
+    except
+      on E: ZbException do
+        Result := E.Message;
+    end;
+  end;
+
+  function FromBody(const Payload: String): String;
+  var
+    Response: TZbRequestResponse;
+    Error: ZbException;
+  begin
+    Response := cDefaultMock;
+    Response.StatusCode := 200;
+    Response.Payload := Payload;
+    Error := ZbException.FromResponse('', Response);
+    try
+      Result := Error.Message;
+    finally
+      Error.Free;
+    end;
+  end;
+
+var
+  Call: Integer;
+  Prefix: String;
+begin
+  AssertEquals('a list of numbers', SENTENCE, ZbMessageFromBody('[1,2,3]', 200));
+  AssertEquals('a list of objects', SENTENCE, ZbMessageFromBody('[{"message":"nested"}]', 500));
+  AssertEquals('a list after padding', SENTENCE, ZbMessageFromBody(' ' + #10 + '[{"a":1}]', 200));
+  AssertEquals('an empty list', SENTENCE, ZbMessageFromBody('[]', 200));
+  AssertEquals('from a response', SENTENCE, FromBody('[{"a":1}]'));
+  { An object is as it was: its message, or else its text. }
+  AssertEquals('an object with a message', 'File cannot be found.',
+    ZbMessageFromBody('{"message":"File cannot be found."}', 404));
+  AssertEquals('an object with a message, from a response', 'File cannot be found.',
+    FromBody('{"success":false,"message":"File cannot be found."}'));
+  AssertEquals('an object with an error', 'Invalid API key', ZbMessageFromBody('{"error":"Invalid API key"}', 500));
+  AssertEquals('an object with no message', '{"a":1}', ZbMessageFromBody('{"a":1}', 500));
+  { The downloads, with a list where the file should be. }
+  try
+    for Call := 0 to 4 do
+    begin
+      UseDefaultUrls;
+      { Bulk, finder and Warmup downloads all mark the error as an HTTP one. }
+      Prefix := 'Http Error: ';
+      ZBMockResponse(200, '[{"a":1}]', 'application/json');
+      AssertEquals('download ' + IntToStr(Call), Prefix + SENTENCE, RaisedBy(Call));
+      ZBMockResponse(200, '[{"a":1}]', 'text/plain');
+      AssertEquals('download ' + IntToStr(Call) + ', as plain text', Prefix + SENTENCE, RaisedBy(Call));
+      ZBMockResponse(200, '{"message":"File cannot be found."}', 'application/json');
+      AssertEquals('download ' + IntToStr(Call) + ', an object', Prefix + 'File cannot be found.', RaisedBy(Call));
+    end;
+  finally
+    UseDefaultUrls;
+  end;
 end;
 
 

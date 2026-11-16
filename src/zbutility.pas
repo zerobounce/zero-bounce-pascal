@@ -17,8 +17,10 @@ uses
     {$ENDIF}
     Classes, SysUtils, StrUtils, Types,
     {$IFDEF FPC}
+    Character,
     openssl, opensslsockets, fphttpclient, httpprotocol, ssockets, sslsockets, dynlibs
     {$ELSE}
+    System.Character,
     System.Net.HttpClient,
     System.Net.Mime,
     System.NetEncoding
@@ -98,11 +100,9 @@ var
       pointing at the live API. }
     ZbListEvaluatorURL: string = 'https://bulkapi.zerobounce.net/v2/listevaluator';
     ZbInboxPlacementURL: string = 'https://bulkapi.zerobounce.net/api/ipt';
-    { What the last request actually sent. Offline tests assert on these. }
+    { The method the last request used, set once its URL passed the check.
+      Offline tests assert on this and on the two threadvars below. }
     ZbLastRequestMethod: string = '';
-    ZbLastRequestBody: string = '';
-    { 'Name: Value' of the one extra header the last request carried, or ''. }
-    ZbLastRequestHeader: string = '';
     { FPC only: full path of a PEM CA bundle for TLS verification. When empty,
       the SSL_CERT_FILE environment variable, then (not on Windows) the usual
       Unix bundle paths, then cacert.pem beside the executable, and finally
@@ -125,6 +125,11 @@ var
 threadvar
     ZbApiBaseURL: string;
     ZbApiKey: string;
+    { What the last request on this thread sent: its body, and 'Name: Value'
+      of the one extra header it carried (or ''). They can hold a key, so
+      like ZbApiKey they belong to the thread whose request wrote them. }
+    ZbLastRequestBody: string;
+    ZbLastRequestHeader: string;
 
     function ZBApiURLToString(url: ZbApiURL): string;
     procedure ZBSetApiKey ( ApiKey : string );  deprecated 'Use ZBInitialize procedures';
@@ -151,7 +156,7 @@ threadvar
       JSON-escaped ('/' escaped or not, as a request body echoed back),
       url-encoded (as a request URL or form, a space as %20 or '+'), the
       url encoding of each JSON-escaped form, and raw. Redaction is closed
-      under encoding: when a view of the result decoded up to three times
+      under encoding: when a view of the result decoded up to four times
       (URL-decoding, '+' as a space, JSON-unescaping, in any order) still
       holds Secret, the whole of S is replaced by ZB_SECRET_OMITTED_MESSAGE. }
     function ZbMaskSecret(const S, Secret: string): string;
@@ -877,8 +882,9 @@ end;
             if (Pos('Access denied', Trimmed) > 0) and (Pos('cloudflare_error', Trimmed) > 0) then
                 Exit('Error 1020: Access denied');
             { Too long to quote; it may well be valid JSON, so it is not
-              called invalid. }
-            if Length(Trimmed) > 1000 then
+              called invalid. A list is never a message either: it is what a
+              file download answers with in place of the file. }
+            if (Length(Trimmed) > 1000) or (Trimmed[1] = '[') then
                 Exit('ZeroBounce returned an error response.');
             { The API's own words, when the body says them in a field, instead
               of the whole object. }
@@ -946,12 +952,19 @@ end;
     constructor ZbException.FromResponse(AMessage: String; response: TZbRequestResponse);
     var
         NewMessage: String;
+        PayloadEmpty: Boolean;
     begin
         Payload := response.Payload;
         StatusCode := response.StatusCode;
-        if (AMessage <> '') and (Length(AMessage) < 300) and
+        { With no payload there is nothing for the message to copy, so its
+          length says nothing: the instructions for a missing CA bundle are
+          322 characters and are the whole of what went wrong. With one, a
+          message of 300 characters or more, or one that repeats its start,
+          is the body again. }
+        PayloadEmpty := Trim(response.Payload) = '';
+        if (AMessage <> '') and (PayloadEmpty or (Length(AMessage) < 300)) and
            (Pos('Access violation', AMessage) = 0) and
-           (Pos(Copy(Trim(response.Payload), 1, 24), AMessage) = 0) then
+           (PayloadEmpty or (Pos(Copy(Trim(response.Payload), 1, 24), AMessage) = 0)) then
             NewMessage := AMessage
         else if ZbContentTypeIsCsv(response.ContentType) and
                 (ZbDownloadKind(response.Payload, response.ContentType) = zdkFile) then
@@ -1399,17 +1412,74 @@ end;
         FlushBytes;
     end;
 
+    const
+        { The HTML 4 Latin-1 names, U+00A0 to U+00FF in order. }
+        ZB_HTML_LATIN1_NAMES: array[0..95] of String = (
+            'nbsp', 'iexcl', 'cent', 'pound', 'curren', 'yen', 'brvbar', 'sect',
+            'uml', 'copy', 'ordf', 'laquo', 'not', 'shy', 'reg', 'macr',
+            'deg', 'plusmn', 'sup2', 'sup3', 'acute', 'micro', 'para', 'middot',
+            'cedil', 'sup1', 'ordm', 'raquo', 'frac14', 'frac12', 'frac34', 'iquest',
+            'Agrave', 'Aacute', 'Acirc', 'Atilde', 'Auml', 'Aring', 'AElig', 'Ccedil',
+            'Egrave', 'Eacute', 'Ecirc', 'Euml', 'Igrave', 'Iacute', 'Icirc', 'Iuml',
+            'ETH', 'Ntilde', 'Ograve', 'Oacute', 'Ocirc', 'Otilde', 'Ouml', 'times',
+            'Oslash', 'Ugrave', 'Uacute', 'Ucirc', 'Uuml', 'Yacute', 'THORN', 'szlig',
+            'agrave', 'aacute', 'acirc', 'atilde', 'auml', 'aring', 'aelig', 'ccedil',
+            'egrave', 'eacute', 'ecirc', 'euml', 'igrave', 'iacute', 'icirc', 'iuml',
+            'eth', 'ntilde', 'ograve', 'oacute', 'ocirc', 'otilde', 'ouml', 'divide',
+            'oslash', 'ugrave', 'uacute', 'ucirc', 'uuml', 'yacute', 'thorn', 'yuml'
+        );
+        { The other names: the ones that make up an HTML-escaped quote or tag,
+          and the ASCII punctuation (HTML 5) an echo may spell out. }
+        ZB_HTML_OTHER_NAMES: array[0..30] of String = (
+            'quot', 'gt', 'lt', 'amp', 'apos', 'lpar', 'rpar', 'period', 'NewLine', 'Tab',
+            'excl', 'num', 'dollar', 'percnt', 'ast', 'plus', 'comma', 'sol', 'colon',
+            'semi', 'equals', 'quest', 'commat', 'lsqb', 'lbrack', 'rsqb', 'rbrack',
+            'bsol', 'lowbar', 'grave', 'verbar'
+        );
+        ZB_HTML_OTHER_CODES: array[0..30] of Integer = (
+            $22, $3E, $3C, $26, $27, $28, $29, $2E, $0A, $09,
+            $21, $23, $24, $25, $2A, $2B, $2C, $2F, $3A,
+            $3B, $3D, $3F, $40, $5B, $5B, $5D, $5D,
+            $5C, $5F, $60, $7C
+        );
+
+    { The code point a character reference name stands for (the name without
+      its '&' and ';'), or -1. A name is matched exactly first, then in any
+      letter case: Eacute and eacute are different letters, but the view is
+      for searching and the search ignores case. }
+    function ZbHtmlNamedCodePoint(const Name: String): Integer;
+    var
+        K: Integer;
+    begin
+        Result := -1;
+        for K := Low(ZB_HTML_LATIN1_NAMES) to High(ZB_HTML_LATIN1_NAMES) do
+            if ZB_HTML_LATIN1_NAMES[K] = Name then
+                Exit($A0 + K);
+        for K := Low(ZB_HTML_OTHER_NAMES) to High(ZB_HTML_OTHER_NAMES) do
+            if ZB_HTML_OTHER_NAMES[K] = Name then
+                Exit(ZB_HTML_OTHER_CODES[K]);
+        for K := Low(ZB_HTML_LATIN1_NAMES) to High(ZB_HTML_LATIN1_NAMES) do
+            if SameText(ZB_HTML_LATIN1_NAMES[K], Name) then
+                Exit($A0 + K);
+        for K := Low(ZB_HTML_OTHER_NAMES) to High(ZB_HTML_OTHER_NAMES) do
+            if SameText(ZB_HTML_OTHER_NAMES[K], Name) then
+                Exit(ZB_HTML_OTHER_CODES[K]);
+    end;
+
     { Text with the HTML character references of a quoted or escaped value
       undone, in any letter case: the numeric ones, decimal or hexadecimal,
       with any number of leading zeros (&#34; &#039; &#233; &#x22; &#X27;),
-      and &quot; &gt; &lt; &amp; &apos;. Used to search for a secret only: a
-      server may HTML-escape the request it echoes back. }
+      and the names of ZbHtmlNamedCodePoint: the HTML 4 Latin-1 ones (&eacute;
+      &nbsp;), &quot; &gt; &lt; &amp; &apos; &lpar; &rpar; &period; &NewLine;
+      &Tab; and some more punctuation. A numeric reference may leave out its
+      semicolon when the character after it is not a digit (a browser reads
+      &#34x as a quote and an x); a name may not. Used to search for a secret
+      only: a server may HTML-escape the request it echoes back. }
     function ZbHtmlEntityView(const Text: String): String;
     const
-        NAMES: array[0..4] of String = ('&quot;', '&gt;', '&lt;', '&amp;', '&apos;');
-        DECODED: array[0..4] of String = ('"', '>', '<', '&', '''');
+        MAX_NAME = 8;
     var
-        I, K, J, Digit, Radix: Integer;
+        I, K, J, Digit, Radix, Code: Integer;
         CodePoint: Int64;
         Matched: Boolean;
     begin
@@ -1422,7 +1492,8 @@ end;
             begin
                 if (I + 2 <= Length(Text)) and (Text[I + 1] = '#') then
                 begin
-                    { A numeric reference: &#, an optional x, digits, ';'. }
+                    { A numeric reference: &#, an optional x, digits, and a
+                      ';' or a character that is not a digit. }
                     J := I + 2;
                     Radix := 10;
                     if (Text[J] = 'x') or (Text[J] = 'X') then
@@ -1442,23 +1513,34 @@ end;
                             CodePoint := CodePoint * Radix + Digit;
                         Inc(K);
                     end;
-                    if (K > J) and (K <= Length(Text)) and (Text[K] = ';') and (CodePoint <= $10FFFF) and
+                    if (K > J) and (CodePoint <= $10FFFF) and
                        not ((CodePoint >= $D800) and (CodePoint <= $DFFF)) then
                     begin
                         Result := Result + ZbCodePointText(Integer(CodePoint));
-                        I := K + 1;
+                        if (K <= Length(Text)) and (Text[K] = ';') then
+                            Inc(K);
+                        I := K;
                         Matched := True;
                     end;
                 end
                 else
-                    for K := Low(NAMES) to High(NAMES) do
-                        if LowerCase(Copy(Text, I, Length(NAMES[K]))) = NAMES[K] then
+                begin
+                    { A name: letters and digits, then ';'. }
+                    K := I + 1;
+                    while (K <= Length(Text)) and (K - I <= MAX_NAME + 1) and
+                          (Text[K] in ['A'..'Z', 'a'..'z', '0'..'9']) do
+                        Inc(K);
+                    if (K > I + 1) and (K <= Length(Text)) and (Text[K] = ';') then
+                    begin
+                        Code := ZbHtmlNamedCodePoint(Copy(Text, I + 1, K - I - 1));
+                        if Code >= 0 then
                         begin
-                            Result := Result + DECODED[K];
-                            Inc(I, Length(NAMES[K]));
+                            Result := Result + ZbCodePointText(Code);
+                            I := K + 1;
                             Matched := True;
-                            Break;
                         end;
+                    end;
+                end;
             end;
             if not Matched then
             begin
@@ -1469,9 +1551,11 @@ end;
     end;
 
     { What one character, as a code point, folds to when case is ignored: the
-      lowercase of the ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic
-      letters, and a few that fold across scripts. ZbFoldUnit deals with the
-      ones that become two letters. }
+      lowercase of the ASCII, Latin, Greek and Cyrillic letters the tables
+      name, and a few that fold across scripts. A letter the tables leave
+      unchanged is then folded by a locale-free upper-then-lower of that one
+      code point. ZbFoldUnit deals with the ones that become more than one
+      letter, including the sharp s, the ligatures and a Hangul syllable. }
     function ZbSimpleFold(CodePoint: Integer): Integer;
     begin
         Result := CodePoint;
@@ -1606,22 +1690,103 @@ end;
     function ZbIsCombiningMark(CodePoint: Integer): Boolean;
     begin
         case CodePoint of
-            $300..$36F, $1AB0..$1AFF, $1DC0..$1DFF, $20D0..$20FF, $FE20..$FE2F:
+            { U+0345, the Greek ypogegrammeni, is left out: upper-casing makes
+              it a letter (a capital iota), so it folds to one (ZbFoldUnit)
+              and is no mark an echo may leave off. }
+            $300..$344, $346..$36F, $1AB0..$1AFF, $1DC0..$1DFF, $20D0..$20FF, $FE20..$FE2F:
                 Result := True;
         else
             Result := False;
         end;
     end;
 
-    { The folded text of one character: ZbSimpleFold, then the letter a
-      precomposed one is built on, except that the sharp s (and its capital)
-      becomes 'ss', so an echo that upper-cases a secret with one matches it. }
-    function ZbFoldUnit(CodePoint: Integer): String;
+    { The simple lower case of the simple upper case of one code point, which
+      a text in any case folds to: Cyrillic U+04D9 and U+04D8 both give
+      U+04D9. The Character unit has its own tables, so the answer does not
+      depend on the locale of the process or on a widestring manager. A code
+      point whose case mapping is not a single code point is kept as it is. }
+    function ZbCaseCycle(CodePoint: Integer): Integer;
+
+        function ToUtf16(Value: Integer): UnicodeString;
+        begin
+            if Value >= $10000 then
+                Result := UnicodeString(WideChar($D800 + ((Value - $10000) shr 10))) +
+                    WideChar($DC00 + ((Value - $10000) and $3FF))
+            else
+                Result := UnicodeString(WideChar(Value));
+        end;
+
+        { The one code point of Text, or -1 when it is not exactly one. }
+        function FromUtf16(const Value: UnicodeString): Integer;
+        begin
+            Result := -1;
+            if Length(Value) = 1 then
+            begin
+                if (Ord(Value[1]) < $D800) or (Ord(Value[1]) > $DFFF) then
+                    Result := Ord(Value[1]);
+            end
+            else if (Length(Value) = 2) and (Ord(Value[1]) >= $D800) and (Ord(Value[1]) <= $DBFF) and
+                    (Ord(Value[2]) >= $DC00) and (Ord(Value[2]) <= $DFFF) then
+                Result := $10000 + ((Ord(Value[1]) - $D800) shl 10) + (Ord(Value[2]) - $DC00);
+        end;
+
+    var
+        Upper, Lower: Integer;
     begin
-        if (CodePoint = $DF) or (CodePoint = $1E9E) then
-            Result := 'ss'
-        else
-            Result := ZbCodePointText(ZbBaseLetter(ZbSimpleFold(CodePoint)));
+        Result := CodePoint;
+        if (CodePoint < $80) or (CodePoint > $10FFFF) or ((CodePoint >= $D800) and (CodePoint <= $DFFF)) then
+            Exit;
+        Upper := FromUtf16(TCharacter.ToUpper(ToUtf16(CodePoint)));
+        if Upper < 0 then
+            Upper := CodePoint;
+        Lower := FromUtf16(TCharacter.ToLower(ToUtf16(Upper)));
+        if Lower >= 0 then
+            Result := Lower;
+    end;
+
+    { The folded text of one character: ZbSimpleFold, then the letter a
+      precomposed one is built on, with these exceptions, all of which an echo
+      that upper-cases the secret would otherwise spell differently:
+      - the sharp s (and its capital) becomes 'ss';
+      - the ligatures U+FB00 to U+FB06 become their letters (ff fi fl ffi ffl
+        st st), U+0149 becomes U+02BC and n, U+0345 becomes the Greek iota;
+      - a Hangul syllable becomes its two or three jamo, as NFD has it;
+      - a character the tables above leave alone is lower-cased after being
+        upper-cased (ZbCaseCycle), then run through the tables once more:
+        Cyrillic U+04D8 and U+04D9 are one letter, and so are U+03D0 and
+        Greek beta. }
+    function ZbFoldUnit(CodePoint: Integer): String;
+    var
+        Folded, Cycled, Syllable: Integer;
+    begin
+        case CodePoint of
+            $DF, $1E9E: Exit('ss');
+            $FB00: Exit('ff');
+            $FB01: Exit('fi');
+            $FB02: Exit('fl');
+            $FB03: Exit('ffi');
+            $FB04: Exit('ffl');
+            $FB05, $FB06: Exit('st');
+            $149: Exit(ZbCodePointText($2BC) + 'n');
+            $345: Exit(ZbCodePointText($3B9));
+            $AC00..$D7A3:
+                begin
+                    Syllable := CodePoint - $AC00;
+                    Result := ZbCodePointText($1100 + Syllable div 588) +
+                        ZbCodePointText($1161 + (Syllable mod 588) div 28);
+                    if Syllable mod 28 <> 0 then
+                        Result := Result + ZbCodePointText($11A7 + Syllable mod 28);
+                    Exit;
+                end;
+        end;
+        Folded := ZbBaseLetter(ZbSimpleFold(CodePoint));
+        if Folded = CodePoint then
+        begin
+            Cycled := ZbCaseCycle(CodePoint);
+            if Cycled <> CodePoint then
+                Folded := ZbBaseLetter(ZbSimpleFold(Cycled));
+        end;
+        Result := ZbCodePointText(Folded);
     end;
 
     { One character at Text[At]: its code point and how many string units it
@@ -1728,8 +1893,10 @@ end;
                     Folded[I] := Chr(Ord(Folded[I]) + 32);
             Exit;
         end;
-        SetLength(Folded, Length(Text) * 2);
-        SetLength(Spans, Length(Text) * 4);
+        { No character makes more than three units for each one it takes: a
+          Hangul syllable on Delphi, one UTF-16 unit, is three jamo. }
+        SetLength(Folded, Length(Text) * 3);
+        SetLength(Spans, Length(Text) * 6);
         Used := 0;
         I := 1;
         while I <= Length(Text) do
@@ -1819,13 +1986,18 @@ end;
     { Whether the folded secret can be read in Text, or in any view of it
       decoded up to Layers more times: URL-decoded, form-decoded ('+' as a
       space too), unescaped as a string literal and with its HTML entities
-      undone, in any order. Case is ignored. }
-    function ZbSecretInDecodedViews(const Text, FoldedSecret: String; Layers: Integer): Boolean;
+      undone, in any order. Case is ignored. A secret that folds to nothing
+      (only combining marks) is looked for as that exact sequence, RawSecret,
+      in the text as it is. }
+    function ZbSecretInDecodedViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer): Boolean;
     var
         Views: array[0..3] of String;
         I: Integer;
     begin
-        Result := Pos(FoldedSecret, ZbFoldText(Text)) > 0;
+        if FoldedSecret = '' then
+            Result := (RawSecret <> '') and (Pos(RawSecret, Text) > 0)
+        else
+            Result := Pos(FoldedSecret, ZbFoldText(Text)) > 0;
         if Result or (Layers = 0) then
             Exit;
         { Nothing to decode: every view is Text itself. }
@@ -1837,7 +2009,7 @@ end;
         Views[2] := ZbJsonUnescapeView(Text);
         Views[3] := ZbHtmlEntityView(Text);
         for I := 0 to 3 do
-            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], FoldedSecret, Layers - 1) then
+            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], FoldedSecret, RawSecret, Layers - 1) then
             begin
                 Result := True;
                 Exit;
@@ -1849,7 +2021,7 @@ end;
         HEX = '0123456789ABCDEF';
     var
         Forms: array[0..11] of String;
-        JsonSlash, JsonPlain: String;
+        JsonSlash, JsonPlain, FoldedForm, FoldedSecret: String;
         F: Integer;
 
         { Everything but the unreserved characters percent-encoded. }
@@ -1914,11 +2086,20 @@ end;
           the hex of a percent-encoding comes in either case. }
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
-                Result := ZbReplaceFolded(Result, ZbFoldText(Forms[F]), 'REDACTED');
+            begin
+                FoldedForm := ZbFoldText(Forms[F]);
+                if FoldedForm <> '' then
+                    Result := ZbReplaceFolded(Result, FoldedForm, 'REDACTED')
+                else
+                    { Only combining marks, which the fold drops: nothing
+                      to compare folded, so the exact sequence is masked. }
+                    Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
+            end;
         { A spelling the forms above miss (three URL layers, URL of double
           JSON, an HTML-escaped quote, ...) still decodes to the secret: then
           none of S is kept. }
-        if ZbSecretInDecodedViews(Result, ZbFoldText(Secret), ZB_SECRET_DECODE_LAYERS) then
+        FoldedSecret := ZbFoldText(Secret);
+        if ZbSecretInDecodedViews(Result, FoldedSecret, Secret, ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 
@@ -1979,6 +2160,10 @@ end;
             else
                 Inc(I);
         end;
+        { A key of nothing but combining marks folds to no text at all, so
+          the redaction of a transport error would have nothing to compare. }
+        if ZbFoldText(ApiKey) = '' then
+            raise ZbException.Create(REFUSED);
         Result := ApiKey;
     end;
 
@@ -2117,9 +2302,19 @@ end;
         ));
     end;
 
-    { What a request with no mock installed leaves in ZbLastRequestBody and
-      ZbLastRequestHeader: nothing, so a mock's body does not linger. }
+    { What a request with no mock installed leaves in ZbLastRequestMethod,
+      ZbLastRequestBody and ZbLastRequestHeader: nothing, so a mock's request
+      does not linger. }
     procedure ZbClearLastRequest;
+    begin
+        ZbLastRequestMethod := '';
+        ZbLastRequestBody := '';
+        ZbLastRequestHeader := '';
+    end;
+
+    { The body and the header of the last request, which only a mock may keep;
+      the method, set once the URL passed its check, stays. }
+    procedure ZbClearLastBodyAndHeader;
     begin
         ZbLastRequestBody := '';
         ZbLastRequestHeader := '';
@@ -2213,6 +2408,7 @@ end;
         ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
+        ZbLastRequestMethod := 'GET';
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -2221,7 +2417,6 @@ end;
 		else
         begin
             Result.UrlCalled := url;
-            ZbClearLastRequest;
 
             {$IFDEF FPC}
             InitSSLInterface;
@@ -2305,6 +2500,7 @@ end;
         ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
+        ZbLastRequestMethod := 'POST';
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -2313,7 +2509,6 @@ end;
         else
         begin
             Result.UrlCalled := url;
-            ZbClearLastRequest;
             {$IFDEF FPC}
             InitSSLInterface;
 
@@ -2352,7 +2547,9 @@ end;
             Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
-            BodyStream := TStringStream.Create(JsonParam);
+            { The string is UTF-16 here: the body goes out as UTF-8, which is
+              what the charset above says. }
+            BodyStream := TStringStream.Create(JsonParam, TEncoding.UTF8);
             try
               Client.CustomHeaders['Content-Type'] := 'application/json; charset=UTF-8';
               Client.CustomHeaders['Accept'] := 'application/json';
@@ -2455,7 +2652,7 @@ end;
                 ZbLastRequestHeader := '';
         end
         else
-            ZbClearLastRequest;
+            ZbClearLastBodyAndHeader;
 
         if ZbResponseMock.StatusCode <> 0 then
         begin
@@ -2513,7 +2710,8 @@ end;
             Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
-            BodyStream := TStringStream.Create(Body);
+            { UTF-16 string, UTF-8 body. }
+            BodyStream := TStringStream.Create(Body, TEncoding.UTF8);
             try
                 Client.CustomHeaders['Accept'] := 'application/json';
                 if HeaderName <> '' then
@@ -2560,9 +2758,12 @@ end;
         ZbLastRequestMethod := 'POST';
         { Kept only for a test that installed a mock (it carries the key). }
         if ZbResponseMock.StatusCode <> 0 then
-            ZbLastRequestBody := FormBody
+        begin
+            ZbLastRequestBody := FormBody;
+            ZbLastRequestHeader := '';
+        end
         else
-            ZbClearLastRequest;
+            ZbClearLastBodyAndHeader;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -2696,6 +2897,7 @@ end;
         ZbClearLastRequest;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
+        ZbLastRequestMethod := 'POST';
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -2704,7 +2906,6 @@ end;
         else
         begin
             Result.UrlCalled := url;
-            ZbClearLastRequest;
             { No answer, no status: a refused connection is reported from
               here, before any of these is read. }
             Result.StatusCode := 0;
@@ -2760,7 +2961,8 @@ end;
             Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
-            FileStream := TStringStream.Create(FileContent);
+            { UTF-16 string, UTF-8 file. }
+            FileStream := TStringStream.Create(FileContent, TEncoding.UTF8);
             MPForm := FormDataFromTString;
             try
               MPForm.AddStream('file', FileStream, FILE_NAME, 'text/csv');

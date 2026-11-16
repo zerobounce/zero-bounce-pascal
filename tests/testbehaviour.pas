@@ -71,6 +71,14 @@ type
         procedure TestANullSuccessKeyDoesNotHideAMessage;
         procedure TestCompletePercentageParsesWithADotInACommaLocale;
         procedure TestJsonWrappersFreeWhatTheyCreate;
+        procedure TestAnIntegerOutsideIntegerRangeIsAFieldTypeError;
+        procedure TestAShortApiUsageDateIsAnErrorNotLeftoverStack;
+        procedure TestProcessedAtAcceptsTAsTheSeparator;
+        procedure TestAFractionIsADecimalOfSeconds;
+        procedure TestABlankCompletePercentageIsMinusOne;
+        procedure TestJsonKeysAreLookedUpExactly;
+        procedure TestGetFileErrorKeysInAnyCase;
+        procedure TestActivityDaysAcceptsAJsonInteger;
     end;
 
 implementation
@@ -1443,6 +1451,225 @@ begin
         AssertEquals('the caller still holds its object', 'valid', Held.GetString('status'));
     finally
         Held.Free;
+    end;
+end;
+
+function RaisesOnParse(const Kind, Body: String; out Text: String): Boolean;
+begin
+    Result := False;
+    Text := '';
+    try
+        if Kind = 'usage' then
+            ZbApiUsageFromJson(Body)
+        else
+            ZbValidationFromJson(Body);
+    except
+        on E: Exception do
+        begin
+            Result := True;
+            Text := E.Message;
+        end;
+    end;
+end;
+
+function ProcessedAtOf(const Value: String): TDateTime;
+begin
+    Result := ZbValidationFromJson(
+        '{"address":"a@example.com","status":"valid","processed_at":"' + Value + '"}').ProcessedAt;
+end;
+
+procedure TTestBehaviour.TestAnIntegerOutsideIntegerRangeIsAFieldTypeError;
+const
+    BAD: array[0..3] of String = ('4294967297', '2147483648', '-2147483649', '9223372036854775807');
+var
+    I: Integer;
+    Text: String;
+begin
+    for I := Low(BAD) to High(BAD) do
+    begin
+        AssertTrue('total ' + BAD[I] + ' was cut down to an Integer',
+            RaisesOnParse('usage', '{"total":' + BAD[I] + '}', Text));
+        AssertTrue(Text, Pos('"total"', Text) > 0);
+        AssertTrue(Text, Pos('wrong JSON type', Text) > 0);
+    end;
+    AssertEquals('total 1', 1, ZbApiUsageFromJson('{"total":1}').Total);
+    AssertEquals('total High(Integer)', 2147483647, ZbApiUsageFromJson('{"total":2147483647}').Total);
+    AssertEquals('total Low(Integer)', -2147483648, ZbApiUsageFromJson('{"total":-2147483648}').Total);
+    { The same through the call, which reports it with the status. }
+    ZBMockResponse(200, '{"total":4294967297}', 'application/json');
+    try
+        ZbGetApiUsage;
+        Fail('ZbGetApiUsage took 4294967297 as a count');
+    except
+        on E: ZbException do
+            AssertEquals('status', 200, E.StatusCode);
+    end;
+end;
+
+procedure TTestBehaviour.TestAShortApiUsageDateIsAnErrorNotLeftoverStack;
+const
+    SHORT: array[0..3] of String = ('11/17', '11', '/', '1/1');
+var
+    I, Round: Integer;
+    Text: String;
+    Usage: TApiUsage;
+    Y, Mo, D: Word;
+begin
+    for Round := 1 to 3 do
+    begin
+        for I := Low(SHORT) to High(SHORT) do
+        begin
+            AssertTrue('start_date ' + SHORT[I] + ' became a date',
+                RaisesOnParse('usage', '{"total":1,"start_date":"' + SHORT[I] + '"}', Text));
+            AssertTrue(Text, Pos('Invalid date', Text) > 0);
+            AssertTrue('end_date ' + SHORT[I] + ' became a date',
+                RaisesOnParse('usage', '{"total":1,"end_date":"' + SHORT[I] + '"}', Text));
+        end;
+        Usage := ZbApiUsageFromJson('{"total":1,"start_date":"1/1/2023","end_date":"11/17/2026"}');
+        DecodeDate(Usage.StartDate, Y, Mo, D);
+        AssertEquals('start year', 2023, Y);
+        AssertEquals('start month', 1, Mo);
+        AssertEquals('start day', 1, D);
+        DecodeDate(Usage.EndDate, Y, Mo, D);
+        AssertEquals('end year', 2026, Y);
+        AssertEquals('end month', 11, Mo);
+        AssertEquals('end day', 17, D);
+    end;
+end;
+
+procedure TTestBehaviour.TestProcessedAtAcceptsTAsTheSeparator;
+var
+    Y, Mo, D, H, Mi, S, Ms: Word;
+begin
+    DecodeDateTime(ProcessedAtOf('2026-11-17T10:30:00'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('year', 2026, Y);
+    AssertEquals('month', 11, Mo);
+    AssertEquals('day', 17, D);
+    AssertEquals('hour is not midnight', 10, H);
+    AssertEquals('minute', 30, Mi);
+    AssertEquals('second', 0, S);
+    AssertEquals('milliseconds', 0, Ms);
+    DecodeDateTime(ProcessedAtOf('2026-11-17T10:30:05.250'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('hour with a fraction', 10, H);
+    AssertEquals('second with a fraction', 5, S);
+    AssertEquals('milliseconds with a fraction', 250, Ms);
+    { The space form is as it was. }
+    DecodeDateTime(ProcessedAtOf('2026-11-17 10:30:00'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('space form hour', 10, H);
+    AssertEquals('space form minute', 30, Mi);
+end;
+
+procedure TTestBehaviour.TestAFractionIsADecimalOfSeconds;
+const
+    BAD: array[0..2] of String = ('2023-01-12 22:02:02.1234', '2023-01-12 22:02:02.0001', '2023-01-12 22:02:02.9999');
+var
+    Y, Mo, D, H, Mi, S, Ms: Word;
+    I: Integer;
+    Text: String;
+begin
+    DecodeDateTime(ProcessedAtOf('2023-01-12 22:02:02.5'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('.5 is 500', 500, Ms);
+    AssertEquals('second', 2, S);
+    DecodeDateTime(ProcessedAtOf('2023-01-12 22:02:02.12'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('.12 is 120', 120, Ms);
+    DecodeDateTime(ProcessedAtOf('2023-01-12 22:02:02.592'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('.592 is 592', 592, Ms);
+    DecodeDateTime(ProcessedAtOf('2023-01-12 22:02:02.007'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('.007 is 7', 7, Ms);
+    DecodeDateTime(ProcessedAtOf('2023-01-12 22:02:02.05'), Y, Mo, D, H, Mi, S, Ms);
+    AssertEquals('.05 is 50', 50, Ms);
+    for I := Low(BAD) to High(BAD) do
+        AssertTrue(BAD[I] + ' was accepted',
+            RaisesOnParse('validation', '{"address":"a@example.com","status":"valid","processed_at":"' + BAD[I] + '"}', Text));
+end;
+
+procedure TTestBehaviour.TestABlankCompletePercentageIsMinusOne;
+const
+    BLANK: array[0..1] of String = ('', '%');
+var
+    I: Integer;
+    Status: TZbFileStatus;
+begin
+    for I := Low(BLANK) to High(BLANK) do
+    begin
+        Status := ZbFileStatusFromJson(
+            '{"success":true,"file_id":"a","complete_percentage":"' + BLANK[I] + '"}');
+        AssertEquals('percentage "' + BLANK[I] + '"', -1.0, Status.CompletePercentage, 0.0001);
+    end;
+    Status := ZbFileStatusFromJson('{"success":true,"file_id":"a","complete_percentage":"45.5%"}');
+    AssertEquals('45.5%', 45.5, Status.CompletePercentage, 0.0001);
+    Status := ZbFileStatusFromJson('{"success":true,"file_id":"a","complete_percentage":"0%"}');
+    AssertEquals('0%', 0.0, Status.CompletePercentage, 0.0001);
+end;
+
+procedure TTestBehaviour.TestJsonKeysAreLookedUpExactly;
+var
+    J: TZbJson;
+begin
+    J := TZbJson.Create('{"a":{"b":"nested"},"a.b":"flat","c":"x"}');
+    try
+        AssertEquals('a.b is the key a.b, not a path', 'flat', J.GetString('a.b'));
+        AssertTrue('an empty key is not the object itself', J.GetValue('') = nil);
+        AssertEquals('c', 'x', J.GetString('c'));
+    finally
+        J.Free;
+    end;
+    J := TZbJson.Create('{"a":{"b":"nested"}}');
+    try
+        AssertTrue('a.b is missing, not b inside a', J.GetValue('a.b') = nil);
+        AssertEquals('a missing key reads as empty', '', J.GetString('a.b'));
+    finally
+        J.Free;
+    end;
+end;
+
+procedure TTestBehaviour.TestGetFileErrorKeysInAnyCase;
+const
+    KEYS: array[0..5] of String = ('message', 'Message', 'error', 'Error', 'error_message', 'detail');
+var
+    I: Integer;
+begin
+    for I := Low(KEYS) to High(KEYS) do
+    begin
+        AssertTrue(KEYS[I] + ' text is an error',
+            ZbGetFileJsonIndicatesError('{"' + KEYS[I] + '":"Invalid API key"}'));
+        AssertFalse(KEYS[I] + ' null is not an error',
+            ZbGetFileJsonIndicatesError('{"' + KEYS[I] + '":null}'));
+        AssertFalse(KEYS[I] + ' blank is not an error',
+            ZbGetFileJsonIndicatesError('{"' + KEYS[I] + '":"  "}'));
+    end;
+    AssertFalse(ZbGetFileJsonIndicatesError('{"file_id":"a"}'));
+end;
+
+procedure TTestBehaviour.TestActivityDaysAcceptsAJsonInteger;
+const
+    BAD: array[0..4] of String = ('"+5"', '" 5"', '"$1F"', '"0x10"', '4294967297');
+var
+    I: Integer;
+    Raised: Boolean;
+begin
+    ZBMockResponse(200, '{"found":true,"active_in_days":180}', 'application/json');
+    AssertEquals('a JSON integer', 180, ZbActivityData('a@example.com'));
+    ZBMockResponse(200, '{"found":true,"active_in_days":0}', 'application/json');
+    AssertEquals('a JSON zero', 0, ZbActivityData('a@example.com'));
+    ZBMockResponse(200, '{"found":true,"active_in_days":"12"}', 'application/json');
+    AssertEquals('a JSON string', 12, ZbActivityData('a@example.com'));
+    ZBMockResponse(200, '{"found":false,"active_in_days":null}', 'application/json');
+    AssertEquals('null', -1, ZbActivityData('a@example.com'));
+    for I := Low(BAD) to High(BAD) do
+    begin
+        ZBMockResponse(200, '{"found":true,"active_in_days":' + BAD[I] + '}', 'application/json');
+        Raised := False;
+        try
+            ZbActivityData('a@example.com');
+        except
+            on E: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(BAD[I] + ' status', 200, E.StatusCode);
+            end;
+        end;
+        AssertTrue('active_in_days ' + BAD[I] + ' was taken as a count', Raised);
     end;
 end;
 

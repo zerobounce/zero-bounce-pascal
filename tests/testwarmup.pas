@@ -47,6 +47,7 @@ type
         procedure TestTestSmtpConfigurationChecksThePort;
         procedure TestCsvDownloadsRejectAJsonAnswer;
         procedure TestCsvDownloadsRejectEveryNonFileAnswer;
+        procedure TestADirectoryThatCannotBeCreatedIsAZbException;
         procedure TestBlankArgumentsAreRejectedBeforeSending;
         procedure TestErrorsNeverCarryTheKeyOrTheSmtpCredentials;
         procedure TestSmtpCredentialsAreMaskedInEveryForm;
@@ -881,11 +882,70 @@ begin
                 begin
                     Raised := True;
                     AssertEquals(BODIES[I], 200, e.StatusCode);
+                    AssertTrue(Format('%d/%d is marked as an HTTP error: %s', [I, Call, e.Message]),
+                        Pos('Http Error:', e.Message) = 1);
                 end;
             end;
             AssertTrue(Format('%d/%d %s (%s) is not a CSV download', [I, Call, BODIES[I], TYPES[I]]), Raised);
             AssertFalse('a file was saved for ' + BODIES[I], FileExists(Saved));
         end;
+end;
+
+procedure TTestWarmup.TestADirectoryThatCannotBeCreatedIsAZbException;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Blocker, Path: String;
+    Call: Integer;
+    Stream: TFileStream;
+    Kept: TStringList;
+    Raised: Boolean;
+begin
+    { A file where the directory should be: ForceDirectories cannot create
+      the folder, and that is the same "Could not write" a failed replace
+      raises, not an EFCreateError from opening the file. }
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-no-dir-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Blocker := Dir + 'blocker';
+    Stream := TFileStream.Create(Blocker, fmCreate);
+    try
+        Stream.WriteBuffer('KEEP', 4);
+    finally
+        Stream.Free;
+    end;
+    Path := Blocker + PathDelim + 'sub' + PathDelim + 'seeds.csv';
+    try
+        for Call := 0 to 1 do
+        begin
+            ZBMockResponse(200, CSV, CSV_TYPE);
+            Raised := False;
+            try
+                if Call = 0 then
+                    ZbWarmupDownloadSeeds(Path)
+                else
+                    ZbWarmupDownloadStatistics('sender@example.com', Path);
+            except
+                on e: ZbException do
+                begin
+                    Raised := True;
+                    AssertEquals(Format('call %d status', [Call]), 0, e.StatusCode);
+                    AssertEquals(Format('call %d message', [Call]), Format('Could not write %s', [Path]), e.Message);
+                end;
+            end;
+            AssertTrue(Format('call %d: an uncreatable directory should raise a ZbException', [Call]), Raised);
+            AssertFalse(Format('call %d wrote a file', [Call]), FileExists(Path));
+        end;
+        Kept := TStringList.Create;
+        try
+            Kept.LoadFromFile(Blocker);
+            AssertEquals('the file in the way was changed', 'KEEP', Trim(Kept.Text));
+        finally
+            Kept.Free;
+        end;
+    finally
+        DeleteFile(Blocker);
+        RemoveDir(Dir);
+    end;
 end;
 
 procedure TTestWarmup.TestBlankArgumentsAreRejectedBeforeSending;

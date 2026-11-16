@@ -201,7 +201,13 @@ implementation
         try
             try
                 Json := TZbJSon.Create(response.Payload);
-                ActiveInDaysString := Json.GetString('active_in_days');
+                { A JSON string or a JSON integer, as credits takes either;
+                  null or missing is no count. GetIntegerText raises for any
+                  other JSON type and keeps the text of a string as it is. }
+                if Json.IsNullValue('active_in_days') then
+                    ActiveInDaysString := ''
+                else
+                    ActiveInDaysString := Json.GetIntegerText('active_in_days');
                 if ActiveInDaysString <> '' then
                 begin
                     { As credits: StrToInt would take '+5', ' 5', '$1F' and
