@@ -23,9 +23,6 @@ on:
     - cron: '45 12 * * 1'
 
 permissions:
-  security-events: write
-  packages: read
-  actions: read
   contents: read
 
 jobs:

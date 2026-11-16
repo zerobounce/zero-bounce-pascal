@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: publish-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
 jobs:
   validate-tag:
     outputs:
@@ -22,7 +26,7 @@ jobs:
         env:
           TAG: ${{ github.event.inputs.tag }}
         run: |
-          re='^v?[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$'
+          re='^v[0-9]+\.[0-9]+\.[0-9]+([.+-][0-9A-Za-z.-]+)?$'
           if [[ ! "$TAG" =~ $re ]]; then
             echo "Error: the tag input must be a release tag such as v1.2.3."
             exit 1
@@ -31,10 +35,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           ref: refs/tags/${{ github.event.inputs.tag }}
-
           persist-credentials: false
+
       - name: Verify tag and package version
         env:
           TAG: ${{ github.event.inputs.tag }}
@@ -57,7 +60,7 @@ jobs:
             echo "Error: package version ($PKG_VERSION) does not match tag ($TAG)."
             exit 1
           fi
-          
+
       - name: Record tag commit SHA
         id: tag_sha
         env:
@@ -104,6 +107,15 @@ jobs:
 
       - name: Run tests
         run: ./unit_tests_console --all
+
+      - name: Build FPC examples
+        run: |
+          mkdir -p "$RUNNER_TEMP/examples"
+          for f in examples/fpc/*.lpr; do
+            echo "::group::$f"
+            fpc -Fu./src -Mobjfpc -viwn "$f" -FE"$RUNNER_TEMP/examples" || exit 1
+            echo "::endgroup::"
+          done
 
   release:
     name: Create GitHub Release

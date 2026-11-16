@@ -45,6 +45,7 @@ type
         procedure TestSubmitParamProviderPartial;
         procedure TestSubmitParamProviderFull;
         procedure TestSubmitParamRemoveDuplicateIsAlwaysSent;
+        procedure TestSubmitParamReturnUrl;
         procedure TestSubmitParamAllowPhase2;
         procedure TestSubmitParamScoringOmitsAllowPhase2;
 
@@ -263,8 +264,51 @@ begin
         ExpectKeyInParamsMap(ParamsMap, 'ip_address_column', '5');
         ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'true');
         ExpectKeyInParamsMap(ParamsMap, 'remove_duplicate', 'true');
+        { An unset ReturnUrl is not sent. }
+        NotExpectKeyInParamsMap(ParamsMap, 'return_url');
     finally
         ParamsMap.Free;
+    end;
+end;
+
+{ ReturnUrl is the last field of the record: sent as return_url on both
+  sendfile endpoints when set, left out when empty. }
+procedure TTestBulk.TestSubmitParamReturnUrl;
+var
+    P: TZbBulkParams;
+    ParamsMap: TStringMapping;
+    Endpoint: String;
+    I: Integer;
+begin
+    for I := 0 to 1 do
+    begin
+        if I = 0 then
+            Endpoint := ENDPOINT_FILE_SEND
+        else
+            Endpoint := ENDPOINT_SCORING_SEND;
+        P := SUBMIT_PARAM_FULL;
+        P.ReturnUrl := 'https://example.com/done?a=1&b=2';
+        ParamsMap := FileParamsMapFromRecord(P, Endpoint);
+        try
+            ExpectKeyInParamsMap(ParamsMap, 'return_url', 'https://example.com/done?a=1&b=2');
+            ExpectKeyInParamsMap(ParamsMap, 'has_header_row', 'true');
+        finally
+            ParamsMap.Free;
+        end;
+        P.ReturnUrl := '';
+        ParamsMap := FileParamsMapFromRecord(P, Endpoint);
+        try
+            NotExpectKeyInParamsMap(ParamsMap, 'return_url');
+        finally
+            ParamsMap.Free;
+        end;
+        FillChar(P, SizeOf(P), 0);
+        ParamsMap := FileParamsMapFromRecord(P, Endpoint);
+        try
+            NotExpectKeyInParamsMap(ParamsMap, 'return_url');
+        finally
+            ParamsMap.Free;
+        end;
     end;
 end;
 

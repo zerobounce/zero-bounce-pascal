@@ -28,9 +28,12 @@ type
         AllowPhase2Specified: Boolean;
         AllowPhase2: Boolean;
         { Kept for source compatibility and ignored: RemoveDuplicate is always
-          sent, as in the released 3.0.x. Last in the record, so record
-          constants written for the older layout still compile. }
+          sent, as in the released 3.0.x. }
         RemoveDuplicateSpecified: Boolean;
+        { Sent as return_url on bulk and scoring sendfile when not empty. Last
+          in the record, so record constants written for the older layout
+          still compile. }
+        ReturnUrl: String;
     end;
 
     { Optional query parameters for bulk getfile (validation and scoring). }
@@ -90,6 +93,8 @@ implementation
 
         if (Endpoint = ENDPOINT_FILE_SEND) and SubmitParams.AllowPhase2Specified then
             Result.AddPair('allow_phase_2', StrBool(SubmitParams.AllowPhase2));
+        if SubmitParams.ReturnUrl <> '' then
+            Result.AddPair('return_url', SubmitParams.ReturnUrl);
     end;
 
 

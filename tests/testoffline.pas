@@ -51,6 +51,8 @@ type
     procedure TestAMessageOnlyListIsJoinedWithALineFeed;
     procedure TestEveryHtmlSniffMarkerRefusesADownloadServedAsCsv;
     procedure TestADeadKeyOn200IsAnErrorOnEveryCall;
+    procedure TestAContentEncodingIsNotReadAsAFile;
+    procedure TestARequestWithNoMockLeavesNoLastBodyOrHeader;
   end;
 
 implementation
@@ -341,6 +343,30 @@ begin
     fpSend(Sock, PChar(Reply), Length(Reply), 0);
     if Pos('truncstall-', Item.ApiKey) = 1 then
       Sleep(SLOW_REPLY_MS);
+    CloseSocket(Sock);
+    Exit;
+  end;
+  if Pos('enc-', Item.ApiKey) = 1 then
+  begin
+    { A Content-Encoding on a CSV 200. 'enc-gzip-': a whole body (one a client
+      that does not inflate would take for the file); 'enc-gzipcut-': 26 bytes
+      of a promised 1000; 'enc-upper-': the same header in capitals with
+      padding; 'enc-identity-': "identity" with 26 bytes of a promised 1000;
+      'enc-identityok-': "identity" with the whole body. }
+    Body := 'email' + #10 + 'partial@example.com' + #10;
+    Reply := 'HTTP/1.1 200 OK' + #13#10 + 'Content-Type: text/csv' + #13#10;
+    if Pos('enc-gzip-', Item.ApiKey) = 1 then
+      Reply := Reply + 'Content-Encoding: gzip' + #13#10 + 'Content-Length: ' + IntToStr(Length(Body)) + #13#10
+    else if Pos('enc-gzipcut-', Item.ApiKey) = 1 then
+      Reply := Reply + 'Content-Encoding: gzip' + #13#10 + 'Content-Length: 1000' + #13#10
+    else if Pos('enc-upper-', Item.ApiKey) = 1 then
+      Reply := Reply + 'Content-Encoding:  GZIP ' + #13#10 + 'Content-Length: ' + IntToStr(Length(Body)) + #13#10
+    else if Pos('enc-identity-', Item.ApiKey) = 1 then
+      Reply := Reply + 'Content-Encoding: Identity' + #13#10 + 'Content-Length: 1000' + #13#10
+    else
+      Reply := Reply + 'Content-Encoding:  Identity ' + #13#10 + 'Content-Length: ' + IntToStr(Length(Body)) + #13#10;
+    Reply := Reply + 'Connection: close' + #13#10 + #13#10 + Body;
+    fpSend(Sock, PChar(Reply), Length(Reply), 0);
     CloseSocket(Sock);
     Exit;
   end;
@@ -1329,6 +1355,149 @@ begin
     while (CountRecorded('truncstall-') < 1) and (GetTickCount64 - Started < 15000) do
       Sleep(50);
     Sleep(SLOW_REPLY_MS + 200);
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestAContentEncodingIsNotReadAsAFile;
+type
+  TDownload = (dlValidation, dlValidationWithOptions, dlScoring, dlScoringWithOptions,
+    dlEmailFinder, dlDomainSearch, dlWarmupSeeds);
+const
+  DOWNLOAD_NAMES: array[TDownload] of String = (
+    'ZbBulkValidationResultFetch', 'ZbBulkValidationResultFetch(options)', 'ZbAiScoringResultFetch',
+    'ZbAiScoringResultFetch(options)', 'ZbEmailFinderResultFetch', 'ZbDomainSearchResultFetch',
+    'ZbWarmupDownloadSeeds'
+  );
+  ENCODING_MESSAGE = 'The response from ZeroBounce used a content encoding this client does not read.';
+  { Keys the stub answers with a Content-Encoding header. }
+  REFUSED_KEYS: array[0..2] of String = ('enc-gzip-', 'enc-gzipcut-', 'enc-upper-');
+var
+  Download: TDownload;
+  Options: TZbGetFileOptions;
+  Saved, Message: String;
+  Raised: Boolean;
+  Status, K: Integer;
+
+  procedure Run(D: TDownload);
+  begin
+    case D of
+      dlValidation: ZbBulkValidationResultFetch('fid');
+      dlValidationWithOptions: ZbBulkValidationResultFetch('fid', @Options);
+      dlScoring: ZbAiScoringResultFetch('fid');
+      dlScoringWithOptions: ZbAiScoringResultFetch('fid', @Options);
+      dlEmailFinder: ZbEmailFinderResultFetch('fid');
+      dlDomainSearch: ZbDomainSearchResultFetch('fid');
+      dlWarmupSeeds: ZbWarmupDownloadSeeds(Saved);
+    end;
+  end;
+
+  { Raised: whether Run(D) did; then Message and Status say what with. }
+  procedure Try_(D: TDownload);
+  begin
+    Raised := False;
+    Message := '';
+    Status := -1;
+    try
+      Run(D);
+    except
+      on E: ZbException do
+      begin
+        Raised := True;
+        Message := E.Message;
+        Status := E.StatusCode;
+      end;
+    end;
+  end;
+
+begin
+  { A gzip body would be saved as the file (a short one slipped past the
+    length check altogether): none of these may come back as a file. }
+  EnsureStub;
+  Options := Default(TZbGetFileOptions);
+  Options.DownloadType := 'combined';
+  Saved := GetTempDir + 'zb-pascal-encoding-' + IntToStr(GetProcessID) + '.csv';
+  DeleteFile(Saved);
+  try
+    for Download := Low(TDownload) to High(TDownload) do
+    begin
+      for K := Low(REFUSED_KEYS) to High(REFUSED_KEYS) do
+      begin
+        UseStub(REFUSED_KEYS[K] + IntToStr(Ord(Download)));
+        Try_(Download);
+        AssertTrue(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ': an encoded body should be an error', Raised);
+        AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K], ENCODING_MESSAGE, Message);
+        AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ' status', 0, Status);
+        AssertEquals(DOWNLOAD_NAMES[Download] + ' ' + REFUSED_KEYS[K] + ' header value in message', 0,
+          Pos('gzip', LowerCase(Message)));
+        AssertFalse(DOWNLOAD_NAMES[Download] + ' saved an encoded body', FileExists(Saved));
+      end;
+      { "identity" is the length check as for any body: cut short... }
+      UseStub('enc-identity-' + IntToStr(Ord(Download)));
+      Try_(Download);
+      AssertTrue(DOWNLOAD_NAMES[Download] + ': a cut-short identity body should be an error', Raised);
+      AssertTrue(DOWNLOAD_NAMES[Download] + ': ' + Message, Pos('cut short', Message) > 0);
+      AssertFalse(DOWNLOAD_NAMES[Download] + ' saved a cut-short identity body', FileExists(Saved));
+      { ... and whole is the file. }
+      UseStub('enc-identityok-' + IntToStr(Ord(Download)));
+      Try_(Download);
+      AssertFalse(DOWNLOAD_NAMES[Download] + ': a whole identity body is a file: ' + Message, Raised);
+      if Download = dlWarmupSeeds then
+      begin
+        AssertTrue('the identity body was saved', FileExists(Saved));
+        DeleteFile(Saved);
+      end;
+    end;
+  finally
+    DeleteFile(Saved);
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+end;
+
+procedure TTestOffline.TestARequestWithNoMockLeavesNoLastBodyOrHeader;
+var
+  Url: String;
+
+  { What a request does with the stub's answer is not the point: it may well
+    raise. }
+  procedure Swallow(Call: Integer);
+  begin
+    try
+      case Call of
+        0: ZBGetRequest(Url);
+        1: ZBPostRequest(Url, '{"a":1}');
+        2: ZBFormPostRequest(Url, 'a=b&api_key=k');
+        3: ZBSendRequestWithHeader('PUT', Url, 'body', 'text/plain', 'X-Test', 'value');
+      end;
+    except
+      on E: Exception do
+        ;
+    end;
+  end;
+
+var
+  Call: Integer;
+begin
+  EnsureStub;
+  try
+    UseStub('lastreq-1');
+    Url := ZbApiBaseURL + '/getcredits?api_key=lastreq-1';
+    for Call := 0 to 3 do
+    begin
+      { A mock is installed: the request is recorded. }
+      ZBMockResponse(200, '{"Credits":"1"}');
+      ZBSendRequestWithHeader('PUT', Url, 'mock-body', 'text/plain', 'X-Test', 'mock-value');
+      AssertEquals('mock body', 'mock-body', ZbLastRequestBody);
+      AssertEquals('mock header', 'X-Test: mock-value', ZbLastRequestHeader);
+      { No mock: nothing of the mock's request lingers. }
+      ZbResponseMock := cDefaultMock;
+      Swallow(Call);
+      AssertEquals('call ' + IntToStr(Call) + ' body', '', ZbLastRequestBody);
+      AssertEquals('call ' + IntToStr(Call) + ' header', '', ZbLastRequestHeader);
+    end;
+  finally
     ClearRecorded;
     UseDefaultUrls;
   end;

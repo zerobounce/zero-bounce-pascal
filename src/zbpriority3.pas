@@ -713,9 +713,9 @@ begin
 end;
 
 { POSTs one of the six documented S3 / SFTP file jobs on the bulkapi root.
-  Booleans go on the wire as the strings 'true'/'false', and an option the
-  caller left unset is not sent at all. }
-{ POSTs one of the six documented S3 / SFTP file jobs on the bulkapi root.
+  Booleans go on the wire as the strings 'true'/'false'. has_header_row,
+  file_name and return_url are always sent; remove_duplicates is sent only
+  when the caller set it.
 
   LIVE: file_name and return_url are required on every one of them,
   validateSFTPfile included, although the docs list file_name as optional for

@@ -43,6 +43,9 @@ type
         procedure TestAFileThatBeginsWithPaddingIsSavedUnchanged;
         procedure TestMessageOnlyAndEmptyAnswersAreErrorsWithStatus200;
         procedure TestAMessageBesideNullFieldsIsAnError;
+        procedure TestFinderAndDomainSearchBodies;
+        procedure TestCreditsWithASignOrASpaceIsAnError;
+        procedure TestAnActivityAnswerWithNoDaysIsMinusOne;
         procedure TestAFileStatusNeedsAKnownField;
         procedure TestResultsThatMustStayResults;
         procedure TestTheBatchAllErrorCarriesTheStatusAndTheBody;
@@ -58,6 +61,10 @@ type
         procedure TestAnIpv6BaseUrlStaysAHost;
         procedure TestADownloadReplacesAFileAlreadyThere;
         procedure TestAFailedReplaceKeepsWhatWasThere;
+        procedure TestTheFoldCoversWhatAnEchoChanges;
+        procedure TestMoreInvisibleCodePointsAreRefused;
+        procedure TestAShortMessageWithAnAngleBracketIsKept;
+        procedure TestALongJsonBodyIsNotCalledInvalid;
     end;
 
 implementation
@@ -72,7 +79,7 @@ const
         'ZbBulkValidationResultFetch', 'ZbAiScoringResultFetch', 'ZbEmailFinderResultFetch',
         'ZbDomainSearchResultFetch', 'ZbWarmupDownloadSeeds', 'ZbWarmupDownloadStatistics'
     );
-    NO_RESULT_NAMES: array[0..28] of String = (
+    NO_RESULT_NAMES: array[0..39] of String = (
         'ZbBulkValidationFileSubmit', 'ZbAiScoringFileSubmit', 'ZbBulkValidationResultDelete',
         'ZbAiScoringResultDelete', 'ZbBulkValidationFileStatusCheck', 'ZbAiScoringFileStatusCheck',
         'ZbEmailFinderFileStatus', 'ZbDomainSearchFileStatus', 'ZbValidateS3File', 'ZbScoreS3File',
@@ -80,8 +87,16 @@ const
         'ZbEmailFinderSFTPFile', 'ZbDomainSearchSFTPFile', 'ZbExportS3File', 'ZbExportSFTPFile',
         'ZbSendEvaluatedFile', 'ZbBatchValidateEmails', 'ZbActivityData', 'ZbScoreEmail',
         'ZbScoreEmailPost', 'ZbGetApiUsage', 'ZbSendEmailFinderFile', 'ZbSendDomainSearchFile',
-        'ZbSendListEvaluatorFile', 'ZbEmailFinderResultDelete', 'ZbDomainSearchResultDelete'
+        'ZbSendListEvaluatorFile', 'ZbEmailFinderResultDelete', 'ZbDomainSearchResultDelete',
+        'ZbFindEmailByDomain4', 'ZbFindEmailByDomain3', 'ZbFindEmailByDomain2',
+        'ZbFindEmailByCompanyName4', 'ZbFindEmailByCompanyName3', 'ZbFindEmailByCompanyName2',
+        'ZbDomainSearchByDomain', 'ZbDomainSearchByCompanyName', 'ZbFindEmail4', 'ZbFindEmail3',
+        'ZbDomainSearch'
     );
+    { The finder and domain-search calls: a message-only answer is an error, a
+      body of nulls with no message is a result. }
+    FINDER_FIRST = 29;
+    FINDER_LAST = 39;
     { The calls of the family that read a file status. }
     STATUS_FIRST = 4;
     STATUS_LAST = 7;
@@ -427,6 +442,17 @@ begin
             26: ZbSendListEvaluatorFile('a', 1);
             27: ZbEmailFinderResultDelete('fid');
             28: ZbDomainSearchResultDelete('fid');
+            29: ZbFindEmailByDomain('example.com', 'A', 'B', 'C');
+            30: ZbFindEmailByDomain('example.com', 'A', 'C');
+            31: ZbFindEmailByDomain('example.com', 'A');
+            32: ZbFindEmailByCompanyName('Example', 'A', 'B', 'C');
+            33: ZbFindEmailByCompanyName('Example', 'A', 'C');
+            34: ZbFindEmailByCompanyName('Example', 'A');
+            35: ZbDomainSearchByDomain('example.com');
+            36: ZbDomainSearchByCompanyName('Example');
+            37: ZbFindEmail('example.com', 'A', 'B', 'C');
+            38: ZbFindEmail('example.com', 'A', 'C');
+            39: ZbDomainSearch('example.com');
         end;
     except
         on E: ZbException do
@@ -488,10 +514,82 @@ begin
             NoResultCall(Index, '{"message":"m-text","file_id":null}', Text, Status));
         AssertEquals(NO_RESULT_NAMES[Index] + ' status', 200, Status);
         AssertTrue(NO_RESULT_NAMES[Index] + ': ' + Text, Pos('m-text', Text) > 0);
-        AssertTrue(NO_RESULT_NAMES[Index] + ' took nothing but nulls',
-            NoResultCall(Index, '{"file_id":null,"file_name":null,"success":null}', Text, Status));
-        AssertEquals(NO_RESULT_NAMES[Index] + ' status for nulls', 200, Status);
+        if (Index < FINDER_FIRST) or (Index > FINDER_LAST) then
+        begin
+            AssertTrue(NO_RESULT_NAMES[Index] + ' took nothing but nulls',
+                NoResultCall(Index, '{"file_id":null,"file_name":null,"success":null}', Text, Status));
+            AssertEquals(NO_RESULT_NAMES[Index] + ' status for nulls', 200, Status);
+        end;
     end;
+end;
+
+procedure TTestBehaviour.TestFinderAndDomainSearchBodies;
+var
+    Index: Integer;
+    Text: String;
+    Status: Integer;
+begin
+    Text := '';
+    for Index := FINDER_FIRST to FINDER_LAST do
+    begin
+        { A message beside fields that are all null: the message is the text. }
+        AssertTrue(NO_RESULT_NAMES[Index] + ' took a message beside a null domain',
+            NoResultCall(Index, '{"message":"Invalid domain","domain":null}', Text, Status));
+        AssertEquals(NO_RESULT_NAMES[Index] + ' status', 200, Status);
+        AssertTrue(NO_RESULT_NAMES[Index] + ' text: ' + Text, Pos('Invalid domain', Text) > 0);
+        AssertTrue(NO_RESULT_NAMES[Index] + ' took a message beside several nulls',
+            NoResultCall(Index, '{"Message":"Invalid domain","domain":null,"email":null,"format":null}', Text, Status));
+        AssertEquals(NO_RESULT_NAMES[Index] + ' status for several nulls', 200, Status);
+        { No string message: the fixed sentence. }
+        AssertTrue(NO_RESULT_NAMES[Index] + ' took a null message beside a null domain',
+            NoResultCall(Index, '{"message":null,"domain":null}', Text, Status));
+        AssertEquals(NO_RESULT_NAMES[Index] + ' text for a null message',
+            'Http Error: ZeroBounce returned an unexpected JSON response.', Text);
+        AssertTrue(NO_RESULT_NAMES[Index] + ' took {}', NoResultCall(Index, '{}', Text, Status));
+        AssertEquals(NO_RESULT_NAMES[Index] + ' status for {}', 200, Status);
+        AssertEquals(NO_RESULT_NAMES[Index] + ' text for {}',
+            'Http Error: ZeroBounce returned an unexpected JSON response.', Text);
+        { A null domain with no message, and a body with a non-null finder
+          field, stay results. }
+        AssertFalse(NO_RESULT_NAMES[Index] + ' refused {"domain":null}: ' + Text,
+            NoResultCall(Index, '{"domain":null}', Text, Status));
+        AssertFalse(NO_RESULT_NAMES[Index] + ' refused a result with an empty email: ' + Text,
+            NoResultCall(Index, '{"email":"","domain":"example.com","failure_reason":"not found"}', Text, Status));
+        AssertFalse(NO_RESULT_NAMES[Index] + ' refused a message beside a non-null field: ' + Text,
+            NoResultCall(Index, '{"message":"m-text","domain":"example.com"}', Text, Status));
+    end;
+end;
+
+procedure TTestBehaviour.TestCreditsWithASignOrASpaceIsAnError;
+const
+    BODIES: array[0..1] of String = ('{"Credits":"+5"}', '{"Credits":" 5"}');
+var
+    I: Integer;
+    Raised: Boolean;
+begin
+    for I := Low(BODIES) to High(BODIES) do
+    begin
+        ZBMockResponse(200, BODIES[I], 'application/json');
+        Raised := False;
+        try
+            ZbGetCredits;
+        except
+            on E: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(BODIES[I] + ' status', 200, E.StatusCode);
+            end;
+        end;
+        AssertTrue(BODIES[I] + ' was taken as a count', Raised);
+    end;
+end;
+
+procedure TTestBehaviour.TestAnActivityAnswerWithNoDaysIsMinusOne;
+begin
+    ZBMockResponse(200, '{"found":false,"active_in_days":null}', 'application/json');
+    AssertEquals(-1, ZbActivityData('a@example.com'));
+    ZBMockResponse(200, '{"found":true,"active_in_days":"12"}', 'application/json');
+    AssertEquals(12, ZbActivityData('a@example.com'));
 end;
 
 procedure TTestBehaviour.TestAFileStatusNeedsAKnownField;
@@ -987,6 +1085,152 @@ begin
     end;
 end;
 
+procedure TTestBehaviour.TestTheFoldCoversWhatAnEchoChanges;
+var
+    Password: String;
+
+    { The message and the payload of the exception a failed SMTP login raises
+      when the server echoes Echo back. }
+    procedure Echoed(const Label_, Secret, Echo: String);
+    var
+        Raised: Boolean;
+    begin
+        Password := Secret;
+        ZBMockResponse(500, 'login failed for ' + Echo + ' on the server', 'text/plain');
+        Raised := False;
+        try
+            ZbWarmupTestSmtpConfiguration('s@example.com', 'smtpuser', Secret, 'smtp.example.com', 587);
+        except
+            on E: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(Label_ + ': echo in message', 0, Pos(Echo, E.Message));
+                AssertEquals(Label_ + ': echo in payload', 0, Pos(Echo, E.Payload));
+            end;
+        end;
+        AssertTrue(Label_ + ': raised', Raised);
+    end;
+
+begin
+    ZbWarmupInitialize('warmup-key-fold');
+    { The SMTP password cases: dotless i upper-cased, the micro sign upper-cased
+      to Greek capital mu, and U+0130 echoed as i plus U+0307. }
+    Echoed('dotless i', 'p' + #$C4#$B1 + 'ssword1', 'PISSWORD1');
+    Echoed('micro sign', #$C2#$B5 + 'pass-word-2', #$CE#$9C + 'PASS-WORD-2');
+    Echoed('U+0130 as i and a dot', 'pass' + #$C4#$B0 + 'word-3', 'PASSi' + #$CC#$87 + 'WORD-3');
+    Echoed('U+0130 as i', 'pass' + #$C4#$B0 + 'word-4', 'passiword-4');
+    Echoed('U+0130 upper-cased by the server', 'pass' + #$C4#$B0 + 'word-5', 'PASS' + #$C4#$B0 + 'WORD-5');
+    Echoed('sharp s as SS', 'stra' + #$C3#$9F + 'e-pass-6', 'STRASSE-PASS-6');
+    { Masking itself: the other letters the table now has. }
+    { U+0180 (lower) and U+0243 (its capital). }
+    AssertEquals('x REDACTED y', ZbMaskSecret('x pw' + #$C9#$83 + 'k y', 'pw' + #$C6#$80 + 'k'));
+    { U+01C4 / U+01C5 / U+01C6 are one letter to the fold. }
+    AssertEquals('REDACTED', ZbMaskSecret(#$C7#$84 + 'ab', #$C7#$86 + 'ab'));
+    AssertEquals('REDACTED', ZbMaskSecret(#$C7#$85 + 'ab', #$C7#$86 + 'ab'));
+    AssertEquals('REDACTED', ZbMaskSecret(#$C7#$86 + 'ab', #$C7#$84 + 'ab'));
+    { Armenian: capital U+0531 against small U+0561, and U+0556 against U+0586. }
+    AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D4#$B1 + #$D5#$96 + '-9 b', #$D5#$A1 + #$D6#$86 + '-9'));
+    AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D5#$A1 + #$D6#$86 + '-9 b', #$D4#$B1 + #$D5#$96 + '-9'));
+    { The dot above is dropped only after an i. }
+    AssertEquals('REDACTED' + #$CC#$87 + #$CC#$87, ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
+    AssertEquals('REDACTED-after', ZbMaskSecret('PASSi' + #$CC#$87 + '-after', 'pass' + #$C4#$B0));
+    AssertEquals('REDACTED', ZbMaskSecret('i' + #$CC#$87, 'i'));
+    { Text that has no echo stays as it was. }
+    AssertEquals('p' + #$C4#$B1 + 'ssword', ZbMaskSecret('p' + #$C4#$B1 + 'ssword', 'unrelated-1'));
+end;
+
+procedure TTestBehaviour.TestMoreInvisibleCodePointsAreRefused;
+const
+    REFUSED = 'api_key has surrounding whitespace or control characters';
+    HIDDEN: array[0..9] of String = (
+        'ab' + #$D8#$80 + 'cd',          { U+0600 }
+        'ab' + #$D8#$85 + 'cd',          { U+0605 }
+        'ab' + #$DB#$9D + 'cd',          { U+06DD }
+        'ab' + #$DC#$8F + 'cd',          { U+070F }
+        'ab' + #$E0#$A2#$90 + 'cd',      { U+0890 }
+        'ab' + #$E0#$A2#$91 + 'cd',      { U+0891 }
+        'ab' + #$E0#$A3#$A2 + 'cd',      { U+08E2 }
+        'ab' + #$F0#$91#$82#$BD + 'cd',  { U+110BD }
+        #$E0#$A2#$90 + 'abcd',
+        'abcd' + #$D8#$80);
+var
+    I: Integer;
+    Raised: Boolean;
+begin
+    ZBInitialize('keep-this-key');
+    for I := Low(HIDDEN) to High(HIDDEN) do
+    begin
+        Raised := False;
+        try
+            ZBInitialize(HIDDEN[I]);
+        except
+            on E: ZbException do
+            begin
+                Raised := True;
+                AssertEquals(REFUSED, E.Message);
+            end;
+        end;
+        AssertTrue(Format('key %d was accepted', [I]), Raised);
+        AssertEquals('the key already set stays', 'keep-this-key', ZbApiKey);
+    end;
+    { Letters of those scripts are still fine. }
+    ZBInitialize('ab' + #$D8#$A7 + 'cd');
+    AssertEquals('ab' + #$D8#$A7 + 'cd', ZbApiKey);
+end;
+
+procedure TTestBehaviour.TestAShortMessageWithAnAngleBracketIsKept;
+var
+    Response: TZbRequestResponse;
+    Error: ZbException;
+begin
+    Response := Default(TZbRequestResponse);
+    Response.StatusCode := 400;
+    Response.Payload := '{"error":"unrelated"}';
+    Error := ZbException.FromResponse('Invalid email <a@b.c>', Response);
+    try
+        AssertEquals('Invalid email <a@b.c>', Error.Message);
+    finally
+        Error.Free;
+    end;
+    { Dropped all the same: 300 characters or more, and Access violation. }
+    Error := ZbException.FromResponse('<' + StringOfChar('x', 299), Response);
+    try
+        AssertTrue('a long message is dropped: ' + Error.Message, Pos('xxxxxxxx', Error.Message) = 0);
+    finally
+        Error.Free;
+    end;
+    Error := ZbException.FromResponse('Access violation at <0x0>', Response);
+    try
+        AssertEquals(0, Pos('Access violation', Error.Message));
+    finally
+        Error.Free;
+    end;
+end;
+
+procedure TTestBehaviour.TestALongJsonBodyIsNotCalledInvalid;
+var
+    Response: TZbRequestResponse;
+    Error: ZbException;
+begin
+    Response := Default(TZbRequestResponse);
+    Response.StatusCode := 500;
+    Response.Payload := '{"detail":"' + StringOfChar('x', 1100) + '"}';
+    Error := ZbException.FromResponse('', Response);
+    try
+        AssertEquals('ZeroBounce returned an error response.', Error.Message);
+    finally
+        Error.Free;
+    end;
+    { Only that case: a long body that is not JSON keeps its sentence. }
+    Response.Payload := StringOfChar('y', 1100);
+    Error := ZbException.FromResponse('', Response);
+    try
+        AssertEquals('ZeroBounce returned a response that is not valid JSON.', Error.Message);
+    finally
+        Error.Free;
+    end;
+end;
+
 procedure TTestBehaviour.TestAFailedReplaceKeepsWhatWasThere;
 var
     Raised: Boolean;
@@ -1006,8 +1250,13 @@ begin
         try
             ZbWarmupDownloadSeeds(SavePath);
         except
-            on E: Exception do
+            { Not an EWriteError: every failure of the SDK is a ZbException. }
+            on E: ZbException do
+            begin
                 Raised := True;
+                AssertEquals('Could not write ' + SavePath, E.Message);
+                AssertEquals('status', 0, E.StatusCode);
+            end;
         end;
         AssertTrue('replacing a directory should fail', Raised);
         AssertTrue('what was there is gone', FileExists(Marker));

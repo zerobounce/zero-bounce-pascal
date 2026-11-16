@@ -185,6 +185,7 @@ implementation
         ActiveInDaysString: String;
         response: TZbRequestResponse;
         error: ZbException;
+        Json: TZbJson;
     begin
         UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_ACTIVITY_DATA);
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
@@ -193,13 +194,18 @@ implementation
         ZbRaiseIfNoResult(response);
 
         // attempt json parsing
+        Json := nil;
         try
-            ActiveInDaysString := TZbJSon.Create(response.Payload).GetString('active_in_days');
-            if ActiveInDaysString <> '' then
-                Result := StrToInt(ActiveInDaysString)
-            else
-                Result := -1;
-
+            try
+                Json := TZbJSon.Create(response.Payload);
+                ActiveInDaysString := Json.GetString('active_in_days');
+                if ActiveInDaysString <> '' then
+                    Result := StrToInt(ActiveInDaysString)
+                else
+                    Result := -1;
+            finally
+                Json.Free;
+            end;
         except on e: Exception do
             begin
                error := ZbException.FromResponse(e.Message, response);

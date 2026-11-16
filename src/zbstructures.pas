@@ -206,8 +206,9 @@ function ZbGetFileJsonIndicatesError(const JsonContent: string): Boolean;
   LIVE: an invalid or drained key answers validate, activity and getapiusage
   with {"error": ...}, and the filters with {"Error": ...}, on an HTTP 200. *)
 function ZbErrorOnlyMessage(const Body: String): String;
-{ Whether a JSON body is nothing but a message: an object with no "success"
-  field whose keys are all message keys, at least one a non-empty string. }
+(* Whether a JSON body is nothing but a message: an object with no "success"
+  field that is empty, or has a message key (of any value) and no other key
+  that is not null. {"domain":null} with no message is not. *)
 function ZbMessageOnlyBody(const Body: String): Boolean;
 (* For a call whose result is never a bare message - the email finder and
   domain search - raises on a message-only body. LIVE: guessformat answers an
@@ -337,7 +338,7 @@ implementation
     var
         J: TZbJson;
         I, K: Integer;
-        Known: Boolean;
+        Known, HasMessage: Boolean;
     begin
         Result := False;
         J := ZbObjectWithoutSuccess(Body);
@@ -345,20 +346,22 @@ implementation
             Exit;
         try
             { Message-only is defined by the keys alone: a message of any
-              value (text, blank, null or a list) is an error (standard E3). }
-            Result := J.KeyCount > 0;
+              value (text, blank, null or a list) is an error (standard E3).
+              Any other key has to be null, and the object has to be empty or
+              carry a message: a null domain alone is a result. }
+            HasMessage := False;
             for I := 0 to J.KeyCount - 1 do
             begin
                 Known := False;
                 for K := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
                     if J.KeyAt(I) = MESSAGE_KEYS[K] then
                         Known := True;
-                if not Known then
-                begin
-                    Result := False;
+                if Known then
+                    HasMessage := True
+                else if not J.IsNullValue(J.KeyAt(I)) then
                     Exit;
-                end;
             end;
+            Result := (J.KeyCount = 0) or HasMessage;
         finally
             J.Free;
         end;
@@ -627,6 +630,8 @@ implementation
         finally
             J.Free;
         end;
+        if Text = '' then
+            Text := 'ZeroBounce returned an unexpected JSON response.';
         Error := ZbException.FromResponse(Text, Response);
         Error.MarkHttpError;
         raise Error;

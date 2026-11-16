@@ -300,6 +300,8 @@ const
 
 var
     ZbTlsVerifier: TZbTlsVerifier = nil;
+    { Guards the one-time creation of ZbTlsVerifier: requests run on any thread. }
+    ZbTlsVerifierLock: TRTLCriticalSection;
 
 threadvar
     { Whether the server closed the connection of this thread's request. }
@@ -562,8 +564,14 @@ end;
 
 procedure ZbUseVerifiedTls(Client: TFPHTTPClient);
 begin
-    if ZbTlsVerifier = nil then
-        ZbTlsVerifier := TZbTlsVerifier.Create;
+    { Created once: two first requests on two threads must not each make one. }
+    EnterCriticalSection(ZbTlsVerifierLock);
+    try
+        if ZbTlsVerifier = nil then
+            ZbTlsVerifier := TZbTlsVerifier.Create;
+    finally
+        LeaveCriticalSection(ZbTlsVerifierLock);
+    end;
     Client.OnGetSocketHandler := ZbTlsVerifier.GetSocketHandler;
     ZbConnectionClosed := False;
 end;
@@ -759,8 +767,10 @@ end;
         begin
             if (Pos('Access denied', Trimmed) > 0) and (Pos('cloudflare_error', Trimmed) > 0) then
                 Exit('Error 1020: Access denied');
+            { Too long to quote; it may well be valid JSON, so it is not
+              called invalid. }
             if Length(Trimmed) > 1000 then
-                Exit('ZeroBounce returned a response that is not valid JSON.');
+                Exit('ZeroBounce returned an error response.');
             Exit(Trimmed);
         end;
         if Length(Trimmed) > 1000 then
@@ -821,7 +831,6 @@ end;
         StatusCode := response.StatusCode;
         if (AMessage <> '') and (Length(AMessage) < 300) and
            (Pos('Access violation', AMessage) = 0) and
-           (Pos('<', AMessage) = 0) and (Pos('<<<', AMessage) = 0) and
            (Pos(Copy(Trim(response.Payload), 1, 24), AMessage) = 0) then
             NewMessage := AMessage
         else
@@ -1221,6 +1230,53 @@ end;
             $400..$40F: Result := CodePoint + 80;
             $212A: Result := Ord('k');
             $212B: Result := $E5;
+            { The dotless i folds to i, as the capital dotted I does; the micro
+              sign folds to Greek mu (what an upper-casing echo makes of it). }
+            $131: Result := Ord('i');
+            $B5: Result := $3BC;
+            { Latin Extended-B: letters that lower-case by one, then the ones
+              that move by another distance. U+01C4 / U+01C5 / U+01C6 (and the
+              other two digraph triples) all fold to the small letter. }
+            $182, $184, $187, $18B, $191, $198, $1A0, $1A2, $1A4, $1A7, $1AC,
+            $1AF, $1B3, $1B5, $1B8, $1BC, $1C5, $1C8, $1CB, $1CD, $1CF, $1D1,
+            $1D3, $1D5, $1D7, $1D9, $1DB, $1DE, $1E0, $1E2, $1E4, $1E6, $1E8,
+            $1EA, $1EC, $1EE, $1F2, $1F4, $1F8, $1FA, $1FC, $1FE, $200, $202,
+            $204, $206, $208, $20A, $20C, $20E, $210, $212, $214, $216, $218,
+            $21A, $21C, $21E, $222, $224, $226, $228, $22A, $22C, $22E, $230,
+            $232, $23B, $241, $246, $248, $24A, $24C, $24E:
+                Result := CodePoint + 1;
+            $1C4, $1C7, $1CA, $1F1:
+                Result := CodePoint + 2;
+            $243: Result := $180;
+            $23D: Result := $19A;
+            $220: Result := $19E;
+            $1F6: Result := $195;
+            $1F7: Result := $1BF;
+            $244: Result := $289;
+            $245: Result := $28C;
+            $18E: Result := $1DD;
+            $18F: Result := $259;
+            $190: Result := $25B;
+            $189, $18A, $193:
+                Result := CodePoint + 205;
+            $186: Result := $254;
+            $194: Result := $263;
+            $197: Result := $268;
+            $181: Result := $253;
+            $196, $19C:
+                Result := CodePoint + 211;
+            $19D: Result := $272;
+            $19F: Result := $275;
+            $1B1, $1B2:
+                Result := CodePoint + 217;
+            $1A6, $1A9, $1AE:
+                Result := CodePoint + 218;
+            $1B7: Result := $292;
+            $23E: Result := $2C66;
+            $23A: Result := $2C65;
+            { Armenian capitals. }
+            $531..$556:
+                Result := CodePoint + 48;
         end;
     end;
 
@@ -1346,6 +1402,16 @@ end;
         while I <= Length(Text) do
         begin
             ZbNextCharacter(Text, I, CodePoint, Len);
+            { A combining dot above that follows an i is what the full fold of
+              U+0130 leaves behind ('i' + U+0307): drop it, and let the i's span
+              cover it, so the echo is masked whole. A secret holding U+0130
+              folds to a plain i, which this then matches either way. }
+            if (CodePoint = $307) and (Used > 0) and (Folded[Used] = 'i') then
+            begin
+                Spans[2 * Used - 1] := I + Len - 1;
+                Inc(I, Len);
+                Continue;
+            end;
             if CodePoint < 0 then
                 Piece := Copy(Text, I, Len)
             else
@@ -1535,9 +1601,9 @@ end;
     function ZbIsHiddenCodePoint(CodePoint: Integer): Boolean;
     begin
         case CodePoint of
-            $7F..$A0, $AD, $34F, $61C, $115F, $1160, $1680, $17B4, $17B5, $180B..$180F,
+            $7F..$A0, $AD, $34F, $600..$605, $61C, $6DD, $70F, $890, $891, $8E2, $115F, $1160, $1680, $17B4, $17B5, $180B..$180F,
             $2000..$200F, $2028..$202F, $205F..$206F, $3000, $3164, $FE00..$FE0F, $FEFF,
-            $FFA0, $FFF9..$FFFB, $1BCA0..$1BCA3, $1D173..$1D17A, $E0000..$E0FFF:
+            $FFA0, $FFF9..$FFFB, $110BD, $1BCA0..$1BCA3, $1D173..$1D17A, $E0000..$E0FFF:
                 Result := True;
         else
             Result := False;
@@ -1713,6 +1779,14 @@ end;
         ));
     end;
 
+    { What a request with no mock installed leaves in ZbLastRequestBody and
+      ZbLastRequestHeader: nothing, so a mock's body does not linger. }
+    procedure ZbClearLastRequest;
+    begin
+        ZbLastRequestBody := '';
+        ZbLastRequestHeader := '';
+    end;
+
     {$IFDEF FPC}
     { A body shorter than its Content-Length was cut off: the connection closed
       part-way through. fphttpclient hands back whatever arrived without
@@ -1721,9 +1795,15 @@ end;
     procedure ZbRequireCompleteBody(Client: TFPHTTPClient; Received: Int64);
     var
         Expected: Int64;
+        Encoding: String;
     begin
         ZbLastConnectTimeoutMs := Client.ConnectTimeout;
         ZbLastReadTimeoutMs := Client.IOTimeout;
+        { fphttpclient does not decode a Content-Encoding, so a gzip body would
+          be taken for text (or saved as the file). Only "identity" is read. }
+        Encoding := Trim(Client.GetHeader(Client.ResponseHeaders, 'Content-Encoding'));
+        if (Encoding <> '') and (CompareText(Encoding, 'identity') <> 0) then
+            raise ZbException.Create('The response from ZeroBounce used a content encoding this client does not read.');
         { A chunked body ends with an empty chunk, after which fphttpclient
           reads no more. Reaching the end of the connection first means it was
           cut short mid-stream. }
@@ -1732,8 +1812,6 @@ end;
             raise ZbException.Create(Format(
                 'The response from ZeroBounce was cut short: the connection closed before the last chunk (%d bytes received)',
                 [Received]));
-        if Client.GetHeader(Client.ResponseHeaders, 'Content-Encoding') <> '' then
-            Exit;
         Expected := StrToInt64Def(Trim(Client.GetHeader(Client.ResponseHeaders, 'Content-Length')), -1);
         if (Expected < 0) or (Received >= Expected) then
             Exit;
@@ -1774,6 +1852,7 @@ end;
 		else
         begin
             Result.UrlCalled := url;
+            ZbClearLastRequest;
 
             {$IFDEF FPC}
             InitSSLInterface;
@@ -1861,6 +1940,7 @@ end;
         else
         begin
             Result.UrlCalled := url;
+            ZbClearLastRequest;
             {$IFDEF FPC}
             InitSSLInterface;
 
@@ -1987,11 +2067,18 @@ end;
     begin
         url := ZbCheckedUrl(url);
         ZbLastRequestMethod := Method;
-        ZbLastRequestBody := Body;
-        if HeaderName <> '' then
-            ZbLastRequestHeader := Concat(HeaderName, ': ', HeaderValue)
+        { The body and the header can carry a key: kept only for a test that
+          installed a mock, never left over from an earlier one. }
+        if ZbResponseMock.StatusCode <> 0 then
+        begin
+            ZbLastRequestBody := Body;
+            if HeaderName <> '' then
+                ZbLastRequestHeader := Concat(HeaderName, ': ', HeaderValue)
+            else
+                ZbLastRequestHeader := '';
+        end
         else
-            ZbLastRequestHeader := '';
+            ZbClearLastRequest;
 
         if ZbResponseMock.StatusCode <> 0 then
         begin
@@ -2090,7 +2177,11 @@ end;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         ZbLastRequestMethod := 'POST';
-        ZbLastRequestBody := FormBody;
+        { Kept only for a test that installed a mock (it carries the key). }
+        if ZbResponseMock.StatusCode <> 0 then
+            ZbLastRequestBody := FormBody
+        else
+            ZbClearLastRequest;
         if ZbResponseMock.StatusCode <> 0 then
         begin
             ZbResponseMock.UrlCalled := url;
@@ -2211,6 +2302,7 @@ end;
         else
         begin
             Result.UrlCalled := url;
+            ZbClearLastRequest;
             { No answer, no status: a refused connection is reported from
               here, before any of these is read. }
             Result.StatusCode := 0;
@@ -2314,10 +2406,14 @@ end;
 initialization
     ZbApiKey := '';
     ZbApiBaseURL := 'https://api.zerobounce.net/v2';
+    {$IFDEF FPC}
+    InitCriticalSection(ZbTlsVerifierLock);
+    {$ENDIF}
 
 {$IFDEF FPC}
 finalization
     FreeAndNil(ZbTlsVerifier);
+    DoneCriticalSection(ZbTlsVerifierLock);
 {$ENDIF}
 
 end.

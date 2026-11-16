@@ -428,6 +428,9 @@ procedure WriteFileReplacing(const DownloadPath, Content: String);
 var
     Handle: TFileStream;
     TempPath: String;
+    {$IFNDEF FPC}
+    Bytes: TBytes;
+    {$ENDIF}
 begin
     TempPath := Format('%s.%d-%d.part',
         [DownloadPath, WarmupProcessId, WarmupNextTempId]);
@@ -435,7 +438,16 @@ begin
         Handle := TFileStream.Create(TempPath, fmCreate);
         try
             if Length(Content) > 0 then
+            begin
+                {$IFNDEF FPC}
+                { A Delphi string is UTF-16: Length(Content) bytes is half of it. }
+                Bytes := TEncoding.UTF8.GetBytes(Content);
+                if Length(Bytes) > 0 then
+                    Handle.WriteBuffer(Bytes[0], Length(Bytes));
+                {$ELSE}
                 Handle.WriteBuffer(Content[1], Length(Content));
+                {$ENDIF}
+            end;
         finally
             Handle.Free;
         end;
@@ -446,7 +458,7 @@ begin
     if not WarmupReplaceFile(TempPath, DownloadPath) then
     begin
         DeleteFile(TempPath);
-        raise EWriteError.CreateFmt('Could not write %s', [DownloadPath]);
+        raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
     end;
 end;
 
