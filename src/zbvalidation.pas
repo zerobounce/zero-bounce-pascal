@@ -278,13 +278,19 @@ implementation
         UrlToAccess := Concat(ZbBaseUrl(ZbApiBaseURL), ENDPOINT_BATCH_VALIDATE);
         JsonBody := ZbBatchRequestBodyFromEmails(Emails, Options);
         response := ZBPostRequest(UrlToAccess, JsonBody);
+        ZbRaiseIfNoResult(response);
 
         try
             Result := ZbBatchValidationFromJson(response.Payload);
             if Length(Result.Errors) > 0 then
                 for errorIndex := 0 to High(Result.Errors) do
                     if Result.Errors[errorIndex].EmailAddress = 'all' then
-                        raise ZbException.Create(Result.Errors[errorIndex].Error);
+                    begin
+                        { From the response: the status is 200 and the body
+                          stays on the exception, with the key masked. }
+                        error := ZbException.FromResponse(Result.Errors[errorIndex].Error, response);
+                        raise error;
+                    end;
         except
             on e: ZbException do
                 raise;

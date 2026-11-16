@@ -215,6 +215,23 @@ function ZbMessageOnlyBody(const Body: String): Boolean;
   validate, which answers a repeated greylist_processing request with
   {"Message": "Greylist validation still in progress..."}, a result. *)
 procedure ZbRaiseIfMessageOnly(const Response: TZbRequestResponse);
+(* For a call that answers with an object of fields (the bulk file calls,
+  validatebatch, activity, scoring and getapiusage): raises a ZbException
+  with the response's status when an HTTP 200 body has nothing but a message
+  (message, Message, error, error_message, Error or detail, of any value), is
+  an empty object, or has a message beside fields that are all null. The text
+  is the message when it is a string, else
+  'ZeroBounce returned an unexpected JSON response.'. A body that is not a
+  JSON object is left to the parser of the call. Not for validate, which
+  answers a greylist retry with {"Message": "..."}, a result; nor for the
+  calls the API documents with no such answer. *)
+procedure ZbRaiseIfNoResult(const Response: TZbRequestResponse);
+(* As ZbRaiseIfNoResult, for a file status: the body also has to carry one
+  field the status has (success, error_reason, file_id, file_name,
+  upload_date, file_status, complete_percentage, file_phase_2_status or
+  return_url) that is not null. {"foo": 1} is not a status; {"file_status":
+  "Processing"} is. *)
+procedure ZbRaiseIfNoFileStatus(const Response: TZbRequestResponse);
 { For a call that hands its raw JSON body to the caller: raises a ZbException
   with the response's status unless the body is one strict JSON value
   (ZbIsStrictJson). A proxy's text, a CSV labelled
@@ -613,6 +630,109 @@ implementation
         Error := ZbException.FromResponse(Text, Response);
         Error.MarkHttpError;
         raise Error;
+    end;
+
+    function ZbIsMessageKey(const Key: String): Boolean;
+    const
+        MESSAGE_KEYS: array[0..5] of String = ('Message', 'message', 'error', 'error_message', 'Error', 'detail');
+    var
+        I: Integer;
+    begin
+        Result := False;
+        for I := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
+            if Key = MESSAGE_KEYS[I] then
+                Result := True;
+    end;
+
+    { The first message key holding a string (or a list of strings), or ''. }
+    function ZbBodyMessage(J: TZbJson): String;
+    const
+        MESSAGE_KEYS: array[0..5] of String = ('Message', 'message', 'error', 'error_message', 'Error', 'detail');
+    var
+        I: Integer;
+    begin
+        Result := '';
+        for I := Low(MESSAGE_KEYS) to High(MESSAGE_KEYS) do
+            if Result = '' then
+                try
+                    Result := Trim(J.GetMessageText(MESSAGE_KEYS[I]));
+                except
+                    on Exception do
+                        Result := '';
+                end;
+    end;
+
+    { The parsed object, or nil when the body is not a JSON object (the typed
+      parser of the call then says so). }
+    function ZbParsedObject(const Body: String): TZbJson;
+    begin
+        Result := nil;
+        try
+            Result := TZbJson.Create(Body);
+        except
+            on Exception do
+                Result := nil;
+        end;
+        if (Result <> nil) and (Result.FJSONObject = nil) then
+            FreeAndNil(Result);
+    end;
+
+    procedure ZbRaiseNoResult(J: TZbJson; const Response: TZbRequestResponse);
+    var
+        Text: String;
+        Error: ZbException;
+    begin
+        Text := ZbBodyMessage(J);
+        if Text = '' then
+            Text := 'ZeroBounce returned an unexpected JSON response.';
+        Error := ZbException.FromResponse(Text, Response);
+        Error.MarkHttpError;
+        raise Error;
+    end;
+
+    procedure ZbRaiseIfNoResult(const Response: TZbRequestResponse);
+    var
+        J: TZbJson;
+        I: Integer;
+        Found: Boolean;
+    begin
+        J := ZbParsedObject(Response.Payload);
+        if J = nil then
+            Exit;
+        try
+            Found := False;
+            for I := 0 to J.KeyCount - 1 do
+                if not ZbIsMessageKey(J.KeyAt(I)) and not J.IsNullValue(J.KeyAt(I)) then
+                    Found := True;
+            if not Found then
+                ZbRaiseNoResult(J, Response);
+        finally
+            J.Free;
+        end;
+    end;
+
+    procedure ZbRaiseIfNoFileStatus(const Response: TZbRequestResponse);
+    const
+        STATUS_KEYS: array[0..8] of String = ('success', 'error_reason', 'file_id', 'file_name',
+            'upload_date', 'file_status', 'complete_percentage', 'file_phase_2_status', 'return_url');
+    var
+        J: TZbJson;
+        I: Integer;
+        Found: Boolean;
+    begin
+        J := ZbParsedObject(Response.Payload);
+        if J = nil then
+            Exit;
+        try
+            Found := False;
+            for I := Low(STATUS_KEYS) to High(STATUS_KEYS) do
+                if not J.IsNullValue(STATUS_KEYS[I]) then
+                    Found := True;
+            if not Found then
+                ZbRaiseNoResult(J, Response);
+        finally
+            J.Free;
+        end;
     end;
 
     { Field types are part of the response shape (standard E7): a field that

@@ -114,6 +114,9 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '&end_date=', DateAuxString);
 
         response := ZBGetRequest(UrlToAccess);
+        { An empty object or a message alone is not a usage report, whatever
+          zeros it reads as. }
+        ZbRaiseIfNoResult(response);
 
         try
             ApiUsage := ZbApiUsageFromJson(response.Payload);
@@ -138,6 +141,7 @@ implementation
     var
         error: ZbException;
     begin
+        ZbRaiseIfNoResult(response);
         try
             Result := TZbScoreEmailResultFromJson(response.Payload);
         except on e: Exception do
@@ -186,6 +190,7 @@ implementation
         UrlToAccess := Concat(UrlToAccess, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&email=', EncodeParam(Email));
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfNoResult(response);
 
         // attempt json parsing
         try

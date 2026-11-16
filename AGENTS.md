@@ -5,10 +5,11 @@
 - `src/zbutility.pas`: the HTTP layer, the base URLs and the response mock. `ZBGetRequest` / `ZBPostRequest` are the originals; `ZBSendRequest` takes an explicit method and an optional body, which the form-encoded bulk jobs and the Inbox Placement Tester's PUT and DELETE need. `ZBFormPostRequest` wraps it.
 - `src/zbvalidation.pas`: single and batch validation, plus `TZbValidateOptions`.
 - `src/zbbulk.pas`: the multipart bulk uploads, their status checks and `getfile`.
-- `src/zbpriority3.pas`: real-time AI scoring, the filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester.
+- `src/zbgeneric.pas`: credits, API usage, activity data, real-time AI scoring (`ZbScoreEmail`, `ZbScoreEmailPost`), the email finder and the domain search.
+- `src/zbpriority3.pas`: the bulk email finder and domain search, the filters, the list evaluator, the S3 / SFTP bulk jobs and the Inbox Placement Tester.
 - `src/zbwarmup.pas`: the Warmup API. A separate product on its own host with its own team-scoped key and an `API-Key` header, so it has its own `ZbWarmupInitialize` and never touches `ZbApiKey`.
 - `src/zbstructures.pas`: the records and their JSON parsers.
-- `tests/testpriority3.pas`, `tests/testbulkjobs.pas`, `tests/testwarmup.pas`: the offline suites for the above. Every request is answered by `ZbMockResponse`.
+- `tests/testpriority3.pas`, `tests/testbulkjobs.pas`, `tests/testwarmup.pas`, `tests/testoffline.pas`: the offline suites for the above. Their requests are answered by `ZbMockResponse`; `testoffline.pas` points the base URLs at a loopback stub server instead and covers transport, error-body and secret-redaction cases across the units.
 - `live/live_api.lpr`: the opt-in live suite. Its own program, outside `tests/`, so the offline suite never builds or runs it.
 
 ## Build and test

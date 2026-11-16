@@ -143,7 +143,21 @@ procedure Register;
 implementation
 
 uses
-    Math, ZbStructures;
+    Math, ZbStructures
+    {$IFNDEF FPC}{$IFNDEF MSWINDOWS}, Posix.Unistd{$ENDIF}{$ENDIF};
+
+{$IFDEF MSWINDOWS}
+{ Declared here rather than taken from the Windows unit, whose GetProcessId
+  takes a handle and would hide FPC's own GetProcessID. }
+function ZbMoveFileExW(lpExistingFileName, lpNewFileName: PWideChar; dwFlags: Cardinal): LongBool;
+    stdcall; external 'kernel32.dll' name 'MoveFileExW';
+{$IFNDEF FPC}
+function ZbGetCurrentProcessId: Cardinal; stdcall; external 'kernel32.dll' name 'GetCurrentProcessId';
+{$ENDIF}
+const
+    ZB_MOVEFILE_REPLACE_EXISTING = 1;
+    ZB_MOVEFILE_WRITE_THROUGH = 8;
+{$ENDIF}
 
 procedure ZbWarmupInitialize(ApiKey: String);
 begin
@@ -365,6 +379,46 @@ end;
 var
     WarmupTempCounter: LongInt = 0;
 
+{ The process id and a counter step for the name of a temporary file. FPC has
+  GetProcessID and InterLockedIncrement; Delphi spells them differently. }
+function WarmupProcessId: Cardinal;
+begin
+    {$IFDEF FPC}
+    Result := GetProcessID;
+    {$ELSE}
+    {$IFDEF MSWINDOWS}
+    Result := ZbGetCurrentProcessId;
+    {$ELSE}
+    Result := getpid;
+    {$ENDIF}
+    {$ENDIF}
+end;
+
+function WarmupNextTempId: LongInt;
+begin
+    {$IFDEF FPC}
+    Result := InterLockedIncrement(WarmupTempCounter);
+    {$ELSE}
+    Result := AtomicIncrement(WarmupTempCounter);
+    {$ENDIF}
+end;
+
+{ Moves TempPath onto DownloadPath, replacing a file already there, in one
+  step. On Windows RenameFile fails when the target exists, and deleting the
+  target first would lose it if the move then failed: MoveFileEx replaces it
+  atomically. Delphi defines MSWINDOWS (and FPC both it and WINDOWS), so that
+  is the symbol to test. Elsewhere rename(2) already replaces. A failure
+  leaves a file already at DownloadPath as it was. }
+function WarmupReplaceFile(const TempPath, DownloadPath: String): Boolean;
+begin
+    {$IFDEF MSWINDOWS}
+    Result := ZbMoveFileExW(PWideChar(UnicodeString(TempPath)), PWideChar(UnicodeString(DownloadPath)),
+        ZB_MOVEFILE_REPLACE_EXISTING or ZB_MOVEFILE_WRITE_THROUGH);
+    {$ELSE}
+    Result := RenameFile(TempPath, DownloadPath);
+    {$ENDIF}
+end;
+
 { Writes Content to a temporary file beside DownloadPath and moves it over
   DownloadPath only when the whole of it was written, so a write that fails
   (a full disk, a file size limit) leaves no partial file and keeps a file
@@ -376,7 +430,7 @@ var
     TempPath: String;
 begin
     TempPath := Format('%s.%d-%d.part',
-        [DownloadPath, GetProcessID, InterLockedIncrement(WarmupTempCounter)]);
+        [DownloadPath, WarmupProcessId, WarmupNextTempId]);
     try
         Handle := TFileStream.Create(TempPath, fmCreate);
         try
@@ -389,12 +443,7 @@ begin
         DeleteFile(TempPath);
         raise;
     end;
-{$IFDEF WINDOWS}
-    { RenameFile does not replace an existing file on Windows. }
-    if FileExists(DownloadPath) then
-        DeleteFile(DownloadPath);
-{$ENDIF}
-    if not RenameFile(TempPath, DownloadPath) then
+    if not WarmupReplaceFile(TempPath, DownloadPath) then
     begin
         DeleteFile(TempPath);
         raise EWriteError.CreateFmt('Could not write %s', [DownloadPath]);
@@ -407,14 +456,15 @@ end;
 function WarmupCsv(const Path, Query, DownloadPath: String): String;
 var
     Response: TZbRequestResponse;
-    Directory, Trimmed, ContentType: String;
+    Directory: String;
 begin
     Response := WarmupSend('GET', Path, Query, '');
     Result := Response.Payload;
-    Trimmed := Trim(Result);
-    ContentType := LowerCase(Response.ContentType);
-    if (Trimmed = '') or (Trimmed[1] = '{') or (Trimmed[1] = '[') or
-       (Pos(JSON_CONTENT_TYPE, ContentType) > 0) or (Pos('text/html', ContentType) > 0) then
+    { Not a file: a body of nothing or of padding only, an HTML or JSON content
+      type in any case, or a body that is HTML or starts with { or [ once its
+      padding (white space, a BOM, a no-break space) is skipped. A real file
+      that begins with spaces is still saved unchanged. }
+    if ZbDownloadKind(Response.Payload, Response.ContentType) <> zdkFile then
         raise ZbException.FromResponse('', Response);
     if DownloadPath = '' then
         Exit;

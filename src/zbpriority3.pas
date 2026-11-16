@@ -276,7 +276,9 @@ const
             FormData.Free;
         end;
         { An HTTP error has already been raised, with the API's message, by
-          the request itself. }
+          the request itself. A message alone, an empty object or nothing but
+          nulls is not an accepted file. }
+        ZbRaiseIfNoResult(response);
         try
             Result := ZbFileFeedbackFromJson(response.Payload);
         except on e: Exception do
@@ -304,7 +306,9 @@ const
         Form.Free;
         response := ZBFormPostRequest(Url, Body);
         { An HTTP error has already been raised, with the API's message, by
-          the request itself. }
+          the request itself. A message alone, an empty object or nothing but
+          nulls is not an accepted file. }
+        ZbRaiseIfNoResult(response);
         try
             Result := ZbFileFeedbackFromJson(response.Payload);
         except on e: Exception do
@@ -352,6 +356,7 @@ const
         UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfNoFileStatus(response);
         try
             Result := ZbFileStatusFromJson(response.Payload);
         except on e: Exception do
@@ -368,7 +373,7 @@ const
         UrlToAccess: String;
         response: TZbRequestResponse;
         error: ZbException;
-        IsJsonCT: Boolean;
+        Kind: TZbDownloadKind;
         ErrorText: String;
     begin
         UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
@@ -380,30 +385,30 @@ const
             error.MarkHttpError;
             raise error;
         end;
-        { An empty 200 is not an empty file, and an HTML page - by its content
-          type or its body - is a proxy or a portal answering, not the file. }
-        if (response.Payload = '') or ZbContentTypeIsHtml(response.ContentType) or
-           ZbBodyLooksLikeHtml(response.Payload) then
+        Kind := ZbDownloadKind(response.Payload, response.ContentType);
+        { An empty 200, or one of padding only, is not an empty file, and an
+          HTML page - by its content type or its body, after any padding - is
+          a proxy or a portal answering, not the file. }
+        if (Kind = zdkEmpty) or (Kind = zdkHtml) then
         begin
             error := ZbException.FromResponse('', response);
             error.MarkHttpError;
             raise error;
         end;
-        IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
         { getfile answers with the file or not at all. A JSON body - with a JSON
-          content type or not, whatever its keys - is the API saying why not, so
-          it is an error carrying the HTTP status, as in the other SDKs. }
-        if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) or
-           (Copy(TrimLeft(response.Payload), 1, 1) = '{') then
+          content type in any case or not, a BOM or no-break space before it or
+          not, an object or an array - is the API saying why not, so it is an
+          error carrying the HTTP status, as in the other SDKs. }
+        if Kind = zdkJson then
         begin
             ErrorText := '';
             try
-                ErrorText := Trim(ZbFileFeedbackFromJson(response.Payload).Message);
+                ErrorText := Trim(ZbFileFeedbackFromJson(ZbStripPadding(response.Payload)).Message);
             except
                 ErrorText := '';
             end;
             if ErrorText = '' then
-                ErrorText := ZbErrorOnlyMessage(response.Payload);
+                ErrorText := ZbErrorOnlyMessage(ZbStripPadding(response.Payload));
             error := ZbException.FromResponse(ErrorText, response);
             error.MarkHttpError;
             raise error;
@@ -421,6 +426,7 @@ const
         UrlToAccess := Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint, '?api_key=', EncodeParam(ZbApiKey));
         UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
         response := ZBGetRequest(UrlToAccess);
+        ZbRaiseIfNoResult(response);
         try
             Result := ZbFileFeedbackFromJson(response.Payload);
         except on e: Exception do
@@ -561,6 +567,7 @@ begin
     Body := Concat('api_key=', EncodeParam(ZbApiKey),
                    '&file_id=', EncodeParam(Trim(FileId)));
     response := ZBFormPostRequest(P3SendEvaluatedFileUrl, Body);
+    ZbRaiseIfNoResult(response);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do
@@ -730,6 +737,7 @@ begin
         Body := Concat(Body, '&remove_duplicates=', P3BoolField(Options.RemoveDuplicates));
 
     response := ZBFormPostRequest(Concat(ZbBaseUrl(ZbBulkRootURL), Endpoint), Body);
+    ZbRaiseIfNoResult(response);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do
@@ -788,6 +796,7 @@ begin
         Body := Concat(Body, '&export_path=', EncodeParam(ExportPath));
 
     response := ZBFormPostRequest(Concat(ZbBaseUrl(ZbBulkRootURL), '/exportSFTPfile'), Body);
+    ZbRaiseIfNoResult(response);
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
     except on e: Exception do

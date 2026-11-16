@@ -1930,14 +1930,15 @@ const
   );
   { Public routines that send nothing. Any other routine in these interfaces
     is a request and must be in SweepEveryPublicCall. }
-  NOT_REQUESTS: array[0..29] of String = (
+  NOT_REQUESTS: array[0..33] of String = (
     'Register', 'ZBApiURLToString', 'ZBSetApiKey', 'ZBInitialize', 'ZbBaseUrl', 'EncodeParam',
     'RedactSecrets', 'ZbMaskSecret', 'ZbContentTypeIsHtml', 'ZbLastRequestTimeouts', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
     'ZbBodyLooksLikeHtml', 'ZbSuccessMeansFailure', 'ZbMessageFromBody', 'EncodePathSegment',
     'ZbJsonEscape', 'ZBMockResponse', 'ZbWindowsRootCertificates', 'ZbTrustDerCertificates',
     'ZbDefaultValidateOptions', 'ZbBatchRequestBodyFromEmails', 'ZbFromDataFromFileSubmitRecord',
     'ZbDefaultBulkFileJobOptions', 'ZbWarmupInitialize', 'ZbWarmupDefaultAddSendingAccountOptions',
-    'ZbWarmupDefaultListFromAddressesOptions'
+    'ZbWarmupDefaultListFromAddressesOptions', 'ZbContentStart', 'ZbContentTypeIsJson',
+    'ZbDownloadKind', 'ZbStripPadding'
   );
 var
   SrcDir, Missing, Overloads, Extra: String;
@@ -2492,6 +2493,10 @@ begin
     if (E <> nil) and not ((E is ZbException) and (ZbException(E).StatusCode = 200) and
        (Pos('not valid JSON', E.Message) = 0) and
        ((Pos('" not found while parsing', E.Message) > 0) or (Pos('Invalid date/timestamp', E.Message) > 0) or
+        { An empty object, or an object with no field a status has, is not an
+          answer to a bulk file call, getapiusage, activity, scoring or
+          validatebatch (item 3 of the behaviour fixes). }
+        (E.Message = 'Http Error: ZeroBounce returned an unexpected JSON response.') or
         { getcredits and validate need named fields (E7). }
         (Pos('missing or with the wrong JSON type', E.Message) > 0) or
         (((Pos('ZbGetApiUsage', Name) = 1) or (Pos('Status', Name) > 0)) and

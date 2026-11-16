@@ -164,9 +164,29 @@ type
     { The URL, after checking it is https and warning once when a regional base
       URL is paired with the single global bulk host. }
     function ZbCheckedUrl(const Url: String): String;
+    { Where the content of a body starts: the index of the first character
+      that is not padding (space, tab, CR, LF, VT, FF, a UTF-8 BOM or a
+      no-break space), Length(Body) + 1 for a body of nothing else. Only for
+      looking at a body: a file is saved with its padding. }
+    function ZbContentStart(const Body: String): Integer;
+    { Whether the body is an HTML page: after the padding, the first 2000
+      characters hold <!doctype html, <html, <head or <body, each as a whole
+      tag (<head does not match <header>), in any case. }
     function ZbBodyLooksLikeHtml(const Body: String): Boolean;
     { Whether a Content-Type names an HTML page (text/html), in any case. }
     function ZbContentTypeIsHtml(const ContentType: String): Boolean;
+    { Whether a Content-Type names JSON, in any case and with or without
+      parameters: application/json, text/json or anything ending in +json. }
+    function ZbContentTypeIsJson(const ContentType: String): Boolean;
+type
+    { What a file download answered with. }
+    TZbDownloadKind = (zdkFile, zdkEmpty, zdkHtml, zdkJson);
+    { zdkEmpty: no body, or one of padding only. zdkHtml: an HTML content
+      type or body. zdkJson: a JSON content type, or a body that starts with
+      { or [ after its padding. Anything else is the file. }
+    function ZbDownloadKind(const Payload, ContentType: String): TZbDownloadKind;
+    { The body without its leading padding, for reading the JSON of an error. }
+    function ZbStripPadding(const Body: String): String;
     { Whether a JSON body says the call failed although the HTTP status was a
       success. The API sends "success" as a JSON false, "false" or "False". }
     function ZbSuccessMeansFailure(const Body: String): Boolean;
@@ -549,14 +569,78 @@ begin
 end;
 {$ENDIF}
 
+    { How many characters of padding start at Text[At]: 1 for a space, tab,
+      CR, LF, VT or FF; 3 for a UTF-8 BOM and 2 for a UTF-8 no-break space on
+      FPC, 1 for either on Delphi; 0 for anything else. }
+    function ZbPaddingAt(const Text: String; At: Integer): Integer;
+    begin
+        Result := 0;
+        if (At < 1) or (At > Length(Text)) then
+            Exit;
+        if Text[At] in [' ', #9, #10, #11, #12, #13] then
+            Exit(1);
+        {$IFDEF FPC}
+        if (Text[At] = #$EF) and (At + 2 <= Length(Text)) and (Text[At + 1] = #$BB) and
+           (Text[At + 2] = #$BF) then
+            Exit(3);
+        if (Text[At] = #$C2) and (At + 1 <= Length(Text)) and (Text[At + 1] = #$A0) then
+            Exit(2);
+        {$ELSE}
+        if (Text[At] = #$FEFF) or (Text[At] = #$00A0) then
+            Exit(1);
+        {$ENDIF}
+    end;
+
+    function ZbContentStart(const Body: String): Integer;
+    var
+        Step: Integer;
+    begin
+        Result := 1;
+        Step := ZbPaddingAt(Body, Result);
+        while Step > 0 do
+        begin
+            Inc(Result, Step);
+            Step := ZbPaddingAt(Body, Result);
+        end;
+    end;
+
+    function ZbStripPadding(const Body: String): String;
+    var
+        Start: Integer;
+    begin
+        Start := ZbContentStart(Body);
+        if Start = 1 then
+            Result := Body
+        else
+            Result := Copy(Body, Start, MaxInt);
+    end;
+
+    { The first 2000 characters after the padding, ASCII letters lowercased. }
     function ZbLowerPrefix(const Value: String): String;
     var
         I: Integer;
     begin
-        Result := Copy(Value, 1, 2000);
+        Result := Copy(Value, ZbContentStart(Value), 2000);
         for I := 1 to Length(Result) do
             if Result[I] in ['A'..'Z'] then
                 Result[I] := Chr(Ord(Result[I]) + 32);
+    end;
+
+    { Whether Tag (lowercase, as '<head') is in Lower as a whole tag: the next
+      character ends it ('>', '/' or white space), or the text does. }
+    function ZbHasTag(const Lower, Tag: String): Boolean;
+    var
+        At, After: Integer;
+    begin
+        Result := False;
+        At := Pos(Tag, Lower);
+        while At > 0 do
+        begin
+            After := At + Length(Tag);
+            if (After > Length(Lower)) or (Lower[After] in ['>', '/', ' ', #9, #10, #11, #12, #13]) then
+                Exit(True);
+            At := PosEx(Tag, Lower, At + 1);
+        end;
     end;
 
     function ZbBodyLooksLikeHtml(const Body: String): Boolean;
@@ -564,8 +648,8 @@ end;
         Lower: String;
     begin
         Lower := ZbLowerPrefix(Body);
-        Result := (Pos('<!doctype html', Lower) > 0) or (Pos('<html', Lower) > 0) or
-            (Pos('<head', Lower) > 0) or (Pos('<body', Lower) > 0);
+        Result := ZbHasTag(Lower, '<!doctype html') or ZbHasTag(Lower, '<html') or
+            ZbHasTag(Lower, '<head') or ZbHasTag(Lower, '<body');
     end;
 
     function ZbContentTypeIsHtml(const ContentType: String): Boolean;
@@ -573,13 +657,42 @@ end;
         Result := Pos('text/html', LowerCase(ContentType)) > 0;
     end;
 
+    function ZbContentTypeIsJson(const ContentType: String): Boolean;
+    var
+        Media: String;
+        Cut: Integer;
+    begin
+        Media := LowerCase(Trim(ContentType));
+        Cut := Pos(';', Media);
+        if Cut > 0 then
+            Media := Trim(Copy(Media, 1, Cut - 1));
+        Result := (Media = 'application/json') or (Media = 'text/json') or
+            ((Length(Media) > 5) and (Copy(Media, Length(Media) - 4, 5) = '+json'));
+    end;
+
+    function ZbDownloadKind(const Payload, ContentType: String): TZbDownloadKind;
+    var
+        Start: Integer;
+    begin
+        Start := ZbContentStart(Payload);
+        if Start > Length(Payload) then
+            Exit(zdkEmpty);
+        if ZbContentTypeIsHtml(ContentType) or ZbBodyLooksLikeHtml(Payload) then
+            Exit(zdkHtml);
+        if ZbContentTypeIsJson(ContentType) or (Payload[Start] = '{') or (Payload[Start] = '[') then
+            Exit(zdkJson);
+        Result := zdkFile;
+    end;
+
     function ZbHtmlTitle(const Body: String): String;
     var
-        Lower: String;
+        Lower, Content: String;
         StartAt, OpenEnd, CloseAt: Integer;
     begin
         Result := '';
+        { The offsets below are into the body without its padding. }
         Lower := ZbLowerPrefix(Body);
+        Content := ZbStripPadding(Body);
         StartAt := Pos('<title', Lower);
         if StartAt = 0 then Exit;
         OpenEnd := Pos('>', Copy(Lower, StartAt, MaxInt));
@@ -587,7 +700,7 @@ end;
         OpenEnd := StartAt + OpenEnd - 1;
         CloseAt := Pos('</title>', Copy(Lower, OpenEnd, MaxInt));
         if CloseAt = 0 then Exit;
-        Result := Trim(Copy(Body, OpenEnd + 1, CloseAt - 2));
+        Result := Trim(Copy(Content, OpenEnd + 1, CloseAt - 2));
     end;
 
     function ZbStripErrorPrefix(const Value: String): String;
@@ -631,7 +744,8 @@ end;
     var
         Trimmed: String;
     begin
-        Trimmed := Trim(Body);
+        { A BOM or a no-break space is padding, not text: Trim leaves both. }
+        Trimmed := Trim(ZbStripPadding(Body));
         if Trimmed = '' then
             Exit(Format('Empty response from ZeroBounce (HTTP %d)', [StatusCode]));
         if ZbBodyLooksLikeHtml(Body) then
@@ -748,6 +862,12 @@ end;
     function ZbBaseUrl(const Url: String): String;
     begin
         Result := Trim(Url);
+        { Every endpoint path is appended, so a query or a fragment here would
+          swallow it ('https://host/v2?x=1' + '/validate') and send the rest
+          of the request, key included, to a different place than meant. The
+          URL is not quoted: it may carry a credential. }
+        if (Pos('?', Result) > 0) or (Pos('#', Result) > 0) then
+            raise ZbException.Create('A base URL must not contain a query string or a fragment ("?" or "#")');
         while (Result <> '') and (Result[Length(Result)] = '/') do
             Delete(Result, Length(Result), 1);
     end;
@@ -895,16 +1015,60 @@ end;
         {$ENDIF}
     end;
 
-    { Text with JSON string escapes undone (\" \\ \/ \b \f \n \r \t \uXXXX,
-      surrogate pairs included on FPC); anything else is kept. }
+    { The hex digits at Text[At..], at most MaxDigits of them, as one number;
+      Count is how many there were. Stops at the first character that is not
+      a hex digit; a value past U+10FFFF stops growing. }
+    function ZbHexRun(const Text: String; At, MaxDigits: Integer; out Count: Integer): Integer;
+    var
+        D: Integer;
+    begin
+        Result := 0;
+        Count := 0;
+        while (At + Count <= Length(Text)) and (Count < MaxDigits) do
+        begin
+            D := ZbHexDigit(Text[At + Count]);
+            if D < 0 then
+                Break;
+            if Result <= $10FFFF then
+                Result := Result * 16 + D;
+            Inc(Count);
+        end;
+    end;
+
+    (* A braced code point, hex digits (1 to 8, value at most U+10FFFF) in curly
+      brackets, starting at the opening bracket at Text[At]. Len is how many
+      characters it takes, brackets included. -1 when it is not one. *)
+    function ZbBracedCodePoint(const Text: String; At: Integer; out Len: Integer): Integer;
+    var
+        Count: Integer;
+    begin
+        Result := -1;
+        Len := 0;
+        if (At > Length(Text)) or (Text[At] <> '{') then
+            Exit;
+        Result := ZbHexRun(Text, At + 1, 8, Count);
+        if (Count = 0) or (At + Count + 1 > Length(Text)) or (Text[At + Count + 1] <> '}') or
+           (Result > $10FFFF) then
+        begin
+            Result := -1;
+            Exit;
+        end;
+        Len := Count + 2;
+    end;
+
+    (* Text with string escapes undone: the JSON ones (\" \\ \/ \b \f \n \r \t
+      \uXXXX, surrogate pairs included on FPC) and the other spellings a
+      server or a language may write: \' \xHH (one byte), \u and \U with
+      up to 8 hex digits in curly brackets (at most U+10FFFF), \UXXXXXXXX,
+      \UXXXX and the octal byte \NNN. Anything else is kept. *)
     function ZbJsonUnescapeView(const Text: String): String;
     const
-        ESCAPES = '"\/bfnrt';
+        ESCAPES = '"\/bfnrt''';
     var
-        I, K, CodePoint, Low: Integer;
+        I, K, CodePoint, Low, Len, Count: Integer;
         Decoded: String;
     begin
-        Decoded := '"\/'#8#12#10#13#9;
+        Decoded := '"\/'#8#12#10#13#9#39;
         Result := '';
         I := 1;
         while I <= Length(Text) do
@@ -923,17 +1087,66 @@ end;
                 Continue;
             end;
             CodePoint := -1;
-            if Text[I + 1] = 'u' then
-                CodePoint := ZbHex4(Text, I + 2);
-            if CodePoint < 0 then
+            Len := 0;
+            case Text[I + 1] of
+                'u':
+                    if (I + 2 <= Length(Text)) and (Text[I + 2] = '{') then
+                    begin
+                        CodePoint := ZbBracedCodePoint(Text, I + 2, Len);
+                        Inc(Len, 2);
+                    end
+                    else
+                    begin
+                        CodePoint := ZbHex4(Text, I + 2);
+                        Len := 6;
+                    end;
+                'U':
+                    if (I + 2 <= Length(Text)) and (Text[I + 2] = '{') then
+                    begin
+                        CodePoint := ZbBracedCodePoint(Text, I + 2, Len);
+                        Inc(Len, 2);
+                    end
+                    else
+                    begin
+                        { Eight digits first, as \U00000027; else four. }
+                        CodePoint := ZbHexRun(Text, I + 2, 8, Count);
+                        if (Count = 8) and (CodePoint <= $10FFFF) then
+                            Len := 10
+                        else
+                        begin
+                            CodePoint := ZbHex4(Text, I + 2);
+                            Len := 6;
+                        end;
+                    end;
+                'x':
+                    if (I + 3 <= Length(Text)) and (ZbHexDigit(Text[I + 2]) >= 0) and
+                       (ZbHexDigit(Text[I + 3]) >= 0) then
+                    begin
+                        { One byte, not a code point: \xC3\xA9 is the two bytes
+                          of one UTF-8 character. }
+                        Result := Result + Char(ZbHexDigit(Text[I + 2]) * 16 + ZbHexDigit(Text[I + 3]));
+                        Inc(I, 4);
+                        Continue;
+                    end;
+                '0'..'3':
+                    if (I + 3 <= Length(Text)) and (Text[I + 2] in ['0'..'7']) and
+                       (Text[I + 3] in ['0'..'7']) then
+                    begin
+                        Result := Result + Char((Ord(Text[I + 1]) - 48) * 64 +
+                            (Ord(Text[I + 2]) - 48) * 8 + (Ord(Text[I + 3]) - 48));
+                        Inc(I, 4);
+                        Continue;
+                    end;
+            end;
+            if (CodePoint < 0) or (Len = 0) then
             begin
                 Result := Result + Text[I];
                 Inc(I);
                 Continue;
             end;
-            Inc(I, 6);
+            Inc(I, Len);
             {$IFDEF FPC}
-            if (CodePoint >= $D800) and (CodePoint <= $DBFF) and (I + 1 <= Length(Text)) and
+            if (Len = 6) and (CodePoint >= $D800) and (CodePoint <= $DBFF) and (I + 1 <= Length(Text)) and
                (Text[I] = '\') and (Text[I + 1] = 'u') then
             begin
                 Low := ZbHex4(Text, I + 2);
@@ -948,25 +1161,280 @@ end;
         end;
     end;
 
-    { Whether Secret can be read in Text or in any view of it decoded up to
-      Layers more times: URL-decoded, form-decoded ('+' as a space too) and
-      JSON-unescaped, in any order. }
-    function ZbSecretInDecodedViews(const Text, Secret: String; Layers: Integer): Boolean;
+    { Text with the HTML entities of a quoted or escaped value undone, in any
+      letter case: &#39; &#x27; &apos; &amp; &lt;. Used to search for a secret
+      only: a server may HTML-escape the request it echoes back. }
+    function ZbHtmlEntityView(const Text: String): String;
+    const
+        ENTITIES: array[0..4] of String = ('&#39;', '&#x27;', '&apos;', '&amp;', '&lt;');
+        DECODED: array[0..4] of String = ('''', '''', '''', '&', '<');
     var
-        Views: array[0..2] of String;
+        I, K: Integer;
+        Matched: Boolean;
+    begin
+        Result := '';
+        I := 1;
+        while I <= Length(Text) do
+        begin
+            Matched := False;
+            if Text[I] = '&' then
+                for K := Low(ENTITIES) to High(ENTITIES) do
+                    if LowerCase(Copy(Text, I, Length(ENTITIES[K]))) = ENTITIES[K] then
+                    begin
+                        Result := Result + DECODED[K];
+                        Inc(I, Length(ENTITIES[K]));
+                        Matched := True;
+                        Break;
+                    end;
+            if not Matched then
+            begin
+                Result := Result + Text[I];
+                Inc(I);
+            end;
+        end;
+    end;
+
+    { What one character, as a code point, folds to when case is ignored: the
+      lowercase of the ASCII, Latin-1, Latin Extended-A, Greek and Cyrillic
+      letters, and a few that fold across scripts. ZbFoldUnit deals with the
+      ones that become two letters. }
+    function ZbSimpleFold(CodePoint: Integer): Integer;
+    begin
+        Result := CodePoint;
+        case CodePoint of
+            $41..$5A, $C0..$D6, $D8..$DE, $391..$3A1, $3A3..$3AB, $410..$42F, $FF21..$FF3A:
+                Result := CodePoint + 32;
+            $100..$12F, $132..$137, $14A..$177, $1E00..$1E95, $460..$481, $48A..$4BF:
+                if not Odd(CodePoint) then
+                    Result := CodePoint + 1;
+            $139..$148, $179..$17E:
+                if Odd(CodePoint) then
+                    Result := CodePoint + 1;
+            $130: Result := Ord('i');
+            $178: Result := $FF;
+            $17F: Result := Ord('s');
+            $386: Result := $3AC;
+            $388..$38A: Result := CodePoint + 37;
+            $38C: Result := $3CC;
+            $38E, $38F: Result := CodePoint + 63;
+            $3C2: Result := $3C3;
+            $400..$40F: Result := CodePoint + 80;
+            $212A: Result := Ord('k');
+            $212B: Result := $E5;
+        end;
+    end;
+
+    { The folded text of one character: ZbSimpleFold, except that the sharp s
+      (and its capital) becomes 'ss', so an echo that upper-cases a secret
+      with one matches it. }
+    function ZbFoldUnit(CodePoint: Integer): String;
+    begin
+        if (CodePoint = $DF) or (CodePoint = $1E9E) then
+            Result := 'ss'
+        else
+            Result := ZbCodePointText(ZbSimpleFold(CodePoint));
+    end;
+
+    { One character at Text[At]: its code point and how many string units it
+      takes. A byte that is not valid UTF-8 (FPC) or a lone surrogate (Delphi)
+      is a character of its own with the code point -1. }
+    procedure ZbNextCharacter(const Text: String; At: Integer; out CodePoint, Len: Integer);
+    {$IFDEF FPC}
+    var
+        B, Need, K, C: Integer;
+    {$ELSE}
+    var
+        B: Integer;
+    {$ENDIF}
+    begin
+        Len := 1;
+        CodePoint := -1;
+        {$IFDEF FPC}
+        B := Ord(Text[At]);
+        if B < $80 then
+        begin
+            CodePoint := B;
+            Exit;
+        end;
+        if (B >= $C2) and (B <= $DF) then
+        begin
+            Need := 1;
+            CodePoint := B and $1F;
+        end
+        else if (B >= $E0) and (B <= $EF) then
+        begin
+            Need := 2;
+            CodePoint := B and $0F;
+        end
+        else if (B >= $F0) and (B <= $F4) then
+        begin
+            Need := 3;
+            CodePoint := B and $07;
+        end
+        else
+            Exit;
+        if At + Need > Length(Text) then
+        begin
+            CodePoint := -1;
+            Exit;
+        end;
+        for K := 1 to Need do
+        begin
+            C := Ord(Text[At + K]);
+            if (C < $80) or (C > $BF) then
+            begin
+                CodePoint := -1;
+                Exit;
+            end;
+            CodePoint := (CodePoint shl 6) or (C and $3F);
+        end;
+        { Overlong forms, surrogates and what lies past U+10FFFF are not text. }
+        if ((Need = 2) and (CodePoint < $800)) or ((Need = 3) and (CodePoint < $10000)) or
+           ((CodePoint >= $D800) and (CodePoint <= $DFFF)) or (CodePoint > $10FFFF) then
+        begin
+            CodePoint := -1;
+            Exit;
+        end;
+        Len := Need + 1;
+        {$ELSE}
+        B := Ord(Text[At]);
+        if (B >= $D800) and (B <= $DBFF) and (At < Length(Text)) and
+           (Ord(Text[At + 1]) >= $DC00) and (Ord(Text[At + 1]) <= $DFFF) then
+        begin
+            CodePoint := $10000 + ((B - $D800) shl 10) + (Ord(Text[At + 1]) - $DC00);
+            Len := 2;
+        end
+        else if (B < $D800) or (B > $DFFF) then
+            CodePoint := B;
+        {$ENDIF}
+    end;
+
+    type
+        TZbSpans = array of Integer;
+
+    { Text with every character folded (see ZbFoldUnit). Spans, filled only
+      when Mapped is set, holds for the K-th character of the result the
+      first and the last character of Text it was made from, at 2K-1 and 2K
+      (K from 1, as Spans[2K-2] and Spans[2K-1]); without Mapped the result
+      lines up with Text one for one. }
+    procedure ZbFold(const Text: String; out Folded: String; out Spans: TZbSpans; out Mapped: Boolean);
+    var
+        I, Len, CodePoint, Used, J: Integer;
+        Piece: String;
+    begin
+        Spans := nil;
+        Mapped := False;
+        for I := 1 to Length(Text) do
+            if Ord(Text[I]) >= $80 then
+            begin
+                Mapped := True;
+                Break;
+            end;
+        if not Mapped then
+        begin
+            Folded := Text;
+            UniqueString(Folded);
+            for I := 1 to Length(Folded) do
+                if Folded[I] in ['A'..'Z'] then
+                    Folded[I] := Chr(Ord(Folded[I]) + 32);
+            Exit;
+        end;
+        SetLength(Folded, Length(Text) * 2);
+        SetLength(Spans, Length(Text) * 4);
+        Used := 0;
+        I := 1;
+        while I <= Length(Text) do
+        begin
+            ZbNextCharacter(Text, I, CodePoint, Len);
+            if CodePoint < 0 then
+                Piece := Copy(Text, I, Len)
+            else
+                Piece := ZbFoldUnit(CodePoint);
+            for J := 1 to Length(Piece) do
+            begin
+                Inc(Used);
+                Folded[Used] := Piece[J];
+                Spans[2 * Used - 2] := I;
+                Spans[2 * Used - 1] := I + Len - 1;
+            end;
+            Inc(I, Len);
+        end;
+        SetLength(Folded, Used);
+    end;
+
+    function ZbFoldText(const Text: String): String;
+    var
+        Spans: TZbSpans;
+        Mapped: Boolean;
+    begin
+        ZbFold(Text, Result, Spans, Mapped);
+    end;
+
+    { Text with every spelling of FoldedForm (already folded) replaced by
+      Mask, whatever the case it was written in. }
+    function ZbReplaceFolded(const Text, FoldedForm, Mask: String): String;
+    var
+        Folded: String;
+        Spans: TZbSpans;
+        Mapped: Boolean;
+        At, Start, From, OrigStart: Integer;
+    begin
+        Result := Text;
+        if FoldedForm = '' then
+            Exit;
+        ZbFold(Text, Folded, Spans, Mapped);
+        At := Pos(FoldedForm, Folded);
+        if At = 0 then
+            Exit;
+        Result := '';
+        Start := 1;
+        while At > 0 do
+        begin
+            From := At + Length(FoldedForm);
+            if Mapped then
+            begin
+                OrigStart := Spans[2 * At - 2];
+                if OrigStart < Start then
+                begin
+                    { Inside what was just replaced (half of a 'ss'). }
+                    At := PosEx(FoldedForm, Folded, At + 1);
+                    Continue;
+                end;
+                Result := Result + Copy(Text, Start, OrigStart - Start) + Mask;
+                Start := Spans[2 * (From - 1) - 1] + 1;
+            end
+            else
+            begin
+                Result := Result + Copy(Text, Start, At - Start) + Mask;
+                Start := From;
+            end;
+            At := PosEx(FoldedForm, Folded, From);
+        end;
+        Result := Result + Copy(Text, Start, MaxInt);
+    end;
+
+    { Whether the folded secret can be read in Text, or in any view of it
+      decoded up to Layers more times: URL-decoded, form-decoded ('+' as a
+      space too), unescaped as a string literal and with its HTML entities
+      undone, in any order. Case is ignored. }
+    function ZbSecretInDecodedViews(const Text, FoldedSecret: String; Layers: Integer): Boolean;
+    var
+        Views: array[0..3] of String;
         I: Integer;
     begin
-        Result := Pos(Secret, Text) > 0;
+        Result := Pos(FoldedSecret, ZbFoldText(Text)) > 0;
         if Result or (Layers = 0) then
             Exit;
         { Nothing to decode: every view is Text itself. }
-        if (Pos('%', Text) = 0) and (Pos('+', Text) = 0) and (Pos('\', Text) = 0) then
+        if (Pos('%', Text) = 0) and (Pos('+', Text) = 0) and (Pos('\', Text) = 0) and
+           (Pos('&', Text) = 0) then
             Exit;
         Views[0] := ZbUrlDecodeView(Text, False);
         Views[1] := ZbUrlDecodeView(Text, True);
         Views[2] := ZbJsonUnescapeView(Text);
-        for I := 0 to 2 do
-            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], Secret, Layers - 1) then
+        Views[3] := ZbHtmlEntityView(Text);
+        for I := 0 to 3 do
+            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], FoldedSecret, Layers - 1) then
             begin
                 Result := True;
                 Exit;
@@ -1039,12 +1507,15 @@ end;
         Forms[9] := PlusForSpaces(Forms[8]);
         Forms[10] := EncodeParam(Secret);
         Forms[11] := Secret;
+        { Case is ignored: an echo may upper-case or lower-case the key, and
+          the hex of a percent-encoding comes in either case. }
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
-                Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
+                Result := ZbReplaceFolded(Result, ZbFoldText(Forms[F]), 'REDACTED');
         { A spelling the forms above miss (three URL layers, URL of double
-          JSON, ...) still decodes to the secret: then none of S is kept. }
-        if ZbSecretInDecodedViews(Result, Secret, ZB_SECRET_DECODE_LAYERS) then
+          JSON, an HTML-escaped quote, ...) still decodes to the secret: then
+          none of S is kept. }
+        if ZbSecretInDecodedViews(Result, ZbFoldText(Secret), ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 
@@ -1057,19 +1528,53 @@ end;
             Result := ZbSecretRedactors[I](Result);
     end;
 
+    { Whether a non-ASCII code point is white space, a control character or one
+      of the invisible ones (zero-width, bidirectional marks, variation
+      selectors, tags, the byte order mark, ...) that a pasted key can carry
+      without showing it. }
+    function ZbIsHiddenCodePoint(CodePoint: Integer): Boolean;
+    begin
+        case CodePoint of
+            $7F..$A0, $AD, $34F, $61C, $115F, $1160, $1680, $17B4, $17B5, $180B..$180F,
+            $2000..$200F, $2028..$202F, $205F..$206F, $3000, $3164, $FE00..$FE0F, $FEFF,
+            $FFA0, $FFF9..$FFFB, $1BCA0..$1BCA3, $1D173..$1D17A, $E0000..$E0FFF:
+                Result := True;
+        else
+            Result := False;
+        end;
+    end;
+
     function ZbCheckedApiKey(const ApiKey: String): String;
+    const
+        REFUSED = 'api_key has surrounding whitespace or control characters';
     var
-        I: Integer;
+        I, Len, CodePoint: Integer;
     begin
         { An empty key stays deferred to ZbRequireApiKey, which names the call
           that initializes the SDK. }
         if Trim(ApiKey) = '' then
             Exit(ApiKey);
         if ApiKey <> Trim(ApiKey) then
-            raise ZbException.Create('api_key has surrounding whitespace or control characters');
-        for I := 1 to Length(ApiKey) do
+            raise ZbException.Create(REFUSED);
+        I := 1;
+        while I <= Length(ApiKey) do
+        begin
             if (ApiKey[I] < #32) or (ApiKey[I] = #127) then
-                raise ZbException.Create('api_key has surrounding whitespace or control characters');
+                raise ZbException.Create(REFUSED);
+            if Ord(ApiKey[I]) >= $80 then
+            begin
+                { Text that is not valid UTF-8 (a lone surrogate on Delphi),
+                  and the Unicode white space and invisible characters that
+                  Trim leaves in place, are refused wherever they sit. A
+                  plain space in the middle of a key is still sent. }
+                ZbNextCharacter(ApiKey, I, CodePoint, Len);
+                if (CodePoint < 0) or ZbIsHiddenCodePoint(CodePoint) then
+                    raise ZbException.Create(REFUSED);
+                Inc(I, Len);
+            end
+            else
+                Inc(I);
+        end;
         Result := ApiKey;
     end;
 

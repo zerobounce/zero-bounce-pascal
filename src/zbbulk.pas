@@ -116,6 +116,9 @@ begin
         raise error;
     end;
 
+    { A message, an empty object or nothing but nulls is not an accepted file. }
+    ZbRaiseIfNoResult(response);
+
     // attempt json parsing
     try
         Result := ZbFileFeedbackFromJson(response.Payload);
@@ -138,6 +141,8 @@ begin
     UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
     UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
+    { No field a status has, or a message alone, is not a status. }
+    ZbRaiseIfNoFileStatus(response);
 
     // attempt json parsing
     try
@@ -157,7 +162,7 @@ var
     UrlToAccess: string;
     response: TZbRequestResponse;
     error: ZbException;
-    IsJsonCT: Boolean;
+    Kind: TZbDownloadKind;
     ErrorText: String;
 begin
     UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
@@ -181,30 +186,30 @@ begin
         raise error;
     end;
 
-    { An empty 200 is not an empty file, and an HTML page - by its content
-      type or its body - is a proxy or a portal answering, not the file. }
-    if (response.Payload = '') or ZbContentTypeIsHtml(response.ContentType) or
-       ZbBodyLooksLikeHtml(response.Payload) then
+    Kind := ZbDownloadKind(response.Payload, response.ContentType);
+    { An empty 200, or one of padding only, is not an empty file, and an HTML
+      page - by its content type or its body, after any padding - is a proxy
+      or a portal answering, not the file. }
+    if (Kind = zdkEmpty) or (Kind = zdkHtml) then
     begin
         error := ZbException.FromResponse('', response);
         error.MarkHttpError;
         raise error;
     end;
-    IsJsonCT := response.ContentType.Contains(JSON_CONTENT_TYPE);
     { getfile answers with the file or not at all. A JSON body - with a JSON
-      content type or not, whatever its keys - is the API saying why not, so
-      it is an error carrying the HTTP status, as in the other SDKs. }
-    if IsJsonCT or ZbGetFileJsonIndicatesError(response.Payload) or
-       (Copy(TrimLeft(response.Payload), 1, 1) = '{') then
+      content type in any case or not, a BOM or no-break space before it or
+      not, an object or an array - is the API saying why not, so it is an
+      error carrying the HTTP status, as in the other SDKs. }
+    if Kind = zdkJson then
     begin
         ErrorText := '';
         try
-            ErrorText := Trim(ZbFileFeedbackFromJson(response.Payload).Message);
+            ErrorText := Trim(ZbFileFeedbackFromJson(ZbStripPadding(response.Payload)).Message);
         except
             ErrorText := '';
         end;
         if ErrorText = '' then
-            ErrorText := ZbErrorOnlyMessage(response.Payload);
+            ErrorText := ZbErrorOnlyMessage(ZbStripPadding(response.Payload));
         error := ZbException.FromResponse(ErrorText, response);
         error.MarkHttpError;
         raise error;
@@ -222,6 +227,7 @@ begin
     UrlToAccess := Concat(ZbBaseUrl(BULK_URI), endpoint, '?api_key=', EncodeParam(ZbApiKey));
     UrlToAccess := Concat(UrlToAccess, '&file_id=', EncodeParam(FileId));
     response := ZBGetRequest(UrlToAccess);
+    ZbRaiseIfNoResult(response);
 
     // attempt json parsing
     try

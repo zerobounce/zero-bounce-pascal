@@ -8,7 +8,7 @@ uses
 {$ENDIF}
   Classes, SysUtils, consoletestrunner,
   TestGeneric, TestValidation, TestDeserialization, TestBulk, TestPriority3, TestUtility, TestOffline,
-  TestBulkJobs, TestWarmup;
+  TestBulkJobs, TestWarmup, TestBehaviour;
 
 var
   App: TTestRunner;
