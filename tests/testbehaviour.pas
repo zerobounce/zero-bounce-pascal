@@ -1206,8 +1206,8 @@ begin
     { Armenian: capital U+0531 against small U+0561, and U+0556 against U+0586. }
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D4#$B1 + #$D5#$96 + '-9 b', #$D5#$A1 + #$D6#$86 + '-9'));
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D5#$A1 + #$D6#$86 + '-9 b', #$D4#$B1 + #$D5#$96 + '-9'));
-    { A combining mark is kept: a letter with one is not the plain letter. }
-    AssertEquals('x' + #$CC#$87 + #$CC#$87, ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
+    { A mark after a match is masked with it. }
+    AssertEquals('REDACTED', ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
     AssertEquals('REDACTED', ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x' + #$CC#$87 + #$CC#$87));
     AssertEquals('REDACTED-after', ZbMaskSecret('PASSi' + #$CC#$87 + '-after', 'pass' + #$C4#$B0));
     AssertEquals('REDACTED', ZbMaskSecret('i' + #$CC#$87, 'i'));

@@ -2127,9 +2127,9 @@ end;
     { Text folded as NFD(casefold(NFD(Text))): decomposed canonically, with the
       marks in canonical order, every code point case folded (full folding,
       the dotless i as i, as the dotted capital I folds to one), decomposed
-      and put in order again. The marks are kept, so a letter and the same
-      letter with an accent are different texts ('e' is not in 'e' + U+0301),
-      while a precomposed letter and its decomposed form, in whatever case an
+      and put in order again. The marks are kept in the folded text; a match of a secret may be followed
+      by marks (see ZbNextFoldedHit). A precomposed letter and its decomposed
+      form, in whatever case an
       echo wrote them, are one. The sharp s is 'ss', U+0587 is two Armenian
       letters and U+1F80 an alpha with psili and an iota. Spans, filled only
       when Mapped is set, holds for the K-th character of the result the
@@ -2251,6 +2251,7 @@ end;
         end;
         TZbSeenViews = array of TZbSeenView;
 
+    {$IFDEF FPC}{$PUSH}{$Q-}{$R-}{$ELSE}{$IFOPT Q+}{$DEFINE ZB_HASH_Q}{$ENDIF}{$IFOPT R+}{$DEFINE ZB_HASH_R}{$ENDIF}{$OVERFLOWCHECKS OFF}{$RANGECHECKS OFF}{$ENDIF}
     procedure ZbHashView(const Text: String; out HashA, HashB: QWord);
     var
         I: Integer;
@@ -2265,44 +2266,86 @@ end;
             HashB := (HashB + C + 1) * QWord($9E3779B97F4A7C15);
             HashB := HashB xor (HashB shr 29);
         end;
+    {$IFDEF FPC}{$POP}{$ELSE}{$IFDEF ZB_HASH_Q}{$OVERFLOWCHECKS ON}{$ENDIF}{$IFDEF ZB_HASH_R}{$RANGECHECKS ON}{$ENDIF}{$ENDIF}
     end;
 
-    { Whether a match of the folded secret that ends before Folded[At] ends
-      on a character boundary: the next character is no combining mark, so
-      'e' is not found in 'e' + U+0301 (an e acute). Mapped is the flag of
-      ZbFold: a text with only ASCII has no marks. }
-    function ZbEndsBeforeMark(const Folded: String; At: Integer; Mapped: Boolean): Boolean;
+    { The next place the folded secret is in the folded text, from Folded[From]:
+      its first byte (Start) and the byte after its end (Stop) in the text the
+      fold was made of (Spans as ZbFold gives them, used when Mapped), and the
+      folded index to go on from (Next). A match may be followed by marks in
+      the text (an 'e' echoed as an e acute): they are part of the span, so
+      the whole accented character is masked. A secret that starts with
+      U+0307 is also found after an i that the fold made of an i with a dot
+      (the fold dropped the dot, see ZbFold). A secret that ends in marks has
+      them in its folded form: fewer marks are not a match. }
+    function ZbNextFoldedHit(const Folded: String; const Spans: TZbSpans; Mapped: Boolean;
+        const FoldedSecret: String; From: Integer; out Start, Stop, Next: Integer): Boolean;
     var
-        CodePoint, Len: Integer;
+        At, Head, Tail, P, Len, CodePoint: Integer;
+        Rest, Dot: String;
     begin
         Result := False;
-        if (not Mapped) or (At > Length(Folded)) then
+        Dot := ZbCodePointText($307);
+        Start := 0;
+        Stop := 0;
+        Next := From;
+        if FoldedSecret = '' then
             Exit;
-        ZbNextCharacter(Folded, At, CodePoint, Len);
-        Result := (CodePoint >= 0) and (ZbCombiningClass(CodePoint) > 0);
+        At := PosEx(FoldedSecret, Folded, From);
+        if At > 0 then
+        begin
+            Head := At;
+            Tail := At + Length(FoldedSecret) - 1;
+            Next := At + 1;
+        end
+        else if Mapped and (Length(FoldedSecret) > Length(Dot)) and
+                (Copy(FoldedSecret, 1, Length(Dot)) = Dot) then
+        begin
+            Rest := Copy(FoldedSecret, Length(Dot) + 1, MaxInt);
+            At := PosEx(Rest, Folded, From + Ord(From < 2));
+            while (At > 0) and not ((Folded[At - 1] = 'i') and
+                    (Spans[2 * (At - 1) - 1] > Spans[2 * (At - 1) - 2])) do
+                At := PosEx(Rest, Folded, At + 1);
+            if At = 0 then
+                Exit;
+            Head := At - 1;
+            Tail := At + Length(Rest) - 1;
+            Next := At + 1;
+        end
+        else
+            Exit;
+        Result := True;
+        if Mapped then
+        begin
+            Start := Spans[2 * Head - 2];
+            P := Tail + 1;
+            while P <= Length(Folded) do
+            begin
+                ZbNextCharacter(Folded, P, CodePoint, Len);
+                if (CodePoint < 0) or (ZbCombiningClass(CodePoint) = 0) then
+                    Break;
+                Inc(P, Len);
+                Tail := P - 1;
+            end;
+            Stop := Spans[2 * Tail - 1] + 1;
+        end
+        else
+        begin
+            Start := Head;
+            Stop := Tail + 1;
+        end;
     end;
 
-    { Whether the folded secret is in the folded text, as a whole character
-      sequence (see ZbEndsBeforeMark). }
+    { Whether the folded secret is in the folded text. }
     function ZbFoldedHas(const Text, FoldedSecret: String): Boolean;
     var
         Folded: String;
         Spans: TZbSpans;
         Mapped: Boolean;
-        At: Integer;
+        Start, Stop, Next: Integer;
     begin
-        Result := False;
         ZbFold(Text, Folded, Spans, Mapped);
-        At := Pos(FoldedSecret, Folded);
-        while At > 0 do
-        begin
-            if not ZbEndsBeforeMark(Folded, At + Length(FoldedSecret), Mapped) then
-            begin
-                Result := True;
-                Exit;
-            end;
-            At := PosEx(FoldedSecret, Folded, At + 1);
-        end;
+        Result := ZbNextFoldedHit(Folded, Spans, Mapped, FoldedSecret, 1, Start, Stop, Next);
     end;
 
     { Whether the folded secret can be read in Text, or in any view of it
@@ -2383,7 +2426,7 @@ end;
         Spans: TZbSpans;
         Mapped: Boolean;
         MaxEnd, Cover: array of Integer;
-        F, At, I, J, HitEnd, Last, Kept: Integer;
+        F, At, I, J, HitEnd, Last, Kept, HitStart, HitStop: Integer;
         Seen: array of String;
         Duplicate, AnyHit, AnyProtected, HideLiterals, Masked: Boolean;
 
@@ -2511,18 +2554,9 @@ end;
                     Continue;
                 SetLength(Seen, Length(Seen) + 1);
                 Seen[High(Seen)] := FoldedForm;
-                At := Pos(FoldedForm, Folded);
-                while At > 0 do
-                begin
-                    if not ZbEndsBeforeMark(Folded, At + Length(FoldedForm), Mapped) then
-                    begin
-                        if Mapped then
-                            AddHit(Spans[2 * At - 2], Spans[2 * (At + Length(FoldedForm) - 1) - 1] + 1)
-                        else
-                            AddHit(At, At + Length(FoldedForm));
-                    end;
-                    At := PosEx(FoldedForm, Folded, At + 1);
-                end;
+                At := 1;
+                while ZbNextFoldedHit(Folded, Spans, Mapped, FoldedForm, At, HitStart, HitStop, At) do
+                    AddHit(HitStart, HitStop);
             end;
         Folded := '';
         Spans := nil;
@@ -2963,6 +2997,20 @@ end;
     begin
         Result := ZbException.Create(RedactSecrets(E.Message));
         Result.StatusCode := 0;
+    end;
+
+    { A server that closed the connection without a status line is a
+      transport error (status 0), as for the other transports. }
+    procedure ZbRequireStatusLine(Status: Integer);
+    var
+        Error: ZbException;
+    begin
+        if Status <> 0 then
+            Exit;
+        Error := ZbException.Create(
+            'No HTTP response from ZeroBounce: the connection closed before a status line was received');
+        Error.StatusCode := 0;
+        raise Error;
     end;
 
     function ZBGetRequest(url: String): TZbRequestResponse;
@@ -3563,6 +3611,7 @@ end;
                         raise ZbTransportError(E);
                 end;
 
+                ZbRequireStatusLine(Client.ResponseStatusCode);
                 ZbRequireCompleteBody(Client, ResponseStream.Size);
                 ResponseStream.Seek(0, soBeginning);
                 Result.Payload := ResponseStream.DataString;
@@ -3594,6 +3643,7 @@ end;
                         raise ZbTransportError(E);
                 end;
 
+                ZbRequireStatusLine(Response.StatusCode);
                 ZbRequireNotGzip(Response);
 
                 Result.Payload := Response.ContentAsString();

@@ -329,12 +329,14 @@ end;
 procedure TTestRedaction.TestMarksAreKeptSoALetterIsNotItsAccentedForm;
 begin
   AssertFalse('e is not e acute', Masks('e', #$C3#$A9));
-  AssertFalse('e acute is not e', Masks(#$C3#$A9, 'e'));
+  { A match may be followed by marks: the whole accented character is masked
+    (over-masking an accented letter is accepted over leaving key bytes). }
+  AssertTrue('e acute holds an e', Masks(#$C3#$A9, 'e'));
   AssertFalse('e is not e and an acute', Masks('e', 'e' + #$CC#$81));
   AssertTrue('e acute is e and an acute', Masks('e' + #$CC#$81, #$C3#$A9));
   AssertTrue('E acute is e and an acute', Masks('E' + #$CC#$81, #$C3#$A9));
-  { A secret that is followed by a mark in the text is another text. }
-  AssertEquals('xkey' + #$CC#$87 + 'y', ZbMaskSecret('xkey' + #$CC#$87 + 'y', 'key'));
+  { A secret that is followed by a mark in the text: the mark is masked too. }
+  AssertEquals('xREDACTEDy', ZbMaskSecret('xkey' + #$CC#$87 + 'y', 'key'));
   AssertEquals('x REDACTED y', ZbMaskSecret('x key y', 'key'));
 end;
 

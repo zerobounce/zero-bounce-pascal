@@ -642,6 +642,7 @@ implementation
         finally
             J.Free;
         end;
+        Text := Trim(Text);
         if Text = '' then
             Text := 'ZeroBounce returned an unexpected JSON response.';
         Error := ZbException.FromResponse(Text, Response);

@@ -27,6 +27,10 @@ type
     procedure TestBaseUrlsWithATrailingSlash;
     procedure TestAJsonAnswerCutShortIsAnErrorOnEveryTransport;
     procedure TestARefusedUploadCarriesNoStatus;
+    procedure TestAnUploadAnsweredWithNoStatusLineIsATransportError;
+    procedure TestAWhitespaceOnlyMessageGetsTheFixedText;
+    procedure TestAKeyEchoedBeforeCombiningMarksIsMasked;
+    procedure TestAUrlEncodedKeyIsMaskedWhateverTheCompilerChecks;
     procedure TestAWarmupTransportErrorIsRedacted;
     procedure TestEveryPublicCallRaisesZbExceptionWhenRefused;
     procedure TestAProtocolErrorIsAZbExceptionWithoutTheKey;
@@ -54,7 +58,7 @@ type
     procedure TestAContentEncodingIsNotReadAsAFile;
     procedure TestARequestWithNoMockLeavesNoLastBodyOrHeader;
     procedure TestAnAccentedKeyInAnErrorMessageIsRedactedWithoutCwstring;
-    procedure TestTheFoldDropsCombiningMarksFromBothSides;
+    procedure TestTheFoldMatchesCanonicalAndCaseVariantsAndMasksTrailingMarks;
     procedure TestHtmlCharacterReferencesAreDecodedInGeneral;
     procedure TestAKeyEchoedAsAQuotEntityInAnHtmlTitleIsOmitted;
     procedure TestMoreInvisibleCodePointsAreRefusedAndTheKeyKept;
@@ -350,6 +354,12 @@ begin
     { Longer than the read timeout the test sets, then hang up without an
       answer: a client with no read timeout waits the whole time. }
     Sleep(SLOW_REPLY_MS);
+    CloseSocket(Sock);
+    Exit;
+  end;
+  if Pos('nostatus-', Item.ApiKey) = 1 then
+  begin
+    { The connection is closed with no status line at all. }
     CloseSocket(Sock);
     Exit;
   end;
@@ -1632,7 +1642,7 @@ begin
   end;
 end;
 
-procedure TTestOffline.TestTheFoldDropsCombiningMarksFromBothSides;
+procedure TTestOffline.TestTheFoldMatchesCanonicalAndCaseVariantsAndMasksTrailingMarks;
 const
   DOT = #$CC#$87;
   ACUTE = #$CC#$81;
@@ -1683,9 +1693,9 @@ begin
   AssertEquals('leading U+0307, as it is', 'echo [REDACTED] end',
     ZbMaskSecret('echo [' + DOT + 'secrettext-3] end', Secret));
   Kept('leading U+0307, without it', 'secrettext-3');
-  { A key followed by marks is not the key: the match must end on a
-    character boundary, as 'e' is not in 'e' + U+0301. }
-  AssertEquals('marks after the key', 'x pass-11' + DOT + ACUTE + ' y',
+  { A key followed by marks: the marks belong to the last character, and
+    are masked with it (the raw key is not left in the text). }
+  AssertEquals('marks after the key', 'x REDACTED y',
     ZbMaskSecret('x pass-11' + DOT + ACUTE + ' y', 'pass-11'));
   { The marks of one echo may come in another order: the canonical order. }
   Secret := 'a' + #$CC#$A3 + ACUTE + '-key-13';
@@ -1693,6 +1703,88 @@ begin
   { Text with marks and no echo of the key stays as it was. }
   AssertEquals('unrelated', 'e' + ACUTE + 'i' + DOT + ' stays',
     ZbMaskSecret('e' + ACUTE + 'i' + DOT + ' stays', 'unrelated-12'));
+end;
+
+procedure TTestOffline.TestAnUploadAnsweredWithNoStatusLineIsATransportError;
+var
+  Message: String;
+  Status: Integer;
+begin
+  EnsureStub;
+  UseStub('nostatus-1');
+  Message := '';
+  Status := -1;
+  try
+    try
+      CallTransport(tpMultipart);
+    except
+      on E: ZbException do
+      begin
+        Message := E.Message;
+        Status := E.StatusCode;
+      end;
+    end;
+  finally
+    ClearRecorded;
+    UseDefaultUrls;
+  end;
+  AssertEquals('status', 0, Status);
+  AssertTrue('wording: ' + Message, Pos('No HTTP response from ZeroBounce', Message) > 0);
+  AssertTrue('not the empty-body text: ' + Message, Pos('Empty response', Message) = 0);
+end;
+
+procedure TTestOffline.TestAWhitespaceOnlyMessageGetsTheFixedText;
+var
+  Message: String;
+begin
+  ZBInitialize('ws-key', 'https://api.example.test/v2');
+  ZBMockResponse(200, '{"message":"   "}', 'application/json');
+  Message := '';
+  try
+    try
+      ZbGetCredits;
+    except
+      on E: ZbException do
+        Message := E.Message;
+    end;
+  finally
+    ZbResponseMock := cDefaultMock;
+  end;
+  AssertTrue('fixed text: ' + Message, Pos('ZeroBounce returned an unexpected JSON response.', Message) > 0);
+end;
+
+procedure TTestOffline.TestAKeyEchoedBeforeCombiningMarksIsMasked;
+const
+  ACUTE = #$CC#$81;
+  DOT = #$CC#$87;
+var
+  Marks: String;
+  I: Integer;
+begin
+  AssertEquals('one mark', 'echo REDACTED end', ZbMaskSecret('echo abcdefgh' + ACUTE + ' end', 'abcdefgh'));
+  Marks := '';
+  for I := 1 to 20 do
+    Marks := Marks + ACUTE;
+  AssertEquals('twenty marks', 'echo REDACTED end', ZbMaskSecret('echo abcdefgh' + Marks + ' end', 'abcdefgh'));
+  AssertEquals('inside quotes', 'echo "REDACTED" end', ZbMaskSecret('echo "abcdefgh' + ACUTE + '" end', 'abcdefgh'));
+  { A secret that starts with U+0307, echoed after an i. }
+  AssertEquals('leading U+0307 after an i', 'echo REDACTED end',
+    ZbMaskSecret('echo i' + DOT + 'abcdefg end', DOT + 'abcdefg'));
+  AssertEquals('leading U+0307 after an upper-case I', 'echo REDACTED end',
+    ZbMaskSecret('echo I' + DOT + 'ABCDEFG end', DOT + 'abcdefg'));
+  { A secret that ends in marks needs them: fewer is not a match. }
+  AssertEquals('fewer marks', 'echo abcdefg' + ACUTE + ' end',
+    ZbMaskSecret('echo abcdefg' + ACUTE + ' end', 'abcdefg' + ACUTE + DOT));
+  AssertEquals('all the marks', 'echo REDACTED end',
+    ZbMaskSecret('echo abcdefg' + ACUTE + DOT + ' end', 'abcdefg' + ACUTE + DOT));
+end;
+
+procedure TTestOffline.TestAUrlEncodedKeyIsMaskedWhateverTheCompilerChecks;
+begin
+  { The view hash multiplies past 64 bits: built with overflow and range
+    checks (-Co -Cr) it must not raise. }
+  AssertEquals('form-encoded', 'x REDACTED y', ZbMaskSecret('x a%26bcdefgh y', 'a&bcdefgh'));
+  AssertEquals('encoded twice', ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('x a%2526bcdefgh y', 'a&bcdefgh'));
 end;
 
 procedure TTestOffline.TestHtmlCharacterReferencesAreDecodedInGeneral;
@@ -3413,12 +3505,14 @@ var
   { The secret the current fuzz sweep checks, besides FUZZ_KEY. }
   FuzzSecret: String;
 
+{$PUSH}{$Q-}{$R-}
 function FuzzNext: Cardinal;
 begin
   { A fixed linear congruential generator, so a failure repeats. }
   FuzzSeed := FuzzSeed * 1664525 + 1013904223;
   Result := FuzzSeed shr 8;
 end;
+{$POP}
 
 { One encoding a server or proxy may apply: URL-encoding with a space as %20
   (0) or '+' (1), JSON escaping (2), JSON escaping with '/' as '\/' (3). }
