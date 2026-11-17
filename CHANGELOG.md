@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-11-17
+
 ### Breaking
 
 - `TZbJson.GetString`, `GetInteger` and `GetBoolean` (in __ZbStructures__) now check the JSON type of the field they read, and raise `Exception` (`ZeroBounce returned the field "<key>" missing or with the wrong JSON type.`) when the field holds another JSON type. With FPC, 3.0.1 converted the value through fpjson: `GetString` returned a number or boolean as its text, `GetInteger` read `true` as `1` and `5.5` as `6`, and `GetBoolean` read a number or a string such as `"true"`. A missing field or `null` still gives `''`, `0` or `False`. Code that calls them on a field of another type, and relied on the conversion, now gets the exception: read the value with `GetValue` and convert it yourself. The signatures are unchanged, so existing code compiles. New: `GetRequiredString` (raises when the field is missing, `null` or not a string) and `GetIntegerText` (the text of a required integer field: a JSON integer as decimal text, or a JSON string returned as it is, unchecked; it raises for a missing, null or other JSON value).
@@ -261,7 +263,8 @@ Read the **Breaking** entries under Changed before upgrading. In short: call `ZB
 
 - Full Pascal/Delphi SDK: validation, batch, bulk, AI scoring, find email, domain search, credits, API usage, and activity data.
 
-[Unreleased]: https://github.com/zerobounce/zero-bounce-pascal/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/zerobounce/zero-bounce-pascal/compare/v4.0.0...HEAD
+[4.0.0]: https://github.com/zerobounce/zero-bounce-pascal/compare/v3.0.1...v4.0.0
 [3.0.1]: https://github.com/zerobounce/zero-bounce-pascal/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/zerobounce/zero-bounce-pascal/compare/v2.1.3...v2.2.0
