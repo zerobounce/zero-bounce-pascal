@@ -79,6 +79,10 @@ type
         procedure TestJsonKeysAreLookedUpExactly;
         procedure TestGetFileErrorKeysInAnyCase;
         procedure TestActivityDaysAcceptsAJsonInteger;
+        procedure TestTheSuccessFlagSet;
+        procedure TestASuccessThatIsNoFlagHidesNothing;
+        procedure TestARealFalseFlagInAnySpellingIsAFailure;
+        procedure TestErrorTextOfALongObjectAndOfAList;
     end;
 
 implementation
@@ -1671,6 +1675,116 @@ begin
         end;
         AssertTrue('active_in_days ' + BAD[I] + ' was taken as a count', Raised);
     end;
+end;
+
+procedure TTestBehaviour.TestTheSuccessFlagSet;
+const
+    TRUE_BODIES: array[0..9] of String = (
+        '{"success":true}', '{"success":1}', '{"success":1.0}', '{"success":1e0}', '{"success":"true"}',
+        '{"success":" TRUE\t"}', '{"success":"1"}', '{"Success":true}', '{"success":10e-1}', '{"success":"True"}');
+    FALSE_BODIES: array[0..9] of String = (
+        '{"success":false}', '{"success":0}', '{"success":0.0}', '{"success":-0}', '{"success":"false"}',
+        '{"success":"\nFalse "}', '{"success":"0"}', '{"SUCCESS":false}', '{"success":0e5}', '{"success":False}');
+    OTHER_BODIES: array[0..13] of String = (
+        '{"success":null}', '{"success":2}', '{"success":0.4}', '{"success":"maybe"}', '{"success":""}',
+        '{"success":{}}', '{"success":[]}', '{"success":[false]}', '{"success":-1}', '{"success":1.0000001}',
+        '{"success":"2"}', '{"success":"\u00a01"}', '{"success":1e1}', '{"success":"yes"}');
+var
+    I: Integer;
+begin
+    for I := Low(TRUE_BODIES) to High(TRUE_BODIES) do
+        AssertTrue(TRUE_BODIES[I], ZbSuccessFlagOfBody(TRUE_BODIES[I]) = zsfTrue);
+    for I := Low(FALSE_BODIES) to High(FALSE_BODIES) do
+    begin
+        AssertTrue(FALSE_BODIES[I], ZbSuccessFlagOfBody(FALSE_BODIES[I]) = zsfFalse);
+        AssertTrue(FALSE_BODIES[I] + ' failure', ZbSuccessMeansFailure(FALSE_BODIES[I]));
+    end;
+    for I := Low(OTHER_BODIES) to High(OTHER_BODIES) do
+    begin
+        AssertTrue(OTHER_BODIES[I], ZbSuccessFlagOfBody(OTHER_BODIES[I]) = zsfNotFlag);
+        AssertFalse(OTHER_BODIES[I] + ' failure', ZbSuccessMeansFailure(OTHER_BODIES[I]));
+    end;
+    AssertTrue('absent', ZbSuccessFlagOfBody('{"a":1}') = zsfAbsent);
+    AssertTrue('nested only', ZbSuccessFlagOfBody('{"meta":{"success":false}}') = zsfAbsent);
+    AssertTrue('in a string', ZbSuccessFlagOfBody('{"a":"\"success\":false"}') = zsfAbsent);
+    AssertTrue('not an object', ZbSuccessFlagOfBody('[{"success":false}]') = zsfAbsent);
+end;
+
+procedure TTestBehaviour.TestASuccessThatIsNoFlagHidesNothing;
+const
+    ODD: array[0..5] of String = ('2', '"maybe"', '0.4', 'null', '{}', '[]');
+var
+    Index, V: Integer;
+    Text: String;
+    Status: Integer;
+begin
+    Text := '';
+    for V := Low(ODD) to High(ODD) do
+        for Index := 0 to High(NO_RESULT_NAMES) do
+        begin
+            { Judged as if "success" were not there: an error text alone, with
+              the field beside it, is an error. }
+            if (Index >= FINDER_FIRST) or (Index in [19..23]) then
+            begin
+                AssertTrue(NO_RESULT_NAMES[Index] + ' ' + ODD[V] + ' with an error',
+                    NoResultCall(Index, '{"success":' + ODD[V] + ',"error":"Invalid API key"}', Text, Status));
+                AssertTrue(NO_RESULT_NAMES[Index] + ' ' + ODD[V] + ' with a message: ' + Text,
+                    NoResultCall(Index, '{"success":' + ODD[V] + ',"message":"Invalid file id"}', Text, Status));
+                if Index < FINDER_FIRST then
+                    AssertTrue(NO_RESULT_NAMES[Index] + ' ' + ODD[V] + ' alone',
+                        NoResultCall(Index, '{"success":' + ODD[V] + '}', Text, Status));
+            end;
+        end;
+    { A real true beside a message is not an error (as before). }
+    AssertFalse('success true beside a message',
+        NoResultCall(FINDER_FIRST, '{"success":true,"message":"hello","domain":"example.com"}', Text, Status));
+    AssertTrue('a file status of a non-flag only',
+        NoResultCall(STATUS_FIRST, '{"success":"maybe"}', Text, Status));
+    AssertFalse('a file status with a real 1',
+        NoResultCall(STATUS_FIRST, '{"success":1}', Text, Status));
+end;
+
+procedure TTestBehaviour.TestARealFalseFlagInAnySpellingIsAFailure;
+const
+    FLAGS: array[0..4] of String = ('0', '0.0', '"0"', '" FALSE "', 'false');
+var
+    I, Index: Integer;
+    Text: String;
+    Status: Integer;
+begin
+    Text := '';
+    for I := Low(FLAGS) to High(FLAGS) do
+    begin
+        for Index := 0 to High(NO_RESULT_NAMES) do
+            if Index in [4, 7, 19..23, 29..39] then
+                AssertTrue(NO_RESULT_NAMES[Index] + ' with success ' + FLAGS[I],
+                    NoResultCall(Index, '{"success":' + FLAGS[I] + ',"message":"Invalid file id"}', Text, Status));
+    end;
+    ZBMockResponse(200, '{"success":0,"message":"Invalid file id"}', 'application/json');
+    try
+        ZbGetApiUsage;
+        Fail('no error');
+    except
+        on E: ZbException do
+            AssertTrue(E.Message, Pos('Invalid file id', E.Message) > 0);
+    end;
+end;
+
+procedure TTestBehaviour.TestErrorTextOfALongObjectAndOfAList;
+var
+    Long: String;
+begin
+    { A long object with a short message field says the field. }
+    Long := '{"message":"File cannot be found.","pad":"' + StringOfChar('x', 5000) + '"}';
+    AssertEquals('File cannot be found.', ZbMessageFromBody(Long, 500));
+    AssertEquals('File cannot be found.', ZbMessageFromBody(Long, 200));
+    { Without one, the fixed sentence. }
+    AssertEquals('ZeroBounce returned an error response.',
+        ZbMessageFromBody('{"pad":"' + StringOfChar('x', 5000) + '"}', 500));
+    { A list on an error status keeps its text; on a success status it is a
+      file's place and has none. }
+    AssertEquals('["Invalid key"]', ZbMessageFromBody('["Invalid key"]', 401));
+    AssertEquals('ZeroBounce returned an error response.', ZbMessageFromBody('["Invalid key"]', 200));
 end;
 
 initialization

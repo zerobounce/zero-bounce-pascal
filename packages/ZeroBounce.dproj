@@ -64,7 +64,7 @@
         <DCC_Namespace>Winapi;System.Win;Data.Win;Datasnap.Win;Web.Win;Soap.Win;Xml.Win;Bde;$(DCC_Namespace)</DCC_Namespace>
         <BT_BuildType>Debug</BT_BuildType>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
-        <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=1.0.0.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=1.0.0.0;Comments=</VerInfo_Keys>
+        <VerInfo_Keys>CompanyName=;FileDescription=$(MSBuildProjectName);FileVersion=3.0.1.0;InternalName=;LegalCopyright=;LegalTrademarks=;OriginalFilename=;ProgramID=com.embarcadero.$(MSBuildProjectName);ProductName=$(MSBuildProjectName);ProductVersion=3.0.1.0;Comments=</VerInfo_Keys>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <DCC_UsePackage>rtl;$(DCC_UsePackage)</DCC_UsePackage>
     </PropertyGroup>
@@ -85,7 +85,7 @@
         <DCC_RemoteDebug>false</DCC_RemoteDebug>
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
-        <DllVersion>1.1.0</DllVersion>
+        <DllVersion>3.0.1</DllVersion>
     </PropertyGroup>
     <PropertyGroup Condition="'$(Cfg_2)'!=''">
         <DCC_LocalDebugSymbols>false</DCC_LocalDebugSymbols>
@@ -97,7 +97,7 @@
         <VerInfo_IncludeVerInfo>true</VerInfo_IncludeVerInfo>
         <VerInfo_Locale>1033</VerInfo_Locale>
         <DCC_Description>Delphi wrapper for the ZeroBounce API v2.</DCC_Description>
-        <DllVersion>1.1.0</DllVersion>
+        <DllVersion>3.0.1</DllVersion>
         <DllSuffix>280</DllSuffix>
     </PropertyGroup>
     <ItemGroup>
@@ -110,6 +110,8 @@
         <DCCReference Include="..\src\zbstructures.pas"/>
         <DCCReference Include="..\src\zbutility.pas"/>
         <DCCReference Include="..\src\zbvalidation.pas"/>
+        <DCCReference Include="..\src\zbpriority3.pas"/>
+        <DCCReference Include="..\src\zbwarmup.pas"/>
         <None Include="ModelSupport_ZeroBounce\default.txaPackage"/>
         <BuildConfiguration Include="Base">
             <Key>Base</Key>

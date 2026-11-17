@@ -30,6 +30,10 @@ type
     procedure TestAnApiErrorMessageNeverCarriesTheKey;
     procedure TestInitializeIsAllOrNothing;
     procedure TestSuccessFalseAsAStringIsAFailure;
+    procedure TestADirtyUrlIsRefusedBeforeSending;
+    procedure TestADirtyBaseUrlIsRefusedEverywhere;
+    procedure TestANonPositiveTimeoutIsRefusedBeforeSending;
+    procedure TestReplacingTheApiKeyWipesTheOldBuffer;
   end;
 
 implementation
@@ -498,6 +502,160 @@ begin
     end;
   end;
   AssertTrue('"success": "false" should raise', Raised);
+end;
+
+procedure TTestUtility.TestADirtyUrlIsRefusedBeforeSending;
+const
+  Bad: array[0..19] of String = (
+    'https://api.zerobounce.net/v2'#13#10'X-Evil: 1',
+    'https://api.zerobounce.net/v2'#9'x',
+    'https://api.zerobounce.net/v2 x',
+    'https://api.zerobounce.net/v2'#$C2#$A0'x',
+    'https://api.zerobounce.net/v2'#$E2#$80#$8B'x',
+    'https://api.zerobounce.net/v2'#$E2#$80#$AE'x',
+    'https://api.zerobounce.net/v2'#$E3#$80#$80'x',
+    'https://api.zerobounce.net/v2'#$E2#$81#$A0'x',
+    'https://api.zerobounce.net/v2'#$EF#$BB#$BF'x',
+    'https://api.zerobounce.net/v2'#$E2#$80#$8C'x',
+    'https://api.zerobounce.net/v2'#$E2#$80#$80'x',
+    'https://api.zerobounce.net/v2'#$E2#$81#$A6'x',
+    'https://api.zerobounce.net/v2'#$C2#$85'x',
+    'https://api.zerobounce.net/v2'#127'x',
+    'https://api.zerobounce.net\v2',
+    'https://api.zerobounce.net/v2/'#$FF'x',
+    'https://api.zerobounce.net/v2/'#$C0#$AF,
+    'https://api.zerobounc'#$E2#$80#$8B'e.net/v2',
+    'https://api.zerobounce'#$EF#$BC#$A0'evil.example/v2',
+    ' https://api.zerobounce.net/v2'
+  );
+var
+  I: Integer;
+  Raised: Boolean;
+begin
+  for I := 0 to High(Bad) do
+  begin
+    AssertTrue('refused: ' + IntToStr(I), UrlRejected(Bad[I]));
+    ZBMockResponse(200, '{"Credits": "7"}');
+    ZbResponseMock.UrlCalled := '';
+    ZbApiBaseURL := Bad[I];
+    Raised := False;
+    try
+      try
+        ZbGetCredits;
+      except on E: ZbException do
+        Raised := True;
+      end;
+    finally
+      ZbApiBaseURL := 'https://api.zerobounce.net/v2';
+    end;
+    AssertTrue('request refused ' + IntToStr(I), Raised);
+    AssertEquals('nothing sent ' + IntToStr(I), '', ZbResponseMock.UrlCalled);
+  end;
+  AssertFalse('a UTF-8 path is fine', UrlRejected('https://api.zerobounce.net/v2/caf'#$C3#$A9));
+end;
+
+procedure TTestUtility.TestADirtyBaseUrlIsRefusedEverywhere;
+const
+  Dirty = 'https://api.zerobounce.net/v2'#13#10'X-Evil: 1';
+var
+  Saved: String;
+  Raised: Boolean;
+begin
+  Saved := BULK_URI;
+  try
+    BULK_URI := Dirty;
+    Raised := False;
+    try
+      ZbBaseUrl(BULK_URI);
+    except on E: ZbException do
+      Raised := True;
+    end;
+    AssertTrue('ZbBaseUrl on BULK_URI', Raised);
+    Raised := False;
+    try
+      ZBInitialize('test_key', Dirty);
+    except on E: ZbException do
+      Raised := True;
+    end;
+    AssertTrue('ZBInitialize with a base URL', Raised);
+  finally
+    BULK_URI := Saved;
+  end;
+end;
+
+procedure TTestUtility.TestANonPositiveTimeoutIsRefusedBeforeSending;
+var
+  SavedRead, SavedConnect: Integer;
+  Raised: Boolean;
+  Msg: String;
+begin
+  SavedRead := ZbReadTimeoutMs;
+  SavedConnect := ZbConnectTimeoutMs;
+  try
+    ZBMockResponse(200, '{"Credits": "7"}');
+    ZbReadTimeoutMs := 0;
+    ZbResponseMock.UrlCalled := '';
+    Raised := False;
+    try
+      ZbGetCredits;
+    except on E: ZbException do
+      begin
+        Raised := True;
+        Msg := E.Message;
+      end;
+    end;
+    AssertTrue('read timeout 0 refused', Raised);
+    AssertEquals('ZbReadTimeoutMs must be greater than 0', Msg);
+    AssertEquals('nothing sent', '', ZbResponseMock.UrlCalled);
+    ZbReadTimeoutMs := SavedRead;
+    ZbConnectTimeoutMs := -1;
+    Raised := False;
+    try
+      ZbGetCredits;
+    except on E: ZbException do
+      begin
+        Raised := True;
+        Msg := E.Message;
+      end;
+    end;
+    AssertTrue('connect timeout -1 refused', Raised);
+    AssertEquals('ZbConnectTimeoutMs must be greater than 0', Msg);
+    AssertEquals('nothing sent', '', ZbResponseMock.UrlCalled);
+  finally
+    ZbReadTimeoutMs := SavedRead;
+    ZbConnectTimeoutMs := SavedConnect;
+  end;
+end;
+
+procedure TTestUtility.TestReplacingTheApiKeyWipesTheOldBuffer;
+var
+  Key: String;
+  P: PChar;
+  I: Integer;
+  AllZero: Boolean;
+begin
+  Key := 'wipe_me_' + IntToStr(GetTickCount64);
+  UniqueString(Key);
+  ZBInitialize(Key);
+  Key := '';
+  { ZbApiKey alone holds the buffer now. }
+  P := PChar(ZbApiKey);
+  ZBInitialize('another_key_value');
+  AllZero := True;
+  for I := 0 to 7 do
+    if P[I] <> #0 then
+      AllZero := False;
+  AssertTrue('the old key buffer was overwritten', AllZero);
+  AssertEquals('another_key_value', ZbApiKey);
+  { A key the caller still holds is not touched. }
+  Key := 'held_by_caller_' + IntToStr(GetTickCount64);
+  UniqueString(Key);
+  ZBInitialize(Key);
+  ZBInitialize('yet_another_key');
+  AssertEquals('held_by_caller_', Copy(Key, 1, 15));
+  { Re-initializing with the same buffer keeps the key. }
+  ZBInitialize(ZbApiKey);
+  AssertEquals('yet_another_key', ZbApiKey);
 end;
 
 initialization

@@ -67,6 +67,10 @@ const
       own request encoding plus three layers a server or proxy may add when
       it echoes the request back. }
     ZB_SECRET_DECODE_LAYERS = 4;
+
+    { How much of the start, and of the end, of a long text ZbMaskSecret looks
+      at in decoded views (the forms themselves are masked in all of it). }
+    ZB_MASK_VIEW_LIMIT = 32768;
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
     ENDPOINT_SCORE_EMAIL = '/scoring';
@@ -173,6 +177,13 @@ type
     { Raises unless the URL is https. Loopback is allowed so an offline test
       can point the SDK at a local stub; nothing leaves the machine there. }
     procedure ZbRequireHttpsUrl(const Url, Name: String);
+    { Overwrites the text of S in place when the SDK holds the only reference
+      to its buffer (not a literal, not a string another variable shares), then
+      empties S. Used on a replaced or finalized key. }
+    procedure ZbWipeString(var S: String);
+    { Raises unless the URL is free of controls, white space, invisible
+      characters, backslashes, invalid UTF-8 and (in the host) non-ASCII. }
+    procedure ZbRequireCleanUrl(const Url, Name: String);
     { One path segment, url-encoded, or a clear error. A segment of '.' or '..'
       would walk the request out of the endpoint it was meant for. }
     function ZbPathSegment(const Value, Name: String): String;
@@ -194,6 +205,8 @@ type
       parameters: application/json, text/json or anything ending in +json. }
     function ZbContentTypeIsJson(const ContentType: String): Boolean;
 type
+    { What a body's "success" field says; see ZbSuccessFlagOfBody. }
+    TZbSuccessFlag = (zsfAbsent, zsfNotFlag, zsfTrue, zsfFalse);
     { What a file download answered with. }
     TZbDownloadKind = (zdkFile, zdkEmpty, zdkHtml, zdkJson);
     { zdkEmpty: no body, or one of padding only. zdkHtml: an HTML content
@@ -205,6 +218,15 @@ type
     { Whether a JSON body says the call failed although the HTTP status was a
       success. The API sends "success" as a JSON false, "false" or "False". }
     function ZbSuccessMeansFailure(const Body: String): Boolean;
+    { What a body's own "success" field is. A flag is a JSON boolean, the
+      number 0 or 1 (1.0 too), or the text true, false, 0 or 1 (any case,
+      trimmed of ASCII whitespace). Anything else (null, 2, 0.4, "maybe", an
+      object, a list) is no flag: zsfNotFlag, to be read as if the field were
+      absent. }
+    function ZbSuccessFlagOfBody(const Body: String): TZbSuccessFlag;
+    { The same decision for one value: Token is the raw text of a bare JSON
+      value, or the unescaped text of a JSON string (IsString). }
+    function ZbClassifySuccess(const Token: String; IsString: Boolean): TZbSuccessFlag;
     function ZbMessageFromBody(const Body: String; StatusCode: Integer): String;
     function ZBGetRequest(url: String): TZbRequestResponse;
     // performs a POST request with a raw JSON body
@@ -759,12 +781,132 @@ end;
         Result := Length(Text) + 1;
     end;
 
-    function ZbSuccessMeansFailure(const Body: String): Boolean;
+    { Whether Token is a number of exactly the value 0 or 1, read from its
+      decimal digits (so 1.0, 1e0 and 0.0 count, 0.4 and 1.0000000001 do not). }
+    function ZbNumberIsZeroOrOne(const Token: String; out IsOne: Boolean): Boolean;
     var
-        Trimmed, Key, Value: String;
-        I, Close, Depth, After: Integer;
+        P, Len, Exp10, ExpAdd: Integer;
+        Digits: String;
+        Negative, ExpNegative, SawDigit: Boolean;
     begin
         Result := False;
+        IsOne := False;
+        Len := Length(Token);
+        P := 1;
+        Negative := False;
+        Digits := '';
+        Exp10 := 0;
+        if (P <= Len) and (Token[P] = '-') then
+        begin
+            Negative := True;
+            Inc(P);
+        end;
+        SawDigit := False;
+        while (P <= Len) and (Token[P] >= '0') and (Token[P] <= '9') do
+        begin
+            Digits := Digits + Token[P];
+            SawDigit := True;
+            Inc(P);
+        end;
+        if not SawDigit then
+            Exit;
+        if (P <= Len) and (Token[P] = '.') then
+        begin
+            Inc(P);
+            SawDigit := False;
+            while (P <= Len) and (Token[P] >= '0') and (Token[P] <= '9') do
+            begin
+                Digits := Digits + Token[P];
+                Dec(Exp10);
+                SawDigit := True;
+                Inc(P);
+            end;
+            if not SawDigit then
+                Exit;
+        end;
+        ExpAdd := 0;
+        if (P <= Len) and ((Token[P] = 'e') or (Token[P] = 'E')) then
+        begin
+            Inc(P);
+            ExpNegative := False;
+            if (P <= Len) and ((Token[P] = '+') or (Token[P] = '-')) then
+            begin
+                ExpNegative := Token[P] = '-';
+                Inc(P);
+            end;
+            SawDigit := False;
+            while (P <= Len) and (Token[P] >= '0') and (Token[P] <= '9') do
+            begin
+                SawDigit := True;
+                { Far beyond any exponent that could bring a mantissa to 1. }
+                if ExpAdd < 100000 then
+                    ExpAdd := ExpAdd * 10 + (Ord(Token[P]) - Ord('0'));
+                Inc(P);
+            end;
+            if not SawDigit then
+                Exit;
+            if ExpNegative then
+                ExpAdd := -ExpAdd;
+        end;
+        if P <= Len then
+            Exit;
+        Inc(Exp10, ExpAdd);
+        { It is a number: now whether it is 0 or 1. }
+        while (Digits <> '') and (Digits[1] = '0') do
+            Delete(Digits, 1, 1);
+        if Digits = '' then
+        begin
+            Result := True;
+            Exit;
+        end;
+        while (Digits <> '') and (Digits[Length(Digits)] = '0') do
+        begin
+            Delete(Digits, Length(Digits), 1);
+            Inc(Exp10);
+        end;
+        if (Digits = '1') and (Exp10 = 0) and not Negative then
+        begin
+            Result := True;
+            IsOne := True;
+        end;
+    end;
+
+    function ZbClassifySuccess(const Token: String; IsString: Boolean): TZbSuccessFlag;
+    var
+        Lower: String;
+        Start, Stop: Integer;
+        IsOne: Boolean;
+    begin
+        Result := zsfNotFlag;
+        Start := 1;
+        Stop := Length(Token);
+        { ASCII whitespace only: Trim would also take other control bytes. }
+        while (Start <= Stop) and ((Token[Start] = ' ') or ((Token[Start] >= #9) and (Token[Start] <= #13))) do
+            Inc(Start);
+        while (Stop >= Start) and ((Token[Stop] = ' ') or ((Token[Stop] >= #9) and (Token[Stop] <= #13))) do
+            Dec(Stop);
+        Lower := LowerCase(Copy(Token, Start, Stop - Start + 1));
+        if (Lower = 'true') or (IsString and (Lower = '1')) then
+            Exit(zsfTrue);
+        if (Lower = 'false') or (IsString and (Lower = '0')) then
+            Exit(zsfFalse);
+        if (not IsString) and ZbNumberIsZeroOrOne(Lower, IsOne) then
+        begin
+            if IsOne then
+                Result := zsfTrue
+            else
+                Result := zsfFalse;
+        end;
+    end;
+
+    function ZbSuccessFlagOfBody(const Body: String): TZbSuccessFlag;
+    var
+        Trimmed, Key, Token: String;
+        I, Close, Depth, After, Finish: Integer;
+        IsString: Boolean;
+        One: TZbSuccessFlag;
+    begin
+        Result := zsfAbsent;
         Trimmed := Trim(Body);
         if (Trimmed = '') or (Trimmed[1] <> '{') then
             Exit;
@@ -792,14 +934,28 @@ end;
                         Key := LowerCase(ZbJsonUnescapeView(Copy(Trimmed, I + 1, Close - I - 1)));
                         if Key = 'success' then
                         begin
-                            { The value is either a JSON false or the string
-                              "false", in any case. }
                             Inc(After);
                             while (After <= Length(Trimmed)) and (Trimmed[After] in [' ', #9, #10, #13]) do
                                 Inc(After);
-                            Value := LowerCase(Copy(Trimmed, After, 7));
-                            if (Copy(Value, 1, 5) = 'false') or (Copy(Value, 1, 7) = '"false"') then
-                                Exit(True);
+                            IsString := (After <= Length(Trimmed)) and (Trimmed[After] = '"');
+                            if IsString then
+                            begin
+                                Finish := ZbJsonStringEnd(Trimmed, After);
+                                Token := ZbJsonUnescapeView(Copy(Trimmed, After + 1, Finish - After - 1));
+                            end
+                            else
+                            begin
+                                Finish := After;
+                                while (Finish <= Length(Trimmed)) and
+                                      not (Trimmed[Finish] in [',', '}', ']', ' ', #9, #10, #13]) do
+                                    Inc(Finish);
+                                Token := Copy(Trimmed, After, Finish - After);
+                            end;
+                            One := ZbClassifySuccess(Token, IsString);
+                            if One = zsfFalse then
+                                Exit(zsfFalse);
+                            if (One = zsfTrue) or (Result = zsfAbsent) then
+                                Result := One;
                         end;
                     end;
                     I := Close;
@@ -807,6 +963,11 @@ end;
             end;
             Inc(I);
         end;
+    end;
+
+    function ZbSuccessMeansFailure(const Body: String): Boolean;
+    begin
+        Result := ZbSuccessFlagOfBody(Body) = zsfFalse;
     end;
 
     { The text of a JSON object's "message", "error" or "error_message" when it
@@ -884,17 +1045,29 @@ end;
             { Too long to quote; it may well be valid JSON, so it is not
               called invalid. A list is never a message either: it is what a
               file download answers with in place of the file. }
-            if (Length(Trimmed) > 1000) or (Trimmed[1] = '[') then
-                Exit('ZeroBounce returned an error response.');
             { The API's own words, when the body says them in a field, instead
-              of the whole object. }
+              of the whole object: however long the rest of it is. }
             if Trimmed[1] = '{' then
             begin
                 Result := ZbJsonErrorText(Trimmed);
                 if Result <> '' then
+                begin
+                    { A field too long to quote is the body's size again. }
+                    if Length(Result) > 1000 then
+                        Result := 'ZeroBounce returned an error response.';
                     Exit;
+                end;
+                { An object with no such field, too long to quote. }
+                if Length(Trimmed) > 1000 then
+                    Exit('ZeroBounce returned an error response.');
+                Exit(Trimmed);
             end;
-            Exit(Trimmed);
+            { A list. On a success status it is what a file download answers
+              with in place of the file, never a message. On an error status
+              it is the API's own text (["Invalid key"]), as it is. }
+            if StatusCode < 300 then
+                Exit('ZeroBounce returned an error response.');
+            Exit(Copy(Trimmed, 1, 1000));
         end;
         { Rows of a file are not a message. }
         if ZbBodyLooksLikeCsv(Trimmed) then
@@ -993,6 +1166,24 @@ end;
          Self.Message := 'Json Error: ' + Self.Message;
 	end;
 
+    procedure ZbWipeString(var S: String);
+    begin
+        { StringRefCount is -1 for a literal and 1 for a buffer nobody else
+          shares; only the latter is ours to overwrite. }
+        if (S <> '') and (StringRefCount(S) = 1) then
+            FillChar(Pointer(S)^, Length(S) * SizeOf(Char), 0);
+        S := '';
+    end;
+
+    procedure ZbReplaceApiKey(const NewKey: String);
+    begin
+        { The old buffer is wiped unless it is the new key itself. A buffer
+          another variable shares is left alone (ZbWipeString checks). }
+        if Pointer(ZbApiKey) <> Pointer(NewKey) then
+            ZbWipeString(ZbApiKey);
+        ZbApiKey := NewKey;
+    end;
+
     function ZBApiURLToString(url: ZbApiURL): string;
     begin
         ZBApiURLToString := ZbApiURLValue[url];
@@ -1002,12 +1193,13 @@ end;
     begin
         { The same check as ZBInitialize: a dirty key is refused and the key
           already set stays. }
-        ZbApiKey := ZbCheckedApiKey(ApiKey);
+        ZbReplaceApiKey(ZbCheckedApiKey(ApiKey));
     end;
 
     function ZbBaseUrl(const Url: String): String;
     begin
-        Result := Trim(Url);
+        ZbRequireCleanUrl(Url, 'A base URL');
+        Result := Url;
         { Every endpoint path is appended, so a query or a fragment here would
           swallow it ('https://host/v2?x=1' + '/validate') and send the rest
           of the request, key included, to a different place than meant. The
@@ -1025,7 +1217,7 @@ end;
 
     procedure ZBInitialize(ApiKey: string; ApiBaseURL: ZbApiURL); overload;
     begin
-        ZbApiKey := ZbCheckedApiKey(ApiKey);
+        ZbReplaceApiKey(ZbCheckedApiKey(ApiKey));
         ZbApiBaseURL := ZBApiURLToString(ApiBaseURL);
     end;
 
@@ -1033,7 +1225,7 @@ end;
     var
         Normalized: String;
     begin
-        Normalized := Trim(ApiBaseURL);
+        Normalized := ApiBaseURL;
         if Normalized = '' then
             raise ZbException.Create('Empty parameter: api_base_url');
         { The same rail every request URL goes through: https, or loopback so
@@ -1042,7 +1234,7 @@ end;
         { Every endpoint constant starts with a slash, so a trailing one here
           would build '//getcredits'. }
         Normalized := ZbBaseUrl(Normalized);
-        ZbApiKey := ZbCheckedApiKey(ApiKey);
+        ZbReplaceApiKey(ZbCheckedApiKey(ApiKey));
         ZbApiBaseURL := Normalized;
     end;
 
@@ -1550,82 +1742,40 @@ end;
         end;
     end;
 
-    { What one character, as a code point, folds to when case is ignored: the
-      lowercase of the ASCII, Latin, Greek and Cyrillic letters the tables
-      name, and a few that fold across scripts. A letter the tables leave
-      unchanged is then folded by a locale-free upper-then-lower of that one
-      code point. ZbFoldUnit deals with the ones that become more than one
-      letter, including the sharp s, the ligatures and a Hangul syllable. }
-    function ZbSimpleFold(CodePoint: Integer): Integer;
+    { Unicode 16.0.0 full case folding (statuses C and F), generated by
+      tools/gen_casefold.py: ZB_CASEFOLD_KEYS ascending, three values for each. }
+    {$I zbcasefold.inc}
+
+    { What one code point folds to under full case folding, written to
+      Folded[0..2] (0 for none); the count. The binary search is over the
+      generated table. }
+    function ZbCaseFoldCodePoint(CodePoint: Integer; var Folded: array of LongInt): Integer;
+    var
+        Low, High, Mid: Integer;
     begin
-        Result := CodePoint;
-        case CodePoint of
-            $41..$5A, $C0..$D6, $D8..$DE, $391..$3A1, $3A3..$3AB, $410..$42F, $FF21..$FF3A:
-                Result := CodePoint + 32;
-            $100..$12F, $132..$137, $14A..$177, $1E00..$1E95, $460..$481, $48A..$4BF:
-                if not Odd(CodePoint) then
-                    Result := CodePoint + 1;
-            $139..$148, $179..$17E:
-                if Odd(CodePoint) then
-                    Result := CodePoint + 1;
-            $130: Result := Ord('i');
-            $178: Result := $FF;
-            $17F: Result := Ord('s');
-            $386: Result := $3AC;
-            $388..$38A: Result := CodePoint + 37;
-            $38C: Result := $3CC;
-            $38E, $38F: Result := CodePoint + 63;
-            $3C2: Result := $3C3;
-            $400..$40F: Result := CodePoint + 80;
-            $212A: Result := Ord('k');
-            $212B: Result := $E5;
-            { The dotless i folds to i, as the capital dotted I does; the micro
-              sign folds to Greek mu (what an upper-casing echo makes of it). }
-            $131: Result := Ord('i');
-            $B5: Result := $3BC;
-            { Latin Extended-B: letters that lower-case by one, then the ones
-              that move by another distance. U+01C4 / U+01C5 / U+01C6 (and the
-              other two digraph triples) all fold to the small letter. }
-            $182, $184, $187, $18B, $191, $198, $1A0, $1A2, $1A4, $1A7, $1AC,
-            $1AF, $1B3, $1B5, $1B8, $1BC, $1C5, $1C8, $1CB, $1CD, $1CF, $1D1,
-            $1D3, $1D5, $1D7, $1D9, $1DB, $1DE, $1E0, $1E2, $1E4, $1E6, $1E8,
-            $1EA, $1EC, $1EE, $1F2, $1F4, $1F8, $1FA, $1FC, $1FE, $200, $202,
-            $204, $206, $208, $20A, $20C, $20E, $210, $212, $214, $216, $218,
-            $21A, $21C, $21E, $222, $224, $226, $228, $22A, $22C, $22E, $230,
-            $232, $23B, $241, $246, $248, $24A, $24C, $24E:
-                Result := CodePoint + 1;
-            $1C4, $1C7, $1CA, $1F1:
-                Result := CodePoint + 2;
-            $243: Result := $180;
-            $23D: Result := $19A;
-            $220: Result := $19E;
-            $1F6: Result := $195;
-            $1F7: Result := $1BF;
-            $244: Result := $289;
-            $245: Result := $28C;
-            $18E: Result := $1DD;
-            $18F: Result := $259;
-            $190: Result := $25B;
-            $189, $18A, $193:
-                Result := CodePoint + 205;
-            $186: Result := $254;
-            $194: Result := $263;
-            $197: Result := $268;
-            $181: Result := $253;
-            $196, $19C:
-                Result := CodePoint + 211;
-            $19D: Result := $272;
-            $19F: Result := $275;
-            $1B1, $1B2:
-                Result := CodePoint + 217;
-            $1A6, $1A9, $1AE:
-                Result := CodePoint + 218;
-            $1B7: Result := $292;
-            $23E: Result := $2C66;
-            $23A: Result := $2C65;
-            { Armenian capitals. }
-            $531..$556:
-                Result := CodePoint + 48;
+        Result := 1;
+        Folded[0] := CodePoint;
+        Low := 0;
+        High := ZB_CASEFOLD_COUNT - 1;
+        while Low <= High do
+        begin
+            Mid := (Low + High) shr 1;
+            if ZB_CASEFOLD_KEYS[Mid] = CodePoint then
+            begin
+                Folded[0] := ZB_CASEFOLD_VALUES[Mid * 3];
+                Folded[1] := ZB_CASEFOLD_VALUES[Mid * 3 + 1];
+                Folded[2] := ZB_CASEFOLD_VALUES[Mid * 3 + 2];
+                Result := 1;
+                if Folded[1] <> 0 then
+                    Result := 2;
+                if Folded[2] <> 0 then
+                    Result := 3;
+                Exit;
+            end;
+            if ZB_CASEFOLD_KEYS[Mid] < CodePoint then
+                Low := Mid + 1
+            else
+                High := Mid - 1;
         end;
     end;
 
@@ -1700,93 +1850,36 @@ end;
         end;
     end;
 
-    { The simple lower case of the simple upper case of one code point, which
-      a text in any case folds to: Cyrillic U+04D9 and U+04D8 both give
-      U+04D9. The Character unit has its own tables, so the answer does not
-      depend on the locale of the process or on a widestring manager. A code
-      point whose case mapping is not a single code point is kept as it is. }
-    function ZbCaseCycle(CodePoint: Integer): Integer;
-
-        function ToUtf16(Value: Integer): UnicodeString;
-        begin
-            if Value >= $10000 then
-                Result := UnicodeString(WideChar($D800 + ((Value - $10000) shr 10))) +
-                    WideChar($DC00 + ((Value - $10000) and $3FF))
-            else
-                Result := UnicodeString(WideChar(Value));
-        end;
-
-        { The one code point of Text, or -1 when it is not exactly one. }
-        function FromUtf16(const Value: UnicodeString): Integer;
-        begin
-            Result := -1;
-            if Length(Value) = 1 then
-            begin
-                if (Ord(Value[1]) < $D800) or (Ord(Value[1]) > $DFFF) then
-                    Result := Ord(Value[1]);
-            end
-            else if (Length(Value) = 2) and (Ord(Value[1]) >= $D800) and (Ord(Value[1]) <= $DBFF) and
-                    (Ord(Value[2]) >= $DC00) and (Ord(Value[2]) <= $DFFF) then
-                Result := $10000 + ((Ord(Value[1]) - $D800) shl 10) + (Ord(Value[2]) - $DC00);
-        end;
-
-    var
-        Upper, Lower: Integer;
-    begin
-        Result := CodePoint;
-        if (CodePoint < $80) or (CodePoint > $10FFFF) or ((CodePoint >= $D800) and (CodePoint <= $DFFF)) then
-            Exit;
-        Upper := FromUtf16(TCharacter.ToUpper(ToUtf16(CodePoint)));
-        if Upper < 0 then
-            Upper := CodePoint;
-        Lower := FromUtf16(TCharacter.ToLower(ToUtf16(Upper)));
-        if Lower >= 0 then
-            Result := Lower;
-    end;
-
-    { The folded text of one character: ZbSimpleFold, then the letter a
-      precomposed one is built on, with these exceptions, all of which an echo
-      that upper-cases the secret would otherwise spell differently:
-      - the sharp s (and its capital) becomes 'ss';
-      - the ligatures U+FB00 to U+FB06 become their letters (ff fi fl ffi ffl
-        st st), U+0149 becomes U+02BC and n, U+0345 becomes the Greek iota;
-      - a Hangul syllable becomes its two or three jamo, as NFD has it;
-      - a character the tables above leave alone is lower-cased after being
-        upper-cased (ZbCaseCycle), then run through the tables once more:
-        Cyrillic U+04D8 and U+04D9 are one letter, and so are U+03D0 and
-        Greek beta. }
+    { The folded text of one character: its full case folding (the table
+      above), with the letter a precomposed one is built on (ZbBaseLetter) and
+      without combining marks, with these additions:
+      - the dotless i folds to i, as the capital dotted I does;
+      - a Hangul syllable becomes its two or three jamo, as NFD has it.
+      So the sharp s (and its capital) is 'ss', the ligatures U+FB00 to
+      U+FB06 are their letters, U+0587 is two Armenian letters and U+1F80 a
+      Greek alpha with psili and an iota, as an echo that upper-cases the
+      secret writes them. }
     function ZbFoldUnit(CodePoint: Integer): String;
     var
-        Folded, Cycled, Syllable: Integer;
+        Folded: array[0..2] of LongInt;
+        Count, K, Syllable: Integer;
     begin
-        case CodePoint of
-            $DF, $1E9E: Exit('ss');
-            $FB00: Exit('ff');
-            $FB01: Exit('fi');
-            $FB02: Exit('fl');
-            $FB03: Exit('ffi');
-            $FB04: Exit('ffl');
-            $FB05, $FB06: Exit('st');
-            $149: Exit(ZbCodePointText($2BC) + 'n');
-            $345: Exit(ZbCodePointText($3B9));
-            $AC00..$D7A3:
-                begin
-                    Syllable := CodePoint - $AC00;
-                    Result := ZbCodePointText($1100 + Syllable div 588) +
-                        ZbCodePointText($1161 + (Syllable mod 588) div 28);
-                    if Syllable mod 28 <> 0 then
-                        Result := Result + ZbCodePointText($11A7 + Syllable mod 28);
-                    Exit;
-                end;
-        end;
-        Folded := ZbBaseLetter(ZbSimpleFold(CodePoint));
-        if Folded = CodePoint then
+        if (CodePoint >= $AC00) and (CodePoint <= $D7A3) then
         begin
-            Cycled := ZbCaseCycle(CodePoint);
-            if Cycled <> CodePoint then
-                Folded := ZbBaseLetter(ZbSimpleFold(Cycled));
+            Syllable := CodePoint - $AC00;
+            Result := ZbCodePointText($1100 + Syllable div 588) +
+                ZbCodePointText($1161 + (Syllable mod 588) div 28);
+            if Syllable mod 28 <> 0 then
+                Result := Result + ZbCodePointText($11A7 + Syllable mod 28);
+            Exit;
         end;
-        Result := ZbCodePointText(Folded);
+        if CodePoint = $131 then
+            Exit('i');
+        Count := ZbCaseFoldCodePoint(CodePoint, Folded);
+        Result := '';
+        for K := 0 to Count - 1 do
+            if not ZbIsCombiningMark(Folded[K]) then
+                Result := Result + ZbCodePointText(ZbBaseLetter(Folded[K]));
     end;
 
     { One character at Text[At]: its code point and how many string units it
@@ -1918,6 +2011,13 @@ end;
             end;
             if CodePoint < 0 then
                 Piece := Copy(Text, I, Len)
+            else if CodePoint < $80 then
+            begin
+                if (CodePoint >= 65) and (CodePoint <= 90) then
+                    Piece := Chr(CodePoint + 32)
+                else
+                    Piece := Chr(CodePoint);
+            end
             else
                 Piece := ZbFoldUnit(CodePoint);
             for J := 1 to Length(Piece) do
@@ -1938,49 +2038,6 @@ end;
         Mapped: Boolean;
     begin
         ZbFold(Text, Result, Spans, Mapped);
-    end;
-
-    { Text with every spelling of FoldedForm (already folded) replaced by
-      Mask, whatever the case it was written in. }
-    function ZbReplaceFolded(const Text, FoldedForm, Mask: String): String;
-    var
-        Folded: String;
-        Spans: TZbSpans;
-        Mapped: Boolean;
-        At, Start, From, OrigStart: Integer;
-    begin
-        Result := Text;
-        if FoldedForm = '' then
-            Exit;
-        ZbFold(Text, Folded, Spans, Mapped);
-        At := Pos(FoldedForm, Folded);
-        if At = 0 then
-            Exit;
-        Result := '';
-        Start := 1;
-        while At > 0 do
-        begin
-            From := At + Length(FoldedForm);
-            if Mapped then
-            begin
-                OrigStart := Spans[2 * At - 2];
-                if OrigStart < Start then
-                begin
-                    { Inside what was just replaced (half of a 'ss'). }
-                    At := PosEx(FoldedForm, Folded, At + 1);
-                    Continue;
-                end;
-                Result := Result + Copy(Text, Start, OrigStart - Start) + Mask;
-                Start := Spans[2 * (From - 1) - 1] + 1;
-            end
-            else
-            begin
-                Result := Result + Copy(Text, Start, At - Start) + Mask;
-                Start := From;
-            end;
-            At := PosEx(FoldedForm, Folded, From);
-        end;
-        Result := Result + Copy(Text, Start, MaxInt);
     end;
 
     { Whether the folded secret can be read in Text, or in any view of it
@@ -2021,8 +2078,46 @@ end;
         HEX = '0123456789ABCDEF';
     var
         Forms: array[0..11] of String;
-        JsonSlash, JsonPlain, FoldedForm, FoldedSecret: String;
-        F: Integer;
+        JsonSlash, JsonPlain, FoldedForm, FoldedSecret, Folded, Scan, Out: String;
+        Spans: TZbSpans;
+        Mapped: Boolean;
+        MaxEnd, Cover: array of Integer;
+        F, At, I, J, HitEnd, Last, Kept: Integer;
+        Seen: array of String;
+        Duplicate, AnyHit, AnyProtected: Boolean;
+
+        { The text a mask or an earlier pass already wrote is not looked at
+          again: a secret such as 'ted' is in 'REDACTED', and masking that
+          would grow the text at every pass. A match wholly inside one of them
+          is left; one that only touches it is still masked. }
+        procedure Protect(const Literal: String);
+        var
+            P, K: Integer;
+        begin
+            P := Pos(Literal, S);
+            while P > 0 do
+            begin
+                if not AnyProtected then
+                begin
+                    SetLength(Cover, Length(S) + 2);
+                    AnyProtected := True;
+                end;
+                for K := P to P + Length(Literal) - 1 do
+                    Cover[K] := P + Length(Literal);
+                P := PosEx(Literal, S, P + Length(Literal));
+            end;
+        end;
+
+        procedure AddHit(OB, OE: Integer);
+        begin
+            if AnyProtected and (Cover[OB] >= OE) then
+                Exit;
+            if not AnyHit then
+                SetLength(MaxEnd, Length(S) + 2);
+            AnyHit := True;
+            if OE > MaxEnd[OB] then
+                MaxEnd[OB] := OE;
+        end;
 
         { Everything but the unreserved characters percent-encoded. }
         function PercentEncoded(const Value: String): String;
@@ -2082,24 +2177,108 @@ end;
         Forms[9] := PlusForSpaces(Forms[8]);
         Forms[10] := EncodeParam(Secret);
         Forms[11] := Secret;
-        { Case is ignored: an echo may upper-case or lower-case the key, and
-          the hex of a percent-encoding comes in either case. }
+        { One pass: every form is looked for in the folded text once (case is
+          ignored: an echo may upper-case or lower-case the key, and the hex of
+          a percent-encoding comes in either case), the spans it covers in S
+          are collected and merged, and the text is built once, so a mask is
+          never read again as text. }
+        AnyProtected := False;
+        AnyHit := False;
+        Protect('REDACTED');
+        Protect(ZB_SECRET_OMITTED_MESSAGE);
+        ZbFold(S, Folded, Spans, Mapped);
+        SetLength(Seen, 0);
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
             begin
                 FoldedForm := ZbFoldText(Forms[F]);
-                if FoldedForm <> '' then
-                    Result := ZbReplaceFolded(Result, FoldedForm, 'REDACTED')
-                else
+                Duplicate := False;
+                for I := 0 to High(Seen) do
+                    if Seen[I] = FoldedForm then
+                        Duplicate := True;
+                if Duplicate then
+                    Continue;
+                SetLength(Seen, Length(Seen) + 1);
+                Seen[High(Seen)] := FoldedForm;
+                if FoldedForm = '' then
+                begin
                     { Only combining marks, which the fold drops: nothing
                       to compare folded, so the exact sequence is masked. }
-                    Result := StringReplace(Result, Forms[F], 'REDACTED', [rfReplaceAll]);
+                    At := Pos(Forms[F], S);
+                    while At > 0 do
+                    begin
+                        AddHit(At, At + Length(Forms[F]));
+                        At := PosEx(Forms[F], S, At + 1);
+                    end;
+                    Continue;
+                end;
+                At := Pos(FoldedForm, Folded);
+                while At > 0 do
+                begin
+                    if Mapped then
+                        AddHit(Spans[2 * At - 2], Spans[2 * (At + Length(FoldedForm) - 1) - 1] + 1)
+                    else
+                        AddHit(At, At + Length(FoldedForm));
+                    At := PosEx(FoldedForm, Folded, At + 1);
+                end;
             end;
+        Folded := '';
+        Spans := nil;
+        Scan := S;
+        if AnyHit or AnyProtected then
+        begin
+            { Out: S with each merged span a mask. Scan: what is left of S
+              outside the spans and outside the literals above, the part a
+              decoded view is looked at in. }
+            Out := '';
+            Scan := '';
+            Kept := 1;
+            I := 1;
+            Last := 1;
+            while I <= Length(S) do
+            begin
+                if AnyHit and (MaxEnd[I] > 0) then
+                begin
+                    HitEnd := MaxEnd[I];
+                    J := I + 1;
+                    while J < HitEnd do
+                    begin
+                        if MaxEnd[J] > HitEnd then
+                            HitEnd := MaxEnd[J];
+                        Inc(J);
+                    end;
+                    Out := Out + Copy(S, Last, I - Last) + 'REDACTED';
+                    Scan := Scan + Copy(S, Kept, I - Kept) + #1;
+                    Last := HitEnd;
+                    Kept := HitEnd;
+                    I := HitEnd;
+                end
+                else if AnyProtected and (Cover[I] > 0) then
+                begin
+                    Scan := Scan + Copy(S, Kept, I - Kept) + #1;
+                    Kept := Cover[I];
+                    I := Cover[I];
+                end
+                else
+                    Inc(I);
+            end;
+            Out := Out + Copy(S, Last, MaxInt);
+            Scan := Scan + Copy(S, Kept, MaxInt);
+            Result := Out;
+        end;
+        MaxEnd := nil;
+        Cover := nil;
         { A spelling the forms above miss (three URL layers, URL of double
           JSON, an HTML-escaped quote, ...) still decodes to the secret: then
           none of S is kept. }
         FoldedSecret := ZbFoldText(Secret);
-        if ZbSecretInDecodedViews(Result, FoldedSecret, Secret, ZB_SECRET_DECODE_LAYERS) then
+        { Decoding costs a few passes over the text for each layer, so only
+          the start and the end of a long body, the parts a message is made
+          from, are looked at (the forms above were masked in all of it). }
+        if Length(Scan) > 2 * ZB_MASK_VIEW_LIMIT then
+            Scan := Copy(Scan, 1, ZB_MASK_VIEW_LIMIT) + #1 +
+                Copy(Scan, Length(Scan) - ZB_MASK_VIEW_LIMIT + 1, ZB_MASK_VIEW_LIMIT);
+        if ZbSecretInDecodedViews(Scan, FoldedSecret, Secret, ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 
@@ -2167,12 +2346,42 @@ end;
         Result := ApiKey;
     end;
 
+    const
+        ZB_DIRTY_URL_MESSAGE = ' must not contain a backslash, whitespace, control or invisible characters, invalid UTF-8, or a non-ASCII character in the host';
+
+    { Refuses the characters that let a URL smuggle a header or hide where it
+      goes. The URL is not quoted: it may carry a credential. }
+    procedure ZbRequireCleanUrl(const Url, Name: String);
+    var
+        I, Len, CodePoint, HostEnd: Integer;
+        Scheme: Integer;
+    begin
+        Scheme := Pos('://', Url);
+        HostEnd := 0;
+        if Scheme > 0 then
+        begin
+            HostEnd := Scheme + 3;
+            while (HostEnd <= Length(Url)) and (Url[HostEnd] <> '/') do
+                Inc(HostEnd);
+        end;
+        I := 1;
+        while I <= Length(Url) do
+        begin
+            ZbNextCharacter(Url, I, CodePoint, Len);
+            if (CodePoint < 0) or (CodePoint <= 32) or (CodePoint = 92) or
+               ZbIsHiddenCodePoint(CodePoint) or ((CodePoint >= 128) and (I < HostEnd)) then
+                raise ZbException.Create(Concat(Name, ZB_DIRTY_URL_MESSAGE));
+            Inc(I, Len);
+        end;
+    end;
+
     procedure ZbRequireHttpsUrl(const Url, Name: String);
     var
         Lower, Scheme, Authority, Host, Port: String;
         Marker, I: Integer;
     begin
-        Lower := LowerCase(Trim(Url));
+        ZbRequireCleanUrl(Url, Name);
+        Lower := LowerCase(Url);
         Marker := Pos('://', Lower);
         if Marker < 2 then
             raise ZbException.Create(Concat(Name, ' must be an https:// URL'));
@@ -2277,10 +2486,19 @@ end;
         Result := Rest;
     end;
 
+    procedure ZbRequireValidTimeouts;
+    begin
+        if ZbConnectTimeoutMs <= 0 then
+            raise ZbException.Create('ZbConnectTimeoutMs must be greater than 0');
+        if ZbReadTimeoutMs <= 0 then
+            raise ZbException.Create('ZbReadTimeoutMs must be greater than 0');
+    end;
+
     function ZbCheckedUrl(const Url: String): String;
     var
         Region: String;
     begin
+        ZbRequireValidTimeouts;
         ZbRequireHttpsUrl(Url, 'url');
         Result := Url;
         if ZbBulkRegionWarned or (ZbHostOf(Url) <> BULK_HOST) then
@@ -3016,8 +3234,9 @@ initialization
     InitCriticalSection(ZbTlsVerifierLock);
     {$ENDIF}
 
-{$IFDEF FPC}
 finalization
+    ZbWipeString(ZbApiKey);
+{$IFDEF FPC}
     FreeAndNil(ZbTlsVerifier);
     DoneCriticalSection(ZbTlsVerifierLock);
 {$ENDIF}

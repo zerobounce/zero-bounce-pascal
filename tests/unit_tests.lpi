@@ -98,6 +98,11 @@
         <IsPartOfProject Value="True"/>
         <UnitName Value="TestBehaviour"/>
       </Unit>
+      <Unit>
+        <Filename Value="testredaction.pas"/>
+        <IsPartOfProject Value="True"/>
+        <UnitName Value="TestRedaction"/>
+      </Unit>
     </Units>
   </ProjectOptions>
   <CompilerOptions>

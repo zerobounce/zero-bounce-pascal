@@ -5,7 +5,7 @@ program unit_tests;
 uses
   Interfaces, Forms, GuiTestRunner, TestGeneric, TestValidation,
   TestDeserialization, TestBulk, TestPriority3, TestUtility, TestOffline,
-  TestBulkJobs, TestWarmup, TestBehaviour;
+  TestBulkJobs, TestWarmup, TestBehaviour, TestRedaction;
 
 {$R *.res}
 

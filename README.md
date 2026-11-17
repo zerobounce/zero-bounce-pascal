@@ -117,7 +117,7 @@ In order to run this package, one must install [Delphi IDE](https://www.embarcad
 
 Open Delphi IDE, File > Open, browse for `./packages/ZeroBounce.dpk` (or `./packages/zb.groupproj`), click "Open package".
 
-**Minimal Delphi example (no package):** For a self-contained single-email validation example using Delphi's built-in `System.Net.HttpClient` (Delphi XE8 or later, no OpenSSL DLLs), see **`examples/delphi-api-v2/`**. Build `ValidateEmailExample.dpr` there; no SDK package install required.
+**Minimal Delphi example (no package):** For a self-contained single-email validation example using Delphi's built-in `System.Net.HttpClient` (no OpenSSL DLLs; no minimum Delphi version has been verified), see **`examples/delphi-api-v2/`**. Build `ValidateEmailExample.dpr` there; no SDK package install required.
 
 In order to run example snippets or your own project using the zero-bounce package, first install the package into Delphi:
 - open package (described above)

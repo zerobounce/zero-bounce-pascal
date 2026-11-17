@@ -60,6 +60,7 @@ jobs:
             echo "Error: package version ($PKG_VERSION) does not match tag ($TAG)."
             exit 1
           fi
+          sh .github/scripts/check-package-versions.sh
 
       - name: Record tag commit SHA
         id: tag_sha

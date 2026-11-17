@@ -144,26 +144,35 @@ implementation
 
 uses
     Math, ZbStructures
-    {$IFNDEF FPC}{$IFNDEF MSWINDOWS}, Posix.Unistd{$ENDIF}{$ENDIF};
+    {$IFDEF FPC}{$IFDEF UNIX}, BaseUnix, Unix{$ENDIF}{$ELSE}{$IFNDEF MSWINDOWS}, Posix.Unistd, Posix.SysStat{$ENDIF}{$ENDIF};
 
 {$IFDEF MSWINDOWS}
-{ Declared here rather than taken from the Windows unit, whose GetProcessId
-  takes a handle and would hide FPC's own GetProcessID. }
+{ Declared here so the unit needs no Windows unit in its uses clause. }
 function ZbMoveFileExW(lpExistingFileName, lpNewFileName: PWideChar; dwFlags: Cardinal): LongBool;
     stdcall; external 'kernel32.dll' name 'MoveFileExW';
-{$IFNDEF FPC}
-function ZbGetCurrentProcessId: Cardinal; stdcall; external 'kernel32.dll' name 'GetCurrentProcessId';
-{$ENDIF}
 const
     ZB_MOVEFILE_REPLACE_EXISTING = 1;
     ZB_MOVEFILE_WRITE_THROUGH = 8;
 {$ENDIF}
 
+{ Overwrites with zeros a secret's buffer, when the SDK is its only owner
+  (see ZbWipeString). }
+procedure WarmupWipe(var Secret: String);
+begin
+    ZbWipeString(Secret);
+end;
+
 procedure ZbWarmupInitialize(ApiKey: String);
+var
+    Fresh: String;
 begin
     if Trim(ApiKey) = '' then
         raise ZbException.Create('Empty parameter: api_key');
-    ZbWarmupApiKey := ZbCheckedApiKey(ApiKey);
+    Fresh := ZbCheckedApiKey(ApiKey);
+    { A private copy, so that the SDK owns the buffer it later wipes. }
+    UniqueString(Fresh);
+    WarmupWipe(ZbWarmupApiKey);
+    ZbWarmupApiKey := Fresh;
 end;
 
 function ZbWarmupDefaultAddSendingAccountOptions: TZbWarmupAddSendingAccountOptions;
@@ -376,31 +385,76 @@ begin
     Result := Trim(Response.Payload);
 end;
 
+{ A 32 digit hex id for the name of a temporary file. }
+function WarmupTempName: String;
 var
-    WarmupTempCounter: LongInt = 0;
-
-{ The process id and a counter step for the name of a temporary file. FPC has
-  GetProcessID and InterLockedIncrement; Delphi spells them differently. }
-function WarmupProcessId: Cardinal;
+    G: TGUID;
 begin
-    {$IFDEF FPC}
-    Result := GetProcessID;
-    {$ELSE}
-    {$IFDEF MSWINDOWS}
-    Result := ZbGetCurrentProcessId;
-    {$ELSE}
-    Result := getpid;
+    CreateGUID(G);
+    Result := Concat(
+        IntToHex(G.D1, 8), IntToHex(G.D2, 4), IntToHex(G.D3, 4),
+        IntToHex(G.D4[0], 2), IntToHex(G.D4[1], 2), IntToHex(G.D4[2], 2),
+        IntToHex(G.D4[3], 2), IntToHex(G.D4[4], 2), IntToHex(G.D4[5], 2),
+        IntToHex(G.D4[6], 2), IntToHex(G.D4[7], 2));
+end;
+
+{ The path a symbolic link at Path points to, or '' when Path is not a link
+  (or links are not resolved on this platform). A relative target is relative
+  to the directory of the link. }
+function WarmupLinkTarget(const Path: String): String;
+{$IFNDEF MSWINDOWS}
+var
+    {$IFNDEF FPC}
+    Buffer: array[0..4095] of AnsiChar;
+    Raw: UTF8String;
+    N: NativeInt;
     {$ENDIF}
+    Target: String;
+{$ENDIF}
+begin
+    Result := '';
+    {$IFNDEF MSWINDOWS}
+    {$IFDEF FPC}
+    Target := fpReadLink(Path);
+    {$ELSE}
+    Raw := UTF8String(Path);
+    N := readlink(MarshaledAString(PAnsiChar(Raw)), @Buffer[0], SizeOf(Buffer));
+    if N <= 0 then
+        Exit;
+    SetString(Raw, PAnsiChar(@Buffer[0]), N);
+    Target := String(Raw);
+    {$ENDIF}
+    if Target = '' then
+        Exit;
+    if Target[1] = '/' then
+        Result := Target
+    else
+        Result := Concat(ExtractFilePath(Path), Target);
     {$ENDIF}
 end;
 
-function WarmupNextTempId: LongInt;
+const
+    WARMUP_MAX_LINKS = 40;
+
+{ Follows the chain of symbolic links at Path to the file a write has to land
+  on. More than 40 links, or a cycle, raises and touches nothing. }
+function WarmupResolveLinks(const Path: String): String;
+var
+    Count: Integer;
+    Next: String;
 begin
-    {$IFDEF FPC}
-    Result := InterLockedIncrement(WarmupTempCounter);
-    {$ELSE}
-    Result := AtomicIncrement(WarmupTempCounter);
-    {$ENDIF}
+    Result := Path;
+    Count := 0;
+    repeat
+        Next := WarmupLinkTarget(Result);
+        if Next = '' then
+            Exit;
+        Inc(Count);
+        if Count > WARMUP_MAX_LINKS then
+            raise ZbException.Create(Format(
+                'Could not write %s: too many levels of symbolic links', [Path]));
+        Result := Next;
+    until False;
 end;
 
 { Moves TempPath onto DownloadPath, replacing a file already there, in one
@@ -419,21 +473,58 @@ begin
     {$ENDIF}
 end;
 
-{ Writes Content to a temporary file beside DownloadPath and moves it over
-  DownloadPath only when the whole of it was written, so a write that fails
-  (a full disk, a file size limit) leaves no partial file and keeps a file
-  already at the path. The temporary name is unique among concurrent
-  downloads to the same path. }
+{ Writes Content to a temporary file beside the file DownloadPath names (the
+  end of a chain of symbolic links, which stays a link) and moves it over
+  that file only when the whole of it was written, so a write that fails (a
+  full disk, a file size limit) leaves no partial file and keeps a file
+  already at the path. The temporary name, .<uuid>.zbtmp, is short and unique
+  among concurrent downloads to the same path. The permission bits of a file
+  already there are kept. The directory is created here, when there is
+  something to write, never before the request succeeded. }
 procedure WriteFileReplacing(const DownloadPath, Content: String);
 var
     Handle: TFileStream;
-    TempPath: String;
+    Target, Directory, TempPath: String;
     {$IFNDEF FPC}
     Bytes: TBytes;
     {$ENDIF}
+    {$IFDEF FPC}
+    {$IFDEF UNIX}
+    Info: Stat;
+    {$ENDIF}
+    {$ELSE}
+    {$IFNDEF MSWINDOWS}
+    Info: _stat;
+    Raw: UTF8String;
+    {$ENDIF}
+    {$ENDIF}
+    Existing: Boolean;
 begin
-    TempPath := Format('%s.%d-%d.part',
-        [DownloadPath, WarmupProcessId, WarmupNextTempId]);
+    Target := WarmupResolveLinks(DownloadPath);
+    if DirectoryExists(Target) then
+        raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+    Directory := ExtractFilePath(Target);
+    if (Directory <> '') and not DirectoryExists(Directory) then
+    begin
+        { ForceDirectories answers False when it cannot create the directory
+          (a file in the way, no permission): say so as a failed replace does,
+          and leave a file already at the path alone. }
+        ForceDirectories(Directory);
+        if not DirectoryExists(Directory) then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+    end;
+    Existing := False;
+    {$IFDEF FPC}
+    {$IFDEF UNIX}
+    Existing := fpStat(Target, Info) = 0;
+    {$ENDIF}
+    {$ELSE}
+    {$IFNDEF MSWINDOWS}
+    Raw := UTF8String(Target);
+    Existing := stat(MarshaledAString(PAnsiChar(Raw)), Info) = 0;
+    {$ENDIF}
+    {$ENDIF}
+    TempPath := Concat(Directory, '.', WarmupTempName, '.zbtmp');
     try
         Handle := TFileStream.Create(TempPath, fmCreate);
         try
@@ -451,14 +542,24 @@ begin
         finally
             Handle.Free;
         end;
+        if Existing then
+        begin
+            {$IFDEF FPC}
+            {$IFDEF UNIX}
+            fpChmod(TempPath, Info.st_mode and &7777);
+            {$ENDIF}
+            {$ELSE}
+            {$IFNDEF MSWINDOWS}
+            Raw := UTF8String(TempPath);
+            chmod(MarshaledAString(PAnsiChar(Raw)), Info.st_mode and $FFF);
+            {$ENDIF}
+            {$ENDIF}
+        end;
+        if not WarmupReplaceFile(TempPath, Target) then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
     except
         DeleteFile(TempPath);
         raise;
-    end;
-    if not WarmupReplaceFile(TempPath, DownloadPath) then
-    begin
-        DeleteFile(TempPath);
-        raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
     end;
 end;
 
@@ -468,9 +569,18 @@ end;
 function WarmupCsv(const Path, Query, DownloadPath: String): String;
 var
     Response: TZbRequestResponse;
-    Directory: String;
+    Name: String;
     Error: ZbException;
 begin
+    { A target that cannot be a file is refused before anything is sent: no
+      name, ., .., a trailing separator, or a directory that exists. }
+    if DownloadPath <> '' then
+    begin
+        Name := ExtractFileName(DownloadPath);
+        if (Name = '') or (Name = '.') or (Name = '..') or
+            DirectoryExists(DownloadPath) then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+    end;
     Response := WarmupSend('GET', Path, Query, '');
     Result := Response.Payload;
     { Not a file: a body of nothing or of padding only, an HTML or JSON content
@@ -486,16 +596,6 @@ begin
     end;
     if DownloadPath = '' then
         Exit;
-    Directory := ExtractFilePath(DownloadPath);
-    if (Directory <> '') and not DirectoryExists(Directory) then
-    begin
-        { ForceDirectories answers False when it cannot create the directory
-          (a file in the way, no permission): say so as a failed replace does,
-          and leave a file already at DownloadPath alone. }
-        ForceDirectories(Directory);
-        if not DirectoryExists(Directory) then
-            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
-    end;
     WriteFileReplacing(DownloadPath, Result);
 end;
 
@@ -881,15 +981,24 @@ begin
       LIVE: a failed SMTP login is answered with HTTP 500, not a 4xx. }
     Body := '';
     AddField(Body, JsonString('from_address', RequiredParam(FromAddress, 'from_address')));
-    AddField(Body, JsonString('username', RequiredParam(Username, 'username')));
-    AddField(Body, JsonString('password', RequiredParam(Password, 'password')));
+    { Credentials go out exactly as given: a password with a leading or
+      trailing space is a different password. They are only checked for
+      being more than blanks. }
+    if Trim(Username) = '' then
+        raise ZbException.Create('Empty parameter: username');
+    if Trim(Password) = '' then
+        raise ZbException.Create('Empty parameter: password');
+    AddField(Body, JsonString('username', Username));
+    AddField(Body, JsonString('password', Password));
     AddField(Body, JsonString('server', RequiredParam(Server, 'server')));
     AddField(Body, JsonInt('port', InRange(Port, 1, 65535, 'port')));
-    WarmupCallSecrets := Concat(Trim(Password), #0, Trim(Username));
+    WarmupWipe(WarmupCallSecrets);
+    WarmupCallSecrets := Concat(Password, #0, Username);
     try
         Result := WarmupJson('POST', '/test-smtp-configuration', '', Concat('{', Body, '}'));
     finally
-        WarmupCallSecrets := '';
+        WarmupWipe(WarmupCallSecrets);
+        WarmupWipe(Body);
     end;
 end;
 
@@ -900,5 +1009,9 @@ end;
 initialization
     ZbWarmupApiKey := '';
     ZbRegisterSecretRedactor(@WarmupRedact);
+
+finalization
+    WarmupWipe(ZbWarmupApiKey);
+    WarmupWipe(WarmupCallSecrets);
 
 end.

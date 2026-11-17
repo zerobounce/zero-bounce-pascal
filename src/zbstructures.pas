@@ -290,8 +290,17 @@ implementation
         {$ENDIF}
     end;
 
+    { Whether a JSON key is the body's own "success" (the case does not matter,
+      as in ZbSuccessFlagOfBody). }
+    function ZbIsSuccessKey(const Key: String): Boolean;
+    begin
+        Result := LowerCase(Key) = 'success';
+    end;
+
     { The parsed object, or nil when the body is not a JSON object or carries
-      a "success" field (which ZbSuccessMeansFailure already judges). }
+      a real "success" flag (which ZbSuccessMeansFailure already judges). A
+      "success" that is no flag (null, 2, "maybe", 0.4, an object) is read as
+      if it were absent: the callers skip that key. }
     function ZbObjectWithoutSuccess(const Body: String): TZbJson;
     var
         Trimmed: String;
@@ -306,7 +315,7 @@ implementation
             Result := nil;
             Exit;
         end;
-        if (Result.FJSONObject = nil) or not Result.IsNullValue('success') then
+        if (Result.FJSONObject = nil) or (ZbSuccessFlagOfBody(Trimmed) in [zsfTrue, zsfFalse]) then
             FreeAndNil(Result);
     end;
 
@@ -359,6 +368,8 @@ implementation
                         Known := True;
                 if Known then
                     HasMessage := True
+                else if ZbIsSuccessKey(J.KeyAt(I)) then
+                    { Not a flag (a real one returned nil above): absent. }
                 else if not J.IsNullValue(J.KeyAt(I)) then
                     Exit;
             end;
@@ -701,14 +712,19 @@ implementation
         J: TZbJson;
         I: Integer;
         Found: Boolean;
+        Flag: TZbSuccessFlag;
     begin
         J := ZbParsedObject(Response.Payload);
         if J = nil then
             Exit;
+        { A "success" that is no flag neither counts as a result nor hides
+          that there is none. }
+        Flag := ZbSuccessFlagOfBody(Response.Payload);
         try
             Found := False;
             for I := 0 to J.KeyCount - 1 do
-                if not ZbIsMessageKey(J.KeyAt(I)) and not J.IsNullValue(J.KeyAt(I)) then
+                if not ZbIsMessageKey(J.KeyAt(I)) and not J.IsNullValue(J.KeyAt(I)) and
+                   (not ZbIsSuccessKey(J.KeyAt(I)) or (Flag = zsfTrue)) then
                     Found := True;
             if not Found then
                 ZbRaiseNoResult(J, Response);
@@ -725,14 +741,17 @@ implementation
         J: TZbJson;
         I: Integer;
         Found: Boolean;
+        Flag: TZbSuccessFlag;
     begin
         J := ZbParsedObject(Response.Payload);
         if J = nil then
             Exit;
+        Flag := ZbSuccessFlagOfBody(Response.Payload);
         try
             Found := False;
             for I := Low(STATUS_KEYS) to High(STATUS_KEYS) do
-                if not J.IsNullValue(STATUS_KEYS[I]) then
+                if not J.IsNullValue(STATUS_KEYS[I]) and
+                   (not ZbIsSuccessKey(STATUS_KEYS[I]) or (Flag = zsfTrue)) then
                     Found := True;
             if not Found then
                 ZbRaiseNoResult(J, Response);
@@ -1427,7 +1446,10 @@ implementation
     begin
         JsonObj := TZbJSon.Create(JsonContent);
         try
-            Result.Success := JsonObj.GetBoolean('success');
+            Result.Success := ZbSuccessFlagOfBody(JsonContent) = zsfTrue;
+            { A success of any other type than a flag is not an answer. }
+            if (ZbSuccessFlagOfBody(JsonContent) = zsfNotFlag) and not JsonObj.IsNullValue('success') then
+                ZbRaiseFieldType('success');
             Result.Message := JsonObj.GetMessageText('message');
             Result.FileName := JsonObj.GetString('file_name');
             Result.FileId := JsonObj.GetString('file_id');
@@ -1444,7 +1466,10 @@ implementation
     begin
         JsonObj := TZbJSon.Create(JsonContent);
         try
-            Result.Success := JsonObj.GetBoolean('success');
+            Result.Success := ZbSuccessFlagOfBody(JsonContent) = zsfTrue;
+            { A success of any other type than a flag is not an answer. }
+            if (ZbSuccessFlagOfBody(JsonContent) = zsfNotFlag) and not JsonObj.IsNullValue('success') then
+                ZbRaiseFieldType('success');
             Result.FileId := JsonObj.GetString('file_id');
             Result.FileName := JsonObj.GetString('file_name');
             Result.FileStatus := JsonObj.GetString('file_status');

@@ -1920,10 +1920,16 @@ begin
       'Http Error: {"message":{"a":1}}');
     Expect('a list is not a message', 500, '{"error":["a","b"]}', 'application/json',
       'Http Error: {"error":["a","b"]}');
-    { Too long to be quoted: stays the generic sentence, a message or not. }
-    Long := '{"success":false,"message":"' + StringOfChar('x', 1000) + '"}';
+    { Too long to be quoted: stays the generic sentence, when it has no
+      message field or when the message is itself too long. }
+    Long := '{"success":false,"message":"' + StringOfChar('x', 1001) + '"}';
     Expect('over 1000 characters', 500, Long, 'application/json',
       'Http Error: ZeroBounce returned an error response.');
+    Long := '{"success":false,"detail":"' + StringOfChar('x', 1000) + '"}';
+    Expect('over 1000 characters, no message field', 500, Long, 'application/json',
+      'Http Error: ZeroBounce returned an error response.');
+    Long := '{"success":false,"message":"Short","pad":"' + StringOfChar('x', 2000) + '"}';
+    Expect('a long body with a short message', 500, Long, 'application/json', 'Http Error: Short');
     { A CSV body is a file: it is not put into the message. }
     Expect('CSV, text/csv', 500, CSV, 'text/csv', 'Http Error: ZeroBounce returned an error response.');
     Expect('CSV, text/csv; charset', 500, CSV, 'text/csv; charset=utf-8',
@@ -2593,15 +2599,15 @@ const
   );
   { Public routines that send nothing. Any other routine in these interfaces
     is a request and must be in SweepEveryPublicCall. }
-  NOT_REQUESTS: array[0..33] of String = (
+  NOT_REQUESTS: array[0..37] of String = (
     'Register', 'ZBApiURLToString', 'ZBSetApiKey', 'ZBInitialize', 'ZbBaseUrl', 'EncodeParam',
-    'RedactSecrets', 'ZbMaskSecret', 'ZbContentTypeIsHtml', 'ZbLastRequestTimeouts', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbPathSegment', 'ZbCheckedUrl',
+    'RedactSecrets', 'ZbMaskSecret', 'ZbContentTypeIsHtml', 'ZbLastRequestTimeouts', 'ZbRegisterSecretRedactor', 'ZbCheckedApiKey', 'ZbRequireHttpsUrl', 'ZbRequireCleanUrl', 'ZbWipeString', 'ZbPathSegment', 'ZbCheckedUrl',
     'ZbBodyLooksLikeHtml', 'ZbSuccessMeansFailure', 'ZbMessageFromBody', 'EncodePathSegment',
     'ZbJsonEscape', 'ZBMockResponse', 'ZbWindowsRootCertificates', 'ZbTrustDerCertificates',
     'ZbDefaultValidateOptions', 'ZbBatchRequestBodyFromEmails', 'ZbFromDataFromFileSubmitRecord',
     'ZbDefaultBulkFileJobOptions', 'ZbWarmupInitialize', 'ZbWarmupDefaultAddSendingAccountOptions',
     'ZbWarmupDefaultListFromAddressesOptions', 'ZbContentStart', 'ZbContentTypeIsJson',
-    'ZbDownloadKind', 'ZbStripPadding'
+    'ZbDownloadKind', 'ZbStripPadding', 'ZbSuccessFlagOfBody', 'ZbClassifySuccess'
   );
 var
   SrcDir, Missing, Overloads, Extra: String;
@@ -5032,7 +5038,9 @@ var
   Prefix: String;
 begin
   AssertEquals('a list of numbers', SENTENCE, ZbMessageFromBody('[1,2,3]', 200));
-  AssertEquals('a list of objects', SENTENCE, ZbMessageFromBody('[{"message":"nested"}]', 500));
+  AssertEquals('a list of objects', SENTENCE, ZbMessageFromBody('[{"message":"nested"}]', 200));
+  { On an error status a list is the API's own text, as it is. }
+  AssertEquals('a list on an error status', '[{"message":"nested"}]', ZbMessageFromBody('[{"message":"nested"}]', 500));
   AssertEquals('a list after padding', SENTENCE, ZbMessageFromBody(' ' + #10 + '[{"a":1}]', 200));
   AssertEquals('an empty list', SENTENCE, ZbMessageFromBody('[]', 200));
   AssertEquals('from a response', SENTENCE, FromBody('[{"a":1}]'));

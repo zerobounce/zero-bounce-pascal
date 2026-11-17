@@ -12,7 +12,7 @@ interface
 
 uses
     Classes, SysUtils, fpcunit, testregistry,
-    {$IFDEF UNIX}BaseUnix,{$ENDIF}
+    {$IFDEF UNIX}BaseUnix, Unix,{$ENDIF}
     BaseTest, ZbUtility, ZbWarmup, Math;
 
 type
@@ -53,8 +53,15 @@ type
         procedure TestSmtpCredentialsAreMaskedInEveryForm;
         procedure TestTheSmtpPasswordIsMaskedInEveryEncodedForm;
         procedure TestEveryComposedSpellingOfASecretIsMasked;
+        procedure TestTheSmtpCredentialsAreSentExactlyAsGiven;
+        procedure TestAReplacedWarmupKeyIsWipedFromMemory;
+        procedure TestATargetThatCannotBeAFileIsRefusedBeforeSending;
+        procedure TestALongFileNameStillDownloads;
 {$IFDEF UNIX}
         procedure TestAFailedWriteKeepsTheFileAlreadyAtThePath;
+        procedure TestADownloadWritesThroughSymbolicLinks;
+        procedure TestASymbolicLinkCycleRaisesAndLeavesTheLink;
+        procedure TestADownloadKeepsThePermissionBitsOfTheFileItReplaces;
 {$ENDIF}
     end;
 
@@ -1201,6 +1208,103 @@ begin
     end;
 end;
 
+procedure TTestWarmup.TestTheSmtpCredentialsAreSentExactlyAsGiven;
+begin
+    MockOk(OK_JSON);
+    ZbWarmupTestSmtpConfiguration(
+        'sender@example.com', ' user ', '  pa ss  ', 'smtp.example.com', 587);
+    AssertTrue(ZbLastRequestBody,
+        Pos('"username":" user ","password":"  pa ss  "', ZbLastRequestBody) > 0);
+end;
+
+procedure TTestWarmup.TestAReplacedWarmupKeyIsWipedFromMemory;
+var
+    P: PChar;
+    I, Zeros: Integer;
+begin
+    ZbWarmupInitialize(Concat('wipe-me-', StringOfChar('k', 40)));
+    P := PChar(ZbWarmupApiKey);
+    ZbWarmupInitialize(MOCK_WARMUP_KEY);
+    { The first bytes of a freed block may be taken by the heap manager. }
+    Zeros := 0;
+    for I := 24 to 40 do
+        if P[I] = #0 then
+            Inc(Zeros);
+    AssertEquals('the old key was left in memory', 17, Zeros);
+end;
+
+procedure TTestWarmup.TestATargetThatCannotBeAFileIsRefusedBeforeSending;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Target: String;
+    Targets: array[0..3] of String;
+    I: Integer;
+    Raised: Boolean;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-badtarget-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    ForceDirectories(Dir + 'existing');
+    Targets[0] := Dir + '.';
+    Targets[1] := Dir + '..';
+    Targets[2] := Dir + 'made' + PathDelim;
+    Targets[3] := Dir + 'existing';
+    for I := 0 to 3 do
+    begin
+        Target := Targets[I];
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        ZbResponseMock.UrlCalled := '';
+        Raised := False;
+        try
+            ZbWarmupDownloadSeeds(Target);
+        except on e: ZbException do
+            Raised := True;
+        end;
+        AssertTrue(Target + ' should be refused', Raised);
+        AssertNothingSent;
+    end;
+    AssertFalse('a directory was created', DirectoryExists(Dir + 'made'));
+    RemoveDir(Dir + 'existing');
+    RemoveDir(Dir);
+end;
+
+procedure TTestWarmup.TestALongFileNameStillDownloads;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Path: String;
+    Found: TSearchRec;
+    Count: Integer;
+    S: TStringList;
+begin
+    { The temporary file used to be the target plus a suffix: a 250 character
+      name could be written, but its temporary name was too long. }
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-longname-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Path := Concat(Dir, StringOfChar('a', 250));
+    ZBMockResponse(200, CSV, CSV_TYPE);
+    ZbWarmupDownloadSeeds(Path);
+    S := TStringList.Create;
+    try
+        S.LoadFromFile(Path);
+        AssertEquals('seed,provider', S[0]);
+    finally
+        S.Free;
+    end;
+    Count := 0;
+    if FindFirst(Dir + '*', faAnyFile, Found) = 0 then
+    begin
+        repeat
+            if (Found.Name <> '.') and (Found.Name <> '..') then
+                Inc(Count);
+        until FindNext(Found) <> 0;
+        FindClose(Found);
+    end;
+    AssertEquals('a temporary file was left', 1, Count);
+    DeleteFile(Path);
+    RemoveDir(Dir);
+end;
+
 {$IFDEF UNIX}
 procedure TTestWarmup.TestAFailedWriteKeepsTheFileAlreadyAtThePath;
 const
@@ -1296,6 +1400,114 @@ begin
     ZbWarmupDownloadSeeds(Path);
     AssertEquals(CSV, ReadText(Path));
     AssertEquals(1, CountEntries);
+    DeleteFile(Path);
+    RemoveDir(Dir);
+end;
+procedure TTestWarmup.TestADownloadWritesThroughSymbolicLinks;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Real, L1, L2: String;
+    I: Integer;
+    S: TStringList;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-link-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Real := Dir + 'real.csv';
+    L1 := Dir + 'one.csv';
+    L2 := Dir + 'two.csv';
+    S := TStringList.Create;
+    try
+        S.Text := 'OLD';
+        S.SaveToFile(Real);
+        AssertEquals(0, fpSymlink(PChar('real.csv'), PChar(L1)));
+        AssertEquals(0, fpSymlink(PChar(L1), PChar(L2)));
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        ZbWarmupDownloadSeeds(L2);
+        AssertTrue('the link was replaced by a file', FpReadLink(L2) <> '');
+        AssertTrue('the link was replaced by a file', FpReadLink(L1) <> '');
+        S.LoadFromFile(Real);
+        AssertEquals('seed,provider', S[0]);
+        { A link to a file not there yet creates the file. }
+        DeleteFile(Real);
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        ZbWarmupDownloadSeeds(L2);
+        AssertTrue(FileExists(Real));
+        { More than 40 links. }
+        DeleteFile(L1);
+        DeleteFile(L2);
+        AssertEquals(0, fpSymlink(PChar(Real), PChar(Dir + 'c0')));
+        for I := 1 to 41 do
+            AssertEquals(0, fpSymlink(PChar(Format('%sc%d', [Dir, I - 1])), PChar(Format('%sc%d', [Dir, I]))));
+        DeleteFile(Real);
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        try
+            ZbWarmupDownloadSeeds(Dir + 'c41');
+            Fail('a chain of 42 links should raise');
+        except on e: ZbException do
+            ;
+        end;
+        AssertFalse('nothing was written', FileExists(Real));
+        for I := 0 to 41 do
+            DeleteFile(Format('%sc%d', [Dir, I]));
+    finally
+        S.Free;
+    end;
+    DeleteFile(Real);
+    RemoveDir(Dir);
+end;
+
+procedure TTestWarmup.TestASymbolicLinkCycleRaisesAndLeavesTheLink;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, A, B: String;
+    Raised: Boolean;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-cycle-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    A := Dir + 'a.csv';
+    B := Dir + 'b.csv';
+    AssertEquals(0, fpSymlink(PChar(B), PChar(A)));
+    AssertEquals(0, fpSymlink(PChar(A), PChar(B)));
+    ZBMockResponse(200, CSV, CSV_TYPE);
+    Raised := False;
+    try
+        ZbWarmupDownloadSeeds(A);
+    except on e: ZbException do
+        Raised := True;
+    end;
+    AssertTrue(Raised);
+    AssertEquals(B, FpReadLink(A));
+    AssertEquals(A, FpReadLink(B));
+    DeleteFile(A);
+    DeleteFile(B);
+    RemoveDir(Dir);
+end;
+
+procedure TTestWarmup.TestADownloadKeepsThePermissionBitsOfTheFileItReplaces;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Path: String;
+    Info: Stat;
+    S: TStringList;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-mode-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Path := Dir + 'seeds.csv';
+    S := TStringList.Create;
+    try
+        S.Text := 'OLD';
+        S.SaveToFile(Path);
+    finally
+        S.Free;
+    end;
+    AssertEquals(0, fpChmod(Path, &600));
+    ZBMockResponse(200, CSV, CSV_TYPE);
+    ZbWarmupDownloadSeeds(Path);
+    AssertEquals(0, fpStat(Path, Info));
+    AssertEquals(&600, Info.st_mode and &7777);
     DeleteFile(Path);
     RemoveDir(Dir);
 end;
