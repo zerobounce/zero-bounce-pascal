@@ -67,10 +67,6 @@ const
       own request encoding plus three layers a server or proxy may add when
       it echoes the request back. }
     ZB_SECRET_DECODE_LAYERS = 4;
-
-    { How much of the start, and of the end, of a long text ZbMaskSecret looks
-      at in decoded views (the forms themselves are masked in all of it). }
-    ZB_MASK_VIEW_LIMIT = 32768;
     ENDPOINT_CREDITS = '/getcredits';
     ENDPOINT_ACTIVITY_DATA = '/activity';
     ENDPOINT_SCORE_EMAIL = '/scoring';
@@ -1277,23 +1273,61 @@ end;
             Result := -1;
     end;
 
+    { Output buffers of the decoders below. A decoder writes into Buf and keeps
+      the used length in Len; Buf doubles when it is full and the decoder cuts
+      it to Len once at the end, so a decoder is linear in its input (Result :=
+      Result + X copies the whole result each time). }
+    procedure ZbBufReserve(var Buf: String; Len, More: Integer);
+    var
+        Need, Size: Integer;
+    begin
+        Need := Len + More;
+        if Need <= Length(Buf) then
+            Exit;
+        Size := Length(Buf) * 2;
+        if Size < Need then
+            Size := Need + 16;
+        SetLength(Buf, Size);
+    end;
+
+    procedure ZbBufAddChar(var Buf: String; var Len: Integer; C: Char);
+    begin
+        ZbBufReserve(Buf, Len, 1);
+        Inc(Len);
+        Buf[Len] := C;
+    end;
+
+    procedure ZbBufAddText(var Buf: String; var Len: Integer; const S: String);
+    var
+        K: Integer;
+    begin
+        if S = '' then
+            Exit;
+        ZbBufReserve(Buf, Len, Length(S));
+        for K := 1 to Length(S) do
+            Buf[Len + K] := S[K];
+        Inc(Len, Length(S));
+    end;
+
     {$IFNDEF FPC}
     { Delphi: the bytes a %XX or a \xHH wrote, in a row, are UTF-8 text, as
       they are on FPC where the string holds bytes; they are not one UTF-16
-      unit each. Pending collects them; ZbFlushBytes appends what they spell
-      to Text. }
-    procedure ZbFlushBytes(var Pending: TBytes; var Text: String);
+      unit each. Pending collects them (Count of them, doubling as it fills);
+      ZbFlushBytes appends what they spell to Buf. }
+    procedure ZbFlushBytes(var Pending: TBytes; var Count: Integer; var Buf: String; var Len: Integer);
     begin
-        if Length(Pending) = 0 then
+        if Count = 0 then
             Exit;
-        Text := Text + TEncoding.UTF8.GetString(Pending);
-        SetLength(Pending, 0);
+        ZbBufAddText(Buf, Len, TEncoding.UTF8.GetString(Pending, 0, Count));
+        Count := 0;
     end;
 
-    procedure ZbPendByte(var Pending: TBytes; B: Integer);
+    procedure ZbPendByte(var Pending: TBytes; var Count: Integer; B: Integer);
     begin
-        SetLength(Pending, Length(Pending) + 1);
-        Pending[High(Pending)] := Byte(B);
+        if Count >= Length(Pending) then
+            SetLength(Pending, Length(Pending) * 2 + 16);
+        Pending[Count] := Byte(B);
+        Inc(Count);
     end;
     {$ENDIF}
 
@@ -1304,14 +1338,23 @@ end;
         I, N, Hi, Lo: Integer;
         {$IFNDEF FPC}
         Pending: TBytes;
+        Count: Integer;
         {$ENDIF}
     begin
+        { Nothing to decode: the view is the text. }
+        if (Pos('%', Text) = 0) and not (PlusAsSpace and (Pos('+', Text) > 0)) then
+        begin
+            Result := Text;
+            Exit;
+        end;
         {$IFNDEF FPC}
         { Delphi: the bytes of a run of %XX are assembled and read as UTF-8; a
           character of the text itself is kept as it is. }
         N := 0;
         Result := '';
+        SetLength(Result, Length(Text));
         Pending := nil;
+        Count := 0;
         I := 1;
         while I <= Length(Text) do
         begin
@@ -1324,18 +1367,19 @@ end;
             end;
             if (Hi >= 0) and (Lo >= 0) then
             begin
-                ZbPendByte(Pending, Hi * 16 + Lo);
+                ZbPendByte(Pending, Count, Hi * 16 + Lo);
                 Inc(I, 3);
                 Continue;
             end;
-            ZbFlushBytes(Pending, Result);
+            ZbFlushBytes(Pending, Count, Result, N);
             if PlusAsSpace and (Text[I] = '+') then
-                Result := Result + ' '
+                ZbBufAddChar(Result, N, ' ')
             else
-                Result := Result + Text[I];
+                ZbBufAddChar(Result, N, Text[I]);
             Inc(I);
         end;
-        ZbFlushBytes(Pending, Result);
+        ZbFlushBytes(Pending, Count, Result, N);
+        SetLength(Result, N);
         {$ELSE}
         SetLength(Result, Length(Text));
         I := 1;
@@ -1466,8 +1510,10 @@ end;
     var
         I, K, CodePoint, Low, Len, Count, Value: Integer;
         Decoded: String;
+        N: Integer;
         {$IFNDEF FPC}
         Pending: TBytes;
+        Count: Integer;
         {$ENDIF}
 
         { One byte of an escape. FPC strings hold bytes. Delphi's hold UTF-16
@@ -1476,24 +1522,33 @@ end;
         procedure AddByte(B: Integer);
         begin
             {$IFDEF FPC}
-            Result := Result + Char(B);
+            ZbBufAddChar(Result, N, Char(B));
             {$ELSE}
-            ZbPendByte(Pending, B);
+            ZbPendByte(Pending, Count, B);
             {$ENDIF}
         end;
 
         procedure FlushBytes;
         begin
             {$IFNDEF FPC}
-            ZbFlushBytes(Pending, Result);
+            ZbFlushBytes(Pending, Count, Result, N);
             {$ENDIF}
         end;
 
     begin
+        { No backslash: nothing to undo, the view is the text. }
+        if Pos('\', Text) = 0 then
+        begin
+            Result := Text;
+            Exit;
+        end;
         Decoded := '"\/'#8#12#10#13#9#39;
         Result := '';
+        SetLength(Result, Length(Text) + 16);
+        N := 0;
         {$IFNDEF FPC}
         Pending := nil;
+        Count := 0;
         {$ENDIF}
         I := 1;
         while I <= Length(Text) do
@@ -1501,7 +1556,7 @@ end;
             if (Text[I] <> '\') or (I = Length(Text)) then
             begin
                 FlushBytes;
-                Result := Result + Text[I];
+                ZbBufAddChar(Result, N, Text[I]);
                 Inc(I);
                 Continue;
             end;
@@ -1509,7 +1564,7 @@ end;
             if K > 0 then
             begin
                 FlushBytes;
-                Result := Result + Decoded[K];
+                ZbBufAddChar(Result, N, Decoded[K]);
                 Inc(I, 2);
                 Continue;
             end;
@@ -1582,7 +1637,7 @@ end;
             FlushBytes;
             if (CodePoint < 0) or (Len = 0) then
             begin
-                Result := Result + Text[I];
+                ZbBufAddChar(Result, N, Text[I]);
                 Inc(I);
                 Continue;
             end;
@@ -1599,9 +1654,10 @@ end;
                 end;
             end;
             {$ENDIF}
-            Result := Result + ZbCodePointText(CodePoint);
+            ZbBufAddText(Result, N, ZbCodePointText(CodePoint));
         end;
         FlushBytes;
+        SetLength(Result, N);
     end;
 
     const
@@ -1674,8 +1730,17 @@ end;
         I, K, J, Digit, Radix, Code: Integer;
         CodePoint: Int64;
         Matched: Boolean;
+        N: Integer;
     begin
+        { No ampersand: no reference, the view is the text. }
+        if Pos('&', Text) = 0 then
+        begin
+            Result := Text;
+            Exit;
+        end;
         Result := '';
+        SetLength(Result, Length(Text) + 16);
+        N := 0;
         I := 1;
         while I <= Length(Text) do
         begin
@@ -1708,7 +1773,7 @@ end;
                     if (K > J) and (CodePoint <= $10FFFF) and
                        not ((CodePoint >= $D800) and (CodePoint <= $DFFF)) then
                     begin
-                        Result := Result + ZbCodePointText(Integer(CodePoint));
+                        ZbBufAddText(Result, N, ZbCodePointText(Integer(CodePoint)));
                         if (K <= Length(Text)) and (Text[K] = ';') then
                             Inc(K);
                         I := K;
@@ -1727,7 +1792,7 @@ end;
                         Code := ZbHtmlNamedCodePoint(Copy(Text, I + 1, K - I - 1));
                         if Code >= 0 then
                         begin
-                            Result := Result + ZbCodePointText(Code);
+                            ZbBufAddText(Result, N, ZbCodePointText(Code));
                             I := K + 1;
                             Matched := True;
                         end;
@@ -1736,10 +1801,11 @@ end;
             end;
             if not Matched then
             begin
-                Result := Result + Text[I];
+                ZbBufAddChar(Result, N, Text[I]);
                 Inc(I);
             end;
         end;
+        SetLength(Result, N);
     end;
 
     { Unicode 16.0.0 full case folding (statuses C and F), generated by
@@ -2040,16 +2106,47 @@ end;
         ZbFold(Text, Result, Spans, Mapped);
     end;
 
+    type
+        { A view already looked at: its length, two 64-bit hashes and the
+          number of layers it was decoded further with. }
+        TZbSeenView = record
+            Size: Integer;
+            HashA, HashB: QWord;
+            Layers: Integer;
+        end;
+        TZbSeenViews = array of TZbSeenView;
+
+    procedure ZbHashView(const Text: String; out HashA, HashB: QWord);
+    var
+        I: Integer;
+        C: QWord;
+    begin
+        HashA := QWord($CBF29CE484222325);
+        HashB := QWord($84222325CBF29CE4);
+        for I := 1 to Length(Text) do
+        begin
+            C := QWord(Ord(Text[I]));
+            HashA := (HashA xor C) * QWord($100000001B3);
+            HashB := (HashB + C + 1) * QWord($9E3779B97F4A7C15);
+            HashB := HashB xor (HashB shr 29);
+        end;
+    end;
+
     { Whether the folded secret can be read in Text, or in any view of it
       decoded up to Layers more times: URL-decoded, form-decoded ('+' as a
       space too), unescaped as a string literal and with its HTML entities
       undone, in any order. Case is ignored. A secret that folds to nothing
       (only combining marks) is looked for as that exact sequence, RawSecret,
-      in the text as it is. }
-    function ZbSecretInDecodedViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer): Boolean;
+      in the text as it is. The whole text is looked at: every decoder is
+      linear, a layer that cannot change the text costs nothing, and a view
+      reached by two orders of decoding is looked at once (Seen). }
+    function ZbSecretInViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer;
+        var Seen: TZbSeenViews): Boolean;
     var
         Views: array[0..3] of String;
-        I: Integer;
+        I, K: Integer;
+        HashA, HashB: QWord;
+        Known: Boolean;
     begin
         if FoldedSecret = '' then
             Result := (RawSecret <> '') and (Pos(RawSecret, Text) > 0)
@@ -2061,16 +2158,51 @@ end;
         if (Pos('%', Text) = 0) and (Pos('+', Text) = 0) and (Pos('\', Text) = 0) and
            (Pos('&', Text) = 0) then
             Exit;
+        { A decoder whose trigger character is missing returns Text itself
+          (same string, no copy), so such a layer costs nothing here. The form
+          view differs from the URL one only when there is a '+'. }
         Views[0] := ZbUrlDecodeView(Text, False);
-        Views[1] := ZbUrlDecodeView(Text, True);
+        if Pos('+', Text) > 0 then
+            Views[1] := ZbUrlDecodeView(Text, True)
+        else
+            Views[1] := Text;
         Views[2] := ZbJsonUnescapeView(Text);
         Views[3] := ZbHtmlEntityView(Text);
         for I := 0 to 3 do
-            if (Views[I] <> Text) and ZbSecretInDecodedViews(Views[I], FoldedSecret, RawSecret, Layers - 1) then
+        begin
+            if Views[I] = Text then
+                Continue;
+            ZbHashView(Views[I], HashA, HashB);
+            Known := False;
+            for K := 0 to High(Seen) do
+                if (Seen[K].Size = Length(Views[I])) and (Seen[K].HashA = HashA) and
+                   (Seen[K].HashB = HashB) and (Seen[K].Layers >= Layers - 1) then
+                begin
+                    Known := True;
+                    Break;
+                end;
+            if Known then
+                Continue;
+            K := Length(Seen);
+            SetLength(Seen, K + 1);
+            Seen[K].Size := Length(Views[I]);
+            Seen[K].HashA := HashA;
+            Seen[K].HashB := HashB;
+            Seen[K].Layers := Layers - 1;
+            if ZbSecretInViews(Views[I], FoldedSecret, RawSecret, Layers - 1, Seen) then
             begin
                 Result := True;
                 Exit;
             end;
+        end;
+    end;
+
+    function ZbSecretInDecodedViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer): Boolean;
+    var
+        Seen: TZbSeenViews;
+    begin
+        Seen := nil;
+        Result := ZbSecretInViews(Text, FoldedSecret, RawSecret, Layers, Seen);
     end;
 
     function ZbMaskSecret(const S, Secret: string): string;
@@ -2272,12 +2404,8 @@ end;
           JSON, an HTML-escaped quote, ...) still decodes to the secret: then
           none of S is kept. }
         FoldedSecret := ZbFoldText(Secret);
-        { Decoding costs a few passes over the text for each layer, so only
-          the start and the end of a long body, the parts a message is made
-          from, are looked at (the forms above were masked in all of it). }
-        if Length(Scan) > 2 * ZB_MASK_VIEW_LIMIT then
-            Scan := Copy(Scan, 1, ZB_MASK_VIEW_LIMIT) + #1 +
-                Copy(Scan, Length(Scan) - ZB_MASK_VIEW_LIMIT + 1, ZB_MASK_VIEW_LIMIT);
+        { Every decoder is linear, so the views cover the whole text, however
+          long. }
         if ZbSecretInDecodedViews(Scan, FoldedSecret, Secret, ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;

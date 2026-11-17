@@ -20,6 +20,11 @@ type
     procedure TestALargeEscapedBodyIsMaskedQuickly;
     procedure TestALargeNonAsciiBodyIsMaskedQuickly;
     procedure TestADecodedSpellingAtTheEndOfALongBodyIsStillCaught;
+    procedure TestAUrlEncodedSecretInTheMiddleOfALargeBodyIsCaught;
+    procedure TestAJsonEscapedSecretInTheMiddleOfALargeBodyIsCaught;
+    procedure TestAnHtmlEntitySecretInTheMiddleOfALargeBodyIsCaught;
+    procedure TestAThreeLayerSecretInTheMiddleOfALargeBodyIsCaught;
+    procedure TestALargeBodyWithEveryDecoderTriggerIsMaskedQuickly;
   end;
 
 implementation
@@ -202,6 +207,66 @@ begin
   { The forms are masked wherever they are. }
   AssertEquals(Body + 'REDACTED' + Body,
     ZbMaskSecret(Body + 'ab-cd-9z' + Body, 'AB-CD-9Z'));
+end;
+
+{ A body of at least 2.5 MB with Spelling in the middle, between two halves of
+  filler: the old head and tail cut-off never looked there. }
+function InTheMiddle(const Spelling: String): String;
+var
+  Half: String;
+begin
+  Half := Repeated('{"message":"the quick brown fox jumps over the lazy dog","n":12345} ', 22000);
+  Result := Half + ' ' + Spelling + ' ' + Half;
+end;
+
+procedure AssertCaughtInTheMiddle(const Spelling, Secret: String);
+var
+  Body: String;
+  Started: TDateTime;
+begin
+  Body := InTheMiddle(Spelling);
+  TAssert.AssertTrue('body is at least 2.5 MB', Length(Body) > 2500000);
+  Started := Now;
+  TAssert.AssertTrue('the body is omitted, not returned with the secret in it',
+    ZbMaskSecret(Body, Secret) = ZB_SECRET_OMITTED_MESSAGE);
+  TAssert.AssertTrue('took ' + IntToStr(MilliSecondsBetween(Now, Started)) + ' ms', MilliSecondsBetween(Now, Started) < 3000);
+end;
+
+procedure TTestRedaction.TestAUrlEncodedSecretInTheMiddleOfALargeBodyIsCaught;
+begin
+  { Two URL layers: %252D is %2D is a hyphen. }
+  AssertCaughtInTheMiddle('ab%252Dcd-9z', 'ab-cd-9z');
+end;
+
+procedure TTestRedaction.TestAJsonEscapedSecretInTheMiddleOfALargeBodyIsCaught;
+begin
+  AssertCaughtInTheMiddle('ab\u002dcd-9z', 'ab-cd-9z');
+end;
+
+procedure TTestRedaction.TestAnHtmlEntitySecretInTheMiddleOfALargeBodyIsCaught;
+begin
+  AssertCaughtInTheMiddle('ab&#45;cd-9z', 'ab-cd-9z');
+end;
+
+procedure TTestRedaction.TestAThreeLayerSecretInTheMiddleOfALargeBodyIsCaught;
+begin
+  { JSON \u002d, its backslash as an HTML reference, and that URL-encoded. }
+  AssertCaughtInTheMiddle('ab%26%2392%3Bu002dcd-9z', 'ab-cd-9z');
+end;
+
+procedure TTestRedaction.TestALargeBodyWithEveryDecoderTriggerIsMaskedQuickly;
+var
+  Body, Masked: String;
+  Started: TDateTime;
+begin
+  { %, +, &, a backslash and non-ASCII text in one 2.8 MB body: each layer of
+    the decoded views changes the text and all four are tried. }
+  Body := Repeated('a%20b+c &amp; d\u0041 caf' + #$C3#$A9 + ' &#233; ', 100000);
+  AssertTrue('body is at least 2.5 MB', Length(Body) > 2500000);
+  Started := Now;
+  Masked := ZbMaskSecret(Body, 'key-abc-123-xyz');
+  AssertTrue('took ' + IntToStr(MilliSecondsBetween(Now, Started)) + ' ms', MilliSecondsBetween(Now, Started) < 3000);
+  AssertTrue('unchanged', Masked = Body);
 end;
 
 initialization
