@@ -58,6 +58,14 @@
         <Filename Value="../src/zboptions.inc"/>
         <Type Value="Include"/>
       </Item>
+      <Item>
+        <Filename Value="../src/zbcasefold.inc"/>
+        <Type Value="Include"/>
+      </Item>
+      <Item>
+        <Filename Value="../src/zbnormalize.inc"/>
+        <Type Value="Include"/>
+      </Item>
     </Files>
     <RequiredPkgs>
       <Item>

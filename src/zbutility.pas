@@ -1063,7 +1063,12 @@ end;
               it is the API's own text (["Invalid key"]), as it is. }
             if StatusCode < 300 then
                 Exit('ZeroBounce returned an error response.');
-            Exit(Copy(Trimmed, 1, 1000));
+            { Too long to quote: the fixed sentence, as for an object, and
+              never a cut at a byte count, which could split a UTF-8
+              character. }
+            if Length(Trimmed) > 1000 then
+                Exit('ZeroBounce returned an error response.');
+            Exit(Trimmed);
         end;
         { Rows of a file are not a message. }
         if ZbBodyLooksLikeCsv(Trimmed) then
@@ -1845,107 +1850,201 @@ end;
         end;
     end;
 
-    const
-        { The letter a precomposed Latin character is built on, for U+00C0 to
-          U+024F and for U+1E00 to U+1EFF: its first letter in canonical
-          decomposition (a + U+0301 for U+00E1), lower case. '-' where there is
-          none. Together with the dropping of combining marks (ZbIsCombiningMark)
-          this makes 'e' + U+0301 and U+00E9 one and the same text. }
-        ZB_BASE_LATIN_1 =
-            'aaaaaa-ceeeeiiii-nooooo--uuuuy--aaaaaa-ceeeeiiii-nooooo--uuuuy-y' +
-            'aaaaaaccccccccdd--eeeeeeeeeegggggggghh--iiiiiiiii---jjkk-llllll-' +
-            '---nnnnnn---oooooo--rrrrrrsssssssstttt--uuuuuuuuuuuuwwyyyzzzzzz-' +
-            '--------------------------------oo-------------uu---------------' +
-            '-------------aaiioouuuuuuuuuu-aaaa----ggkkoooo--j---gg--nnaa----' +
-            'aaaaeeeeiiiioooorrrruuuusstt--hh------aaeeooooooooyy------------' +
-            '----------------';
-        ZB_BASE_LATIN_ADDITIONAL =
-            'aabbbbbbccddddddddddeeeeeeeeeeffgghhhhhhhhhhiiiikkkkkkllllllllmm' +
-            'mmmmnnnnnnnnoooooooopppprrrrrrrrssssssssssttttttttuuuuuuuuuuvvvv' +
-            'wwwwwwwwwwxxxxyyzzzzzzhtwy------aaaaaaaaaaaaaaaaaaaaaaaaeeeeeeee' +
-            'eeeeeeeeiiiioooooooooooooooooooooooouuuuuuuuuuuuuuyyyyyyyy------';
+    { Unicode 16.0.0 canonical decompositions and combining classes, generated
+      by tools/gen_normalize.py: what NFD needs. }
+    {$I zbnormalize.inc}
 
-    { The letter a precomposed character is built on (the character itself when
-      it is not one): the Latin tables above, and the Greek and Cyrillic
-      letters with a tonos, a diaeresis or a breve, as their lower-case
-      forms. }
-    function ZbBaseLetter(CodePoint: Integer): Integer;
+    { The canonical combining class of a code point (0 for a starter): a
+      binary search over the generated ranges. Nothing below U+0300 has one. }
+    function ZbCombiningClass(CodePoint: Integer): Integer;
     var
-        Base: Char;
+        Low, High, Mid: Integer;
     begin
-        Result := CodePoint;
-        Base := '-';
-        if (CodePoint >= $C0) and (CodePoint <= $24F) then
-            Base := ZB_BASE_LATIN_1[CodePoint - $C0 + 1]
-        else if (CodePoint >= $1E00) and (CodePoint <= $1EFF) then
-            Base := ZB_BASE_LATIN_ADDITIONAL[CodePoint - $1E00 + 1]
-        else
-            case CodePoint of
-                $390, $3AF, $3CA: Result := $3B9;
-                $3AC: Result := $3B1;
-                $3AD: Result := $3B5;
-                $3AE: Result := $3B7;
-                $3B0, $3CB, $3CD: Result := $3C5;
-                $3CC: Result := $3BF;
-                $3CE: Result := $3C9;
-                $439, $45D: Result := $438;
-                $450, $451: Result := $435;
-                $453: Result := $433;
-                $457: Result := $456;
-                $45C: Result := $43A;
-                $45E: Result := $443;
+        Result := 0;
+        if CodePoint < $300 then
+            Exit;
+        Low := 0;
+        High := ZB_CCC_COUNT - 1;
+        while Low <= High do
+        begin
+            Mid := (Low + High) shr 1;
+            if CodePoint < ZB_CCC_STARTS[Mid] then
+                High := Mid - 1
+            else if CodePoint > ZB_CCC_ENDS[Mid] then
+                Low := Mid + 1
+            else
+            begin
+                Result := ZB_CCC_VALUES[Mid];
+                Exit;
             end;
-        if Base <> '-' then
-            Result := Ord(Base);
-    end;
-
-    { Whether a code point is a combining mark: the diacritical blocks (U+0300
-      to U+036F and its extensions) and the combining marks for symbols and
-      half marks. They are not part of what a person reads as the letter, and
-      an echo may write the same letter with or without one. }
-    function ZbIsCombiningMark(CodePoint: Integer): Boolean;
-    begin
-        case CodePoint of
-            { U+0345, the Greek ypogegrammeni, is left out: upper-casing makes
-              it a letter (a capital iota), so it folds to one (ZbFoldUnit)
-              and is no mark an echo may leave off. }
-            $300..$344, $346..$36F, $1AB0..$1AFF, $1DC0..$1DFF, $20D0..$20FF, $FE20..$FE2F:
-                Result := True;
-        else
-            Result := False;
         end;
     end;
 
-    { The folded text of one character: its full case folding (the table
-      above), with the letter a precomposed one is built on (ZbBaseLetter) and
-      without combining marks, with these additions:
-      - the dotless i folds to i, as the capital dotted I does;
-      - a Hangul syllable becomes its two or three jamo, as NFD has it.
-      So the sharp s (and its capital) is 'ss', the ligatures U+FB00 to
-      U+FB06 are their letters, U+0587 is two Armenian letters and U+1F80 a
-      Greek alpha with psili and an iota, as an echo that upper-cases the
-      secret writes them. }
-    function ZbFoldUnit(CodePoint: Integer): String;
-    var
-        Folded: array[0..2] of LongInt;
-        Count, K, Syllable: Integer;
+    type
+        { One code point of text being folded, with the first and the last
+          character of the original it was made from. A raw string unit that
+          is not text (an invalid UTF-8 byte, a lone surrogate) is kept as
+          -1 minus its value. }
+        TZbFoldItem = record
+            Code, First, Last: Integer;
+        end;
+        TZbFoldItems = array of TZbFoldItem;
+
+    procedure ZbPushItem(var Items: TZbFoldItems; var Count: Integer; Code, First, Last: Integer);
     begin
-        if (CodePoint >= $AC00) and (CodePoint <= $D7A3) then
+        if Count = Length(Items) then
+            SetLength(Items, Count * 2 + 16);
+        Items[Count].Code := Code;
+        Items[Count].First := First;
+        Items[Count].Last := Last;
+        Inc(Count);
+    end;
+
+    { Code as its canonical decomposition (a Hangul syllable as its jamo, as
+      the standard has it, the rest from the generated table, which is already
+      decomposed as far as it goes), or as itself. }
+    procedure ZbPushDecomposed(var Items: TZbFoldItems; var Count: Integer; Code, First, Last: Integer);
+    var
+        Low, High, Mid, K, Syllable: Integer;
+    begin
+        if (Code >= $AC00) and (Code <= $D7A3) then
         begin
-            Syllable := CodePoint - $AC00;
-            Result := ZbCodePointText($1100 + Syllable div 588) +
-                ZbCodePointText($1161 + (Syllable mod 588) div 28);
+            Syllable := Code - $AC00;
+            ZbPushItem(Items, Count, $1100 + Syllable div 588, First, Last);
+            ZbPushItem(Items, Count, $1161 + (Syllable mod 588) div 28, First, Last);
             if Syllable mod 28 <> 0 then
-                Result := Result + ZbCodePointText($11A7 + Syllable mod 28);
+                ZbPushItem(Items, Count, $11A7 + Syllable mod 28, First, Last);
             Exit;
         end;
-        if CodePoint = $131 then
-            Exit('i');
-        Count := ZbCaseFoldCodePoint(CodePoint, Folded);
-        Result := '';
-        for K := 0 to Count - 1 do
-            if not ZbIsCombiningMark(Folded[K]) then
-                Result := Result + ZbCodePointText(ZbBaseLetter(Folded[K]));
+        if Code >= $C0 then
+        begin
+            Low := 0;
+            High := ZB_NFD_COUNT - 1;
+            while Low <= High do
+            begin
+                Mid := (Low + High) shr 1;
+                if ZB_NFD_KEYS[Mid] = Code then
+                begin
+                    for K := ZB_NFD_OFFSETS[Mid] to ZB_NFD_OFFSETS[Mid + 1] - 1 do
+                        ZbPushItem(Items, Count, ZB_NFD_POOL[K], First, Last);
+                    Exit;
+                end;
+                if ZB_NFD_KEYS[Mid] < Code then
+                    Low := Mid + 1
+                else
+                    High := Mid - 1;
+            end;
+        end;
+        ZbPushItem(Items, Count, Code, First, Last);
+    end;
+
+    { The canonical ordering: every run of combining marks is put in order of
+      its combining class, marks of one class keeping their order. A run that
+      moved is one unit as to which part of the original it covers, so a
+      match that ends after it masks all of it. }
+    procedure ZbOrderMarks(var Items: TZbFoldItems; Count: Integer);
+    var
+        A, B, K, J, Prev, Class_, First, Last: Integer;
+        Sorted: Boolean;
+        Item: TZbFoldItem;
+        Counts: array[0..256] of Integer;
+        Copy_: TZbFoldItems;
+        Classes: array of Integer;
+    begin
+        A := 0;
+        while A < Count do
+        begin
+            if ZbCombiningClass(Items[A].Code) = 0 then
+            begin
+                Inc(A);
+                Continue;
+            end;
+            B := A;
+            Prev := 0;
+            Sorted := True;
+            while B < Count do
+            begin
+                Class_ := ZbCombiningClass(Items[B].Code);
+                if Class_ = 0 then
+                    Break;
+                if Class_ < Prev then
+                    Sorted := False;
+                Prev := Class_;
+                Inc(B);
+            end;
+            if not Sorted then
+            begin
+                if B - A <= 16 then
+                    for K := A + 1 to B - 1 do
+                    begin
+                        Item := Items[K];
+                        Class_ := ZbCombiningClass(Item.Code);
+                        J := K - 1;
+                        while (J >= A) and (ZbCombiningClass(Items[J].Code) > Class_) do
+                        begin
+                            Items[J + 1] := Items[J];
+                            Dec(J);
+                        end;
+                        Items[J + 1] := Item;
+                    end
+                else
+                begin
+                    { A long run: a stable counting sort, so it stays linear. }
+                    SetLength(Classes, B - A);
+                    FillChar(Counts, SizeOf(Counts), 0);
+                    for K := A to B - 1 do
+                    begin
+                        Classes[K - A] := ZbCombiningClass(Items[K].Code);
+                        Inc(Counts[Classes[K - A] + 1]);
+                    end;
+                    for K := 1 to 256 do
+                        Inc(Counts[K], Counts[K - 1]);
+                    SetLength(Copy_, B - A);
+                    for K := A to B - 1 do
+                    begin
+                        Copy_[Counts[Classes[K - A]]] := Items[K];
+                        Inc(Counts[Classes[K - A]]);
+                    end;
+                    for K := A to B - 1 do
+                        Items[K] := Copy_[K - A];
+                end;
+                First := Items[A].First;
+                Last := Items[A].Last;
+                for K := A + 1 to B - 1 do
+                begin
+                    if Items[K].First < First then
+                        First := Items[K].First;
+                    if Items[K].Last > Last then
+                        Last := Items[K].Last;
+                end;
+                for K := A to B - 1 do
+                begin
+                    Items[K].First := First;
+                    Items[K].Last := Last;
+                end;
+            end;
+            A := B;
+        end;
+    end;
+
+    { How many string units one folded item takes. }
+    function ZbItemUnits(Code: Integer): Integer;
+    begin
+        {$IFDEF FPC}
+        if Code < $80 then
+            Result := 1
+        else if Code < $800 then
+            Result := 2
+        else if Code < $10000 then
+            Result := 3
+        else
+            Result := 4;
+        {$ELSE}
+        if Code >= $10000 then
+            Result := 2
+        else
+            Result := 1;
+        {$ENDIF}
     end;
 
     { One character at Text[At]: its code point and how many string units it
@@ -2025,14 +2124,23 @@ end;
     type
         TZbSpans = array of Integer;
 
-    { Text with every character folded (see ZbFoldUnit). Spans, filled only
+    { Text folded as NFD(casefold(NFD(Text))): decomposed canonically, with the
+      marks in canonical order, every code point case folded (full folding,
+      the dotless i as i, as the dotted capital I folds to one), decomposed
+      and put in order again. The marks are kept, so a letter and the same
+      letter with an accent are different texts ('e' is not in 'e' + U+0301),
+      while a precomposed letter and its decomposed form, in whatever case an
+      echo wrote them, are one. The sharp s is 'ss', U+0587 is two Armenian
+      letters and U+1F80 an alpha with psili and an iota. Spans, filled only
       when Mapped is set, holds for the K-th character of the result the
       first and the last character of Text it was made from, at 2K-1 and 2K
       (K from 1, as Spans[2K-2] and Spans[2K-1]); without Mapped the result
       lines up with Text one for one. }
     procedure ZbFold(const Text: String; out Folded: String; out Spans: TZbSpans; out Mapped: Boolean);
     var
-        I, Len, CodePoint, Used, J: Integer;
+        I, Len, CodePoint, Used, J, K, N1, N2, Total, Count: Integer;
+        Items, Folds: TZbFoldItems;
+        Pieces: array[0..2] of LongInt;
         Piece: String;
     begin
         Spans := nil;
@@ -2052,50 +2160,77 @@ end;
                     Folded[I] := Chr(Ord(Folded[I]) + 32);
             Exit;
         end;
-        { No character makes more than three units for each one it takes: a
-          Hangul syllable on Delphi, one UTF-16 unit, is three jamo. }
-        SetLength(Folded, Length(Text) * 3);
-        SetLength(Spans, Length(Text) * 6);
-        Used := 0;
+        Items := nil;
+        Folds := nil;
+        N1 := 0;
+        N2 := 0;
         I := 1;
         while I <= Length(Text) do
         begin
             ZbNextCharacter(Text, I, CodePoint, Len);
-            { A combining mark is dropped, from the secret and from an echo
-              alike, so a letter with an accent and the same letter followed by
-              the mark read as one text: U+0130 folds to a plain i and so does
-              'i' + U+0307 (what its full lower-case is), and U+00E9 and
-              'e' + U+0301 both fold to e. The character before it takes the
-              mark into its span, so an echo is masked whole. A mark with
-              nothing before it is covered by no span and stays. }
-            if ZbIsCombiningMark(CodePoint) then
-            begin
-                if Used > 0 then
-                    Spans[2 * Used - 1] := I + Len - 1;
-                Inc(I, Len);
-                Continue;
-            end;
             if CodePoint < 0 then
-                Piece := Copy(Text, I, Len)
+                ZbPushItem(Items, N1, -1 - Ord(Text[I]), I, I + Len - 1)
+            else if (CodePoint < $80) or (CodePoint = $130) then
+                ZbPushItem(Items, N1, CodePoint, I, I + Len - 1)
+            else
+                ZbPushDecomposed(Items, N1, CodePoint, I, I + Len - 1);
+            Inc(I, Len);
+        end;
+        ZbOrderMarks(Items, N1);
+        for K := 0 to N1 - 1 do
+        begin
+            CodePoint := Items[K].Code;
+            if CodePoint < 0 then
+                ZbPushItem(Folds, N2, CodePoint, Items[K].First, Items[K].Last)
             else if CodePoint < $80 then
             begin
                 if (CodePoint >= 65) and (CodePoint <= 90) then
-                    Piece := Chr(CodePoint + 32)
-                else
-                    Piece := Chr(CodePoint);
+                    Inc(CodePoint, 32);
+                ZbPushItem(Folds, N2, CodePoint, Items[K].First, Items[K].Last);
             end
+            else if (CodePoint = $307) and (N2 > 0) and (Folds[N2 - 1].Code = Ord('i')) then
+                Folds[N2 - 1].Last := Items[K].Last
             else
-                Piece := ZbFoldUnit(CodePoint);
+            begin
+                { U+0130 and U+0131 fold to a plain i, as a Turkish upper-casing of
+                  an ASCII i makes them; U+0307 straight after an i is dropped
+                  (what the decomposed lower case of U+0130 is). }
+                if (CodePoint = $131) or (CodePoint = $130) then
+                begin
+                    Pieces[0] := Ord('i');
+                    Count := 1;
+                end
+                else
+                    Count := ZbCaseFoldCodePoint(CodePoint, Pieces);
+                for J := 0 to Count - 1 do
+                    if (Pieces[J] = $307) and (N2 > 0) and (Folds[N2 - 1].Code = Ord('i')) then
+                        Folds[N2 - 1].Last := Items[K].Last
+                    else
+                        ZbPushDecomposed(Folds, N2, Pieces[J], Items[K].First, Items[K].Last);
+            end;
+        end;
+        Items := nil;
+        ZbOrderMarks(Folds, N2);
+        Total := 0;
+        for K := 0 to N2 - 1 do
+            Inc(Total, ZbItemUnits(Folds[K].Code));
+        SetLength(Folded, Total);
+        SetLength(Spans, Total * 2);
+        Used := 0;
+        for K := 0 to N2 - 1 do
+        begin
+            if Folds[K].Code < 0 then
+                Piece := Char(-1 - Folds[K].Code)
+            else
+                Piece := ZbCodePointText(Folds[K].Code);
             for J := 1 to Length(Piece) do
             begin
                 Inc(Used);
                 Folded[Used] := Piece[J];
-                Spans[2 * Used - 2] := I;
-                Spans[2 * Used - 1] := I + Len - 1;
+                Spans[2 * Used - 2] := Folds[K].First;
+                Spans[2 * Used - 1] := Folds[K].Last;
             end;
-            Inc(I, Len);
         end;
-        SetLength(Folded, Used);
     end;
 
     function ZbFoldText(const Text: String): String;
@@ -2132,15 +2267,52 @@ end;
         end;
     end;
 
+    { Whether a match of the folded secret that ends before Folded[At] ends
+      on a character boundary: the next character is no combining mark, so
+      'e' is not found in 'e' + U+0301 (an e acute). Mapped is the flag of
+      ZbFold: a text with only ASCII has no marks. }
+    function ZbEndsBeforeMark(const Folded: String; At: Integer; Mapped: Boolean): Boolean;
+    var
+        CodePoint, Len: Integer;
+    begin
+        Result := False;
+        if (not Mapped) or (At > Length(Folded)) then
+            Exit;
+        ZbNextCharacter(Folded, At, CodePoint, Len);
+        Result := (CodePoint >= 0) and (ZbCombiningClass(CodePoint) > 0);
+    end;
+
+    { Whether the folded secret is in the folded text, as a whole character
+      sequence (see ZbEndsBeforeMark). }
+    function ZbFoldedHas(const Text, FoldedSecret: String): Boolean;
+    var
+        Folded: String;
+        Spans: TZbSpans;
+        Mapped: Boolean;
+        At: Integer;
+    begin
+        Result := False;
+        ZbFold(Text, Folded, Spans, Mapped);
+        At := Pos(FoldedSecret, Folded);
+        while At > 0 do
+        begin
+            if not ZbEndsBeforeMark(Folded, At + Length(FoldedSecret), Mapped) then
+            begin
+                Result := True;
+                Exit;
+            end;
+            At := PosEx(FoldedSecret, Folded, At + 1);
+        end;
+    end;
+
     { Whether the folded secret can be read in Text, or in any view of it
       decoded up to Layers more times: URL-decoded, form-decoded ('+' as a
       space too), unescaped as a string literal and with its HTML entities
-      undone, in any order. Case is ignored. A secret that folds to nothing
-      (only combining marks) is looked for as that exact sequence, RawSecret,
-      in the text as it is. The whole text is looked at: every decoder is
-      linear, a layer that cannot change the text costs nothing, and a view
-      reached by two orders of decoding is looked at once (Seen). }
-    function ZbSecretInViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer;
+      undone, in any order. Case is ignored. The whole text is looked at:
+      every decoder is linear, a layer that cannot change the text costs
+      nothing, and a view reached by two orders of decoding is looked at
+      once (Seen). }
+    function ZbSecretInViews(const Text, FoldedSecret: String; Layers: Integer;
         var Seen: TZbSeenViews): Boolean;
     var
         Views: array[0..3] of String;
@@ -2148,10 +2320,7 @@ end;
         HashA, HashB: QWord;
         Known: Boolean;
     begin
-        if FoldedSecret = '' then
-            Result := (RawSecret <> '') and (Pos(RawSecret, Text) > 0)
-        else
-            Result := Pos(FoldedSecret, ZbFoldText(Text)) > 0;
+        Result := ZbFoldedHas(Text, FoldedSecret);
         if Result or (Layers = 0) then
             Exit;
         { Nothing to decode: every view is Text itself. }
@@ -2189,7 +2358,7 @@ end;
             Seen[K].HashA := HashA;
             Seen[K].HashB := HashB;
             Seen[K].Layers := Layers - 1;
-            if ZbSecretInViews(Views[I], FoldedSecret, RawSecret, Layers - 1, Seen) then
+            if ZbSecretInViews(Views[I], FoldedSecret, Layers - 1, Seen) then
             begin
                 Result := True;
                 Exit;
@@ -2197,12 +2366,12 @@ end;
         end;
     end;
 
-    function ZbSecretInDecodedViews(const Text, FoldedSecret, RawSecret: String; Layers: Integer): Boolean;
+    function ZbSecretInDecodedViews(const Text, FoldedSecret: String; Layers: Integer): Boolean;
     var
         Seen: TZbSeenViews;
     begin
         Seen := nil;
-        Result := ZbSecretInViews(Text, FoldedSecret, RawSecret, Layers, Seen);
+        Result := ZbSecretInViews(Text, FoldedSecret, Layers, Seen);
     end;
 
     function ZbMaskSecret(const S, Secret: string): string;
@@ -2216,12 +2385,13 @@ end;
         MaxEnd, Cover: array of Integer;
         F, At, I, J, HitEnd, Last, Kept: Integer;
         Seen: array of String;
-        Duplicate, AnyHit, AnyProtected: Boolean;
+        Duplicate, AnyHit, AnyProtected, HideLiterals, Masked: Boolean;
 
         { The text a mask or an earlier pass already wrote is not looked at
           again: a secret such as 'ted' is in 'REDACTED', and masking that
           would grow the text at every pass. A match wholly inside one of them
-          is left; one that only touches it is still masked. }
+          is left; one that reaches beyond it is masked together with it (the
+          union of the two). }
         procedure Protect(const Literal: String);
         var
             P, K: Integer;
@@ -2319,6 +2489,15 @@ end;
         Protect('REDACTED');
         Protect(ZB_SECRET_OMITTED_MESSAGE);
         ZbFold(S, Folded, Spans, Mapped);
+        FoldedSecret := ZbFoldText(Secret);
+        { A secret that is part of one of the literals (folded) could be found
+          in a literal itself: the views below must not look at them. A secret
+          that is not cannot be wholly inside one, and a literal stays in the
+          views, so a secret that has the literal in it and is partly encoded
+          is still found. }
+        HideLiterals := (FoldedSecret <> '') and
+            ((Pos(FoldedSecret, ZbFoldText('REDACTED')) > 0) or
+             (Pos(FoldedSecret, ZbFoldText(ZB_SECRET_OMITTED_MESSAGE)) > 0));
         SetLength(Seen, 0);
         for F := 0 to High(Forms) do
             if Forms[F] <> '' then
@@ -2332,25 +2511,16 @@ end;
                     Continue;
                 SetLength(Seen, Length(Seen) + 1);
                 Seen[High(Seen)] := FoldedForm;
-                if FoldedForm = '' then
-                begin
-                    { Only combining marks, which the fold drops: nothing
-                      to compare folded, so the exact sequence is masked. }
-                    At := Pos(Forms[F], S);
-                    while At > 0 do
-                    begin
-                        AddHit(At, At + Length(Forms[F]));
-                        At := PosEx(Forms[F], S, At + 1);
-                    end;
-                    Continue;
-                end;
                 At := Pos(FoldedForm, Folded);
                 while At > 0 do
                 begin
-                    if Mapped then
-                        AddHit(Spans[2 * At - 2], Spans[2 * (At + Length(FoldedForm) - 1) - 1] + 1)
-                    else
-                        AddHit(At, At + Length(FoldedForm));
+                    if not ZbEndsBeforeMark(Folded, At + Length(FoldedForm), Mapped) then
+                    begin
+                        if Mapped then
+                            AddHit(Spans[2 * At - 2], Spans[2 * (At + Length(FoldedForm) - 1) - 1] + 1)
+                        else
+                            AddHit(At, At + Length(FoldedForm));
+                    end;
                     At := PosEx(FoldedForm, Folded, At + 1);
                 end;
             end;
@@ -2360,8 +2530,11 @@ end;
         if AnyHit or AnyProtected then
         begin
             { Out: S with each merged span a mask. Scan: what is left of S
-              outside the spans and outside the literals above, the part a
-              decoded view is looked at in. }
+              outside the spans (and, when HideLiterals is set, outside the
+              literals above), the part a decoded view is looked at in. A
+              span is a run of hits that touch or overlap, and the literals
+              they reach: a hit that starts or ends inside a literal is
+              masked with all of it. }
             Out := '';
             Scan := '';
             Kept := 1;
@@ -2369,30 +2542,41 @@ end;
             Last := 1;
             while I <= Length(S) do
             begin
-                if AnyHit and (MaxEnd[I] > 0) then
-                begin
+                HitEnd := 0;
+                if AnyHit then
                     HitEnd := MaxEnd[I];
-                    J := I + 1;
-                    while J < HitEnd do
+                if AnyProtected and (Cover[I] > HitEnd) then
+                    HitEnd := Cover[I];
+                if HitEnd = 0 then
+                begin
+                    Inc(I);
+                    Continue;
+                end;
+                Masked := AnyHit and (MaxEnd[I] > 0);
+                J := I + 1;
+                while J < HitEnd do
+                begin
+                    if AnyHit and (MaxEnd[J] > 0) then
                     begin
+                        Masked := True;
                         if MaxEnd[J] > HitEnd then
                             HitEnd := MaxEnd[J];
-                        Inc(J);
                     end;
+                    if AnyProtected and (Cover[J] > HitEnd) then
+                        HitEnd := Cover[J];
+                    Inc(J);
+                end;
+                if Masked then
+                begin
                     Out := Out + Copy(S, Last, I - Last) + 'REDACTED';
-                    Scan := Scan + Copy(S, Kept, I - Kept) + #1;
                     Last := HitEnd;
-                    Kept := HitEnd;
-                    I := HitEnd;
-                end
-                else if AnyProtected and (Cover[I] > 0) then
+                end;
+                if Masked or HideLiterals then
                 begin
                     Scan := Scan + Copy(S, Kept, I - Kept) + #1;
-                    Kept := Cover[I];
-                    I := Cover[I];
-                end
-                else
-                    Inc(I);
+                    Kept := HitEnd;
+                end;
+                I := HitEnd;
             end;
             Out := Out + Copy(S, Last, MaxInt);
             Scan := Scan + Copy(S, Kept, MaxInt);
@@ -2403,10 +2587,9 @@ end;
         { A spelling the forms above miss (three URL layers, URL of double
           JSON, an HTML-escaped quote, ...) still decodes to the secret: then
           none of S is kept. }
-        FoldedSecret := ZbFoldText(Secret);
         { Every decoder is linear, so the views cover the whole text, however
           long. }
-        if ZbSecretInDecodedViews(Scan, FoldedSecret, Secret, ZB_SECRET_DECODE_LAYERS) then
+        if ZbSecretInDecodedViews(Scan, FoldedSecret, ZB_SECRET_DECODE_LAYERS) then
             Result := ZB_SECRET_OMITTED_MESSAGE;
     end;
 
@@ -2441,6 +2624,7 @@ end;
         REFUSED = 'api_key has surrounding whitespace or control characters';
     var
         I, Len, CodePoint: Integer;
+        HasBase: Boolean;
     begin
         { An empty key stays deferred to ZbRequireApiKey, which names the call
           that initializes the SDK. }
@@ -2448,11 +2632,14 @@ end;
             Exit(ApiKey);
         if ApiKey <> Trim(ApiKey) then
             raise ZbException.Create(REFUSED);
+        HasBase := False;
         I := 1;
         while I <= Length(ApiKey) do
         begin
             if (ApiKey[I] < #32) or (ApiKey[I] = #127) then
                 raise ZbException.Create(REFUSED);
+            if Ord(ApiKey[I]) < $80 then
+                HasBase := True;
             if Ord(ApiKey[I]) >= $80 then
             begin
                 { Text that is not valid UTF-8 (a lone surrogate on Delphi),
@@ -2462,20 +2649,26 @@ end;
                 ZbNextCharacter(ApiKey, I, CodePoint, Len);
                 if (CodePoint < 0) or ZbIsHiddenCodePoint(CodePoint) then
                     raise ZbException.Create(REFUSED);
+                if (ZbCombiningClass(CodePoint) = 0) and
+                   not (((CodePoint >= $1AB0) and (CodePoint <= $1AFF)) or
+                        ((CodePoint >= $1DC0) and (CodePoint <= $1DFF)) or
+                        ((CodePoint >= $20D0) and (CodePoint <= $20FF)) or
+                        ((CodePoint >= $FE20) and (CodePoint <= $FE2F))) then
+                    HasBase := True;
                 Inc(I, Len);
             end
             else
                 Inc(I);
         end;
-        { A key of nothing but combining marks folds to no text at all, so
-          the redaction of a transport error would have nothing to compare. }
-        if ZbFoldText(ApiKey) = '' then
+        { A key of nothing but combining marks has no base character: refused. }
+        if not HasBase then
             raise ZbException.Create(REFUSED);
         Result := ApiKey;
     end;
 
     const
         ZB_DIRTY_URL_MESSAGE = ' must not contain a backslash, whitespace, control or invisible characters, invalid UTF-8, or a non-ASCII character in the host';
+        ZB_PERCENT_HOST_MESSAGE = ' must not contain a percent sign in the host or port';
 
     { Refuses the characters that let a URL smuggle a header or hide where it
       goes. The URL is not quoted: it may carry a credential. }
@@ -2499,6 +2692,11 @@ end;
             if (CodePoint < 0) or (CodePoint <= 32) or (CodePoint = 92) or
                ZbIsHiddenCodePoint(CodePoint) or ((CodePoint >= 128) and (I < HostEnd)) then
                 raise ZbException.Create(Concat(Name, ZB_DIRTY_URL_MESSAGE));
+            { 'https://api.zerobounce.net%40evil.com/v2': a parser that
+              decodes the authority sees user 'api.zerobounce.net' at
+              evil.com. Percent-encoding stays allowed in the path. }
+            if (CodePoint = 37) and (I < HostEnd) then
+                raise ZbException.Create(Concat(Name, ZB_PERCENT_HOST_MESSAGE));
             Inc(I, Len);
         end;
     end;
@@ -2704,26 +2902,55 @@ end;
     {$ENDIF}
 
     {$IFNDEF FPC}
-    { Delphi's HTTP client may already have inflated a gzip body, so a
-      Content-Encoding header says nothing here. What matters is whether the
-      body it hands over is still gzip: it starts with the gzip magic bytes
-      1F 8B. Text it has turned into text is kept. }
+    { What the FPC branch checks in ZbRequireCompleteBody, for a response of
+      Delphi's HTTP client; every request calls it before reading the body.
+      Each failure raises a ZbException with StatusCode 0, no HTTP answer
+      having been read in full:
+      - a Content-Encoding other than empty or identity: a gzip, deflate or
+        brotli body is not text, and this client does not decode it;
+      - a body that is still gzip after the client handled it (it starts with
+        the magic bytes 1F 8B);
+      - a Content-Length that the bytes received do not match: the connection
+        closed part-way, or more arrived than was announced. }
     procedure ZbRequireNotGzip(const Response: IHTTPResponse);
     var
         Magic: array[0..1] of Byte;
         Stream: TStream;
         Gzip: Boolean;
+        Encoding: String;
+        Expected, Received: Int64;
+        Error: ZbException;
     begin
-        Gzip := False;
+        Encoding := Trim(Response.HeaderValue['Content-Encoding']);
+        Gzip := (Encoding <> '') and (CompareText(Encoding, 'identity') <> 0);
         Stream := Response.ContentStream;
-        if (Stream <> nil) and (Stream.Size >= 2) then
+        if (not Gzip) and (Stream <> nil) and (Stream.Size >= 2) then
         begin
             Stream.Position := 0;
             Gzip := (Stream.Read(Magic, 2) = 2) and (Magic[0] = $1F) and (Magic[1] = $8B);
             Stream.Position := 0;
         end;
         if Gzip then
-            raise ZbException.Create(ZB_ENCODING_MESSAGE);
+        begin
+            Error := ZbException.Create(ZB_ENCODING_MESSAGE);
+            Error.StatusCode := 0;
+            raise Error;
+        end;
+        Expected := StrToInt64Def(Trim(Response.HeaderValue['Content-Length']), -1);
+        if Expected >= 0 then
+        begin
+            if Stream <> nil then
+                Received := Stream.Size
+            else
+                Received := 0;
+            if Received <> Expected then
+            begin
+                Error := ZbException.Create(Format(
+                    'The response from ZeroBounce was cut short: %d of %d bytes received', [Received, Expected]));
+                Error.StatusCode := 0;
+                raise Error;
+            end;
+        end;
     end;
     {$ENDIF}
 
@@ -3189,6 +3416,91 @@ end;
         ZbFinishResponse(Result);
     end;
 
+    { A multipart form value, name or file name is written between the
+      boundary lines as it is, so a line break in it would start a part of its
+      own (a return_url of "https://x<CR><LF>--boundary..." adds a form
+      field), and a NUL cuts it short in a C parser. They are refused, with
+      the name of the field but never the value: it can be the key. }
+    procedure ZbRequireCleanFormText(const Text, What: String);
+    var
+        I: Integer;
+    begin
+        for I := 1 to Length(Text) do
+            if (Text[I] = #13) or (Text[I] = #10) or (Text[I] = #0) then
+                raise ZbException.Create(Concat(What, ' must not contain a line break or a NUL character'));
+    end;
+
+    { Hex digits of a new GUID. }
+    function ZbGuidHex: String;
+    var
+        Id: TGUID;
+    begin
+        CreateGUID(Id);
+        Result := GUIDToString(Id);
+        Result := StringReplace(Result, '-', '', [rfReplaceAll]);
+        Result := StringReplace(Result, '{', '', [rfReplaceAll]);
+        Result := StringReplace(Result, '}', '', [rfReplaceAll]);
+    end;
+
+    { The multipart/form-data body of FormData (Name=Value lines) and the file,
+      with a random boundary (the hex of two GUIDs) that occurs in none of the
+      values nor the file: the file's own lines can never end a part. Raises
+      ZbException for a line break or NUL in a field name, a value or the file
+      name. }
+    function ZbMultipartBody(FormData: TStrings; const FileContent, FileName: String; out Boundary: String): String;
+    const
+        CRLF = #13#10;
+    var
+        I, At, Attempt: Integer;
+        Names, Values: array of String;
+        Line: String;
+        Clash: Boolean;
+    begin
+        ZbRequireCleanFormText(FileName, 'The file name');
+        SetLength(Names, FormData.Count);
+        SetLength(Values, FormData.Count);
+        for I := 0 to FormData.Count - 1 do
+        begin
+            Line := FormData[I];
+            At := Pos(FormData.NameValueSeparator, Line);
+            if At > 0 then
+            begin
+                Names[I] := Copy(Line, 1, At - 1);
+                Values[I] := Copy(Line, At + Length(FormData.NameValueSeparator), MaxInt);
+            end
+            else
+            begin
+                Names[I] := Line;
+                Values[I] := '';
+            end;
+            ZbRequireCleanFormText(Names[I], 'A form field name');
+            ZbRequireCleanFormText(Values[I], Concat('The value of the form field "', Names[I], '"'));
+        end;
+        Attempt := 0;
+        repeat
+            Boundary := Concat('ZbForm', ZbGuidHex, ZbGuidHex);
+            Clash := Pos(Boundary, FileContent) > 0;
+            for I := 0 to High(Names) do
+                if (Pos(Boundary, Values[I]) > 0) or (Pos(Boundary, Names[I]) > 0) then
+                    Clash := True;
+            Inc(Attempt);
+        until (not Clash) or (Attempt >= 20);
+        if Clash then
+            raise ZbException.Create('No multipart boundary could be found that the form does not contain');
+        Result := '';
+        for I := 0 to High(Names) do
+            Result := Concat(Result, '--', Boundary, CRLF,
+                'Content-Disposition: form-data; name="',
+                StringReplace(Names[I], '"', '%22', [rfReplaceAll]), '"', CRLF, CRLF,
+                Values[I], CRLF);
+        Result := Concat(Result, '--', Boundary, CRLF,
+            'Content-Disposition: form-data; name="file"; filename="',
+            StringReplace(FileName, '"', '%22', [rfReplaceAll]), '"', CRLF,
+            'Content-Type: text/csv', CRLF, CRLF,
+            FileContent, CRLF,
+            '--', Boundary, '--', CRLF);
+    end;
+
     function ZBPostRequest(url: String; FormData: TStrings; FileContent: String): TZbRequestResponse;
     const
         FILE_NAME = 'bulk_upload.csv';
@@ -3198,45 +3510,10 @@ end;
         ResponseStream: TStringStream;
         {$ELSE}
         Client: THTTPClient;
-        MPForm: TMultiPartFormData;
         Response: IHTTPResponse;
+        BodyStream: TStream;
         {$ENDIF}
-        error: ZbException;
-        FileStream: TStream;
-
-        {$IFNDEF FPC}
-        function FormDataFromTString(): TMultiPartFormData;
-        var
-          SIterator: TStringsEnumerator;
-          Line: String;
-          At: Integer;
-        begin
-          Result := TMultiPartFormData.Create(False);
-          try
-            SIterator := TStringsEnumerator.Create(FormData);
-            try
-              while (SIterator.MoveNext) do
-              begin
-                { The name is what comes before the first separator and the
-                  value is the rest of the line, further '=' included: a
-                  return_url of https://cb.example/x?a=1&b=2 is sent whole. A
-                  line with no separator is a name with an empty value. }
-                Line := SIterator.GetCurrent;
-                At := Pos(FormData.NameValueSeparator, Line);
-                if At > 0 then
-                  Result.AddField(Copy(Line, 1, At - 1), Copy(Line, At + 1, MaxInt))
-                else
-                  Result.AddField(Line, '');
-              end;
-            finally
-              SIterator.Free;
-            end;
-          except
-            Result.Free;
-            raise;
-          end;
-        end;
-        {$ENDIF}
+        Body, Boundary: String;
     begin
         { Before anything can refuse the request: a URL that is not https
           must not leave the body and header of an earlier request behind. }
@@ -3244,8 +3521,13 @@ end;
         ZbRequireApiKey;
         url := ZbCheckedUrl(url);
         ZbLastRequestMethod := 'POST';
+        { Before anything is sent, mock or not. }
+        Body := ZbMultipartBody(FormData, FileContent, FILE_NAME, Boundary);
         if ZbResponseMock.StatusCode <> 0 then
         begin
+            { Only a mock keeps the body and header, as for the other calls. }
+            ZbLastRequestBody := Body;
+            ZbLastRequestHeader := Concat('Content-Type: multipart/form-data; boundary=', Boundary);
             ZbResponseMock.UrlCalled := url;
             Result := ZbResponseMock;
         end
@@ -3260,32 +3542,25 @@ end;
             {$IFDEF FPC}
             InitSSLInterface;
 
-            FileStream := TStringStream.Create(FileContent);
             Client := TFPHTTPClient.Create(nil);
             ZbUseVerifiedTls(Client);
             Client.ConnectTimeout := ZbConnectTimeoutMs;
             Client.IOTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.MaxRedirects := 0;
+            Client.AddHeader('Content-Type', Concat('multipart/form-data; boundary=', Boundary));
+            Client.RequestBody := TRawByteStringStream.Create(Body);
             ResponseStream := TStringStream.Create('');
 
             try
                 try
-                    Client.StreamFormPost(
-                        url,
-                        FormData,
-                        'file',
-                        FILE_NAME,
-                        FileStream,
-                        ResponseStream
-                    );
+                    Client.HTTPMethod('POST', url, ResponseStream, []);
                 except
-                on e: Exception do
-                    begin
-                        error := ZbException.FromResponse(e.Message, Result);
-                        error.MarkHttpError;
-                        raise error;
-                    end;
+                    { Raised by this SDK (no CA bundle, say): already one. }
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
                 end;
 
                 ZbRequireCompleteBody(Client, ResponseStream.Size);
@@ -3294,10 +3569,9 @@ end;
                 Result.StatusCode := Client.ResponseStatusCode;
                 Result.ContentType := Client.GetHeader(Client.ResponseHeaders, 'Content-Type');
             finally
+                Client.RequestBody.Free;
                 Client.Free;
-                FileStream.Free;
-                if ResponseStream <> nil then
-                    ResponseStream.Free;
+                ResponseStream.Free;
             end;
             {$ELSE}
             Client := THTTPClient.Create;
@@ -3307,31 +3581,27 @@ end;
             Client.ResponseTimeout := ZbReadTimeoutMs;
             { A redirect could send the key to another host. }
             Client.HandleRedirects := False;
-            { UTF-16 string, UTF-8 file. }
-            FileStream := TStringStream.Create(FileContent, TEncoding.UTF8);
-            MPForm := FormDataFromTString;
+            { UTF-16 string, UTF-8 body. }
+            BodyStream := TStringStream.Create(Body, TEncoding.UTF8);
             try
-              MPForm.AddStream('file', FileStream, FILE_NAME, 'text/csv');
-              try
-                Response := Client.Post(url, MPForm);
-              except
-                on e: Exception do
-                  begin
-                    error := ZbException.FromResponse(e.Message, Result);
-                    error.MarkHttpError;
-                    raise error;
-                  end;
-              end;
+                Client.CustomHeaders['Content-Type'] := Concat('multipart/form-data; boundary=', Boundary);
+                try
+                    Response := Client.Execute('POST', url, BodyStream);
+                except
+                    on E: ZbException do
+                        raise;
+                    on E: Exception do
+                        raise ZbTransportError(E);
+                end;
 
-              ZbRequireNotGzip(Response);
+                ZbRequireNotGzip(Response);
 
-              Result.Payload := Response.ContentAsString();
-              Result.StatusCode := Response.StatusCode;
-              Result.ContentType := Response.HeaderValue['Content-Type'];
+                Result.Payload := Response.ContentAsString();
+                Result.StatusCode := Response.StatusCode;
+                Result.ContentType := Response.HeaderValue['Content-Type'];
             finally
-              MPForm.Free;
-              Client.Free;
-              FileStream.Free;
+                Client.Free;
+                BodyStream.Free;
             end;
             {$ENDIF}
         end;

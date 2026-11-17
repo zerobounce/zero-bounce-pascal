@@ -148,6 +148,27 @@ implementation
         )
     end;
 
+    { The answer to a repeated greylist_processing request: an object with a
+      "Message" (the API's own capital M) holding some text, which the typed
+      parser reads as a result, whatever else is beside it. A lower-case
+      "message", "error" and the other message keys are not it. }
+    function ZbIsGreylistAnswer(const Body: String): Boolean;
+    var
+        J: TZbJson;
+    begin
+        Result := False;
+        try
+            J := TZbJson.Create(Trim(Body));
+        except
+            Exit;
+        end;
+        try
+            Result := Trim(J.GetText('Message')) <> '';
+        finally
+            J.Free;
+        end;
+    end;
+
     function ZbValidateEmail(Email: String; IpAddress: String): TZbValidationResult;
     begin
         Result := ZbValidateEmail(Email, IpAddress, ZbDefaultValidateOptions);
@@ -240,6 +261,13 @@ implementation
         end
         else
             response := ZBGetRequest(UrlToAccess);
+
+        (* A message with no result (or only nulls beside it) is the API's
+          words, with the status and the key masked, as for the other typed
+          calls: not a field of the wrong type. The one exception is the
+          greylist answer, {"Message": "..."}, which is a result. *)
+        if ZbMessageOnlyBody(response.Payload) and not ZbIsGreylistAnswer(response.Payload) then
+            ZbRaiseIfMessageOnly(response);
 
         try
             Result := ZbValidationFromJson(response.Payload);

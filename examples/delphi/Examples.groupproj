@@ -21,7 +21,7 @@
         <Projects Include="ExampleAiScoring.dproj">
             <Dependencies/>
         </Projects>
-        <Projects Include="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj">
+        <Projects Include="ExampleActivityData.dproj">
             <Dependencies/>
         </Projects>
     </ItemGroup>
@@ -87,13 +87,13 @@
         <MSBuild Projects="ExampleAiScoring.dproj" Targets="Make"/>
     </Target>
     <Target Name="ExampleActivityData">
-        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj"/>
+        <MSBuild Projects="ExampleActivityData.dproj"/>
     </Target>
     <Target Name="ExampleActivityData:Clean">
-        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Clean"/>
+        <MSBuild Projects="ExampleActivityData.dproj" Targets="Clean"/>
     </Target>
     <Target Name="ExampleActivityData:Make">
-        <MSBuild Projects="..\..\..\..\Embarcadero\Studio\Projects\ExampleActivityData.dproj" Targets="Make"/>
+        <MSBuild Projects="ExampleActivityData.dproj" Targets="Make"/>
     </Target>
     <Target Name="Build">
         <CallTarget Targets="ExampleGetCredits;ExampleGetApiUsage;ExampleValidation;ExampleBatchValidation;ExampleBulkValidation;ExampleAiScoring;ExampleActivityData"/>

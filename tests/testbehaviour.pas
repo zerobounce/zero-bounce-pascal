@@ -42,6 +42,7 @@ type
         procedure TestAJsonContentTypeInAnyCaseIsAnError;
         procedure TestAFileThatBeginsWithPaddingIsSavedUnchanged;
         procedure TestMessageOnlyAndEmptyAnswersAreErrorsWithStatus200;
+        procedure TestAMessageOnlyValidateAnswerRaisesWithTheMessageText;
         procedure TestAMessageBesideNullFieldsIsAnError;
         procedure TestFinderAndDomainSearchBodies;
         procedure TestCreditsWithASignOrASpaceIsAnError;
@@ -480,6 +481,60 @@ begin
             Status := E.StatusCode;
         end;
     end;
+end;
+
+{ validate: a message with no result on a 2xx raises with the message's own
+  text (key masked) and the status, like the other typed calls - not with the
+  text of a field of the wrong type. The greylist answer is a result. }
+procedure TTestBehaviour.TestAMessageOnlyValidateAnswerRaisesWithTheMessageText;
+const
+  BODIES: array[0..5] of String = (
+    '{"message":"Invalid API key or your account ran out of credits"}',
+    '{"error":"Invalid API key or your account ran out of credits"}',
+    '{"error_message":"Invalid API key or your account ran out of credits"}',
+    '{"message":"Invalid API key or your account ran out of credits","address":null,"status":null}',
+    '{"Error":"Invalid API key or your account ran out of credits","domain":null}',
+    '{"detail":"Invalid API key or your account ran out of credits"}');
+var
+  I: Integer;
+  Raised: Boolean;
+begin
+  ZBInitialize('validate-key-91');
+  for I := 0 to High(BODIES) do
+  begin
+    ZBMockResponse(200, BODIES[I], 'application/json');
+    Raised := False;
+    try
+      ZbValidateEmail('a@example.com');
+    except
+      on E: ZbException do
+      begin
+        Raised := True;
+        AssertEquals(BODIES[I], 200, E.StatusCode);
+        AssertTrue(E.Message, Pos('Invalid API key or your account ran out of credits', E.Message) > 0);
+        AssertEquals(E.Message, 0, Pos('wrong JSON type', E.Message));
+        AssertEquals(E.Message, 0, Pos('"address"', E.Message));
+      end;
+    end;
+    AssertTrue('raised for ' + BODIES[I], Raised);
+  end;
+  { The key in the message is masked. }
+  ZBMockResponse(200, '{"message":"Bad key validate-key-91"}', 'application/json');
+  try
+    ZbValidateEmail('a@example.com');
+    Fail('a message-only answer was taken as a result');
+  except
+    on E: ZbException do
+    begin
+      AssertTrue(E.Message, Pos('Bad key', E.Message) > 0);
+      AssertEquals(E.Message, 0, Pos('validate-key-91', E.Message));
+    end;
+  end;
+  { The greylist answer stays a result, beside nulls too. }
+  ZBMockResponse(200, '{"Message":"Greylist validation still in progress"}', 'application/json');
+  AssertEquals('Greylist validation still in progress', ZbValidateEmail('a@example.com').Message);
+  ZBMockResponse(200, '{"Message":"Greylist validation still in progress","address":null}', 'application/json');
+  AssertEquals('Greylist validation still in progress', ZbValidateEmail('a@example.com').Message);
 end;
 
 procedure TTestBehaviour.TestMessageOnlyAndEmptyAnswersAreErrorsWithStatus200;
@@ -1151,8 +1206,9 @@ begin
     { Armenian: capital U+0531 against small U+0561, and U+0556 against U+0586. }
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D4#$B1 + #$D5#$96 + '-9 b', #$D5#$A1 + #$D6#$86 + '-9'));
     AssertEquals('a REDACTED b', ZbMaskSecret('a ' + #$D5#$A1 + #$D6#$86 + '-9 b', #$D4#$B1 + #$D5#$96 + '-9'));
-    { A combining mark is covered by the character it sits on. }
-    AssertEquals('REDACTED', ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
+    { A combining mark is kept: a letter with one is not the plain letter. }
+    AssertEquals('x' + #$CC#$87 + #$CC#$87, ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x'));
+    AssertEquals('REDACTED', ZbMaskSecret('x' + #$CC#$87 + #$CC#$87, 'x' + #$CC#$87 + #$CC#$87));
     AssertEquals('REDACTED-after', ZbMaskSecret('PASSi' + #$CC#$87 + '-after', 'pass' + #$C4#$B0));
     AssertEquals('REDACTED', ZbMaskSecret('i' + #$CC#$87, 'i'));
     { Text that has no echo stays as it was. }

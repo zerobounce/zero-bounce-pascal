@@ -45,6 +45,17 @@ Open an [issue](https://github.com/zerobounce/zero-bounce-pascal/issues) and inc
 
 Maintainers will review and may request changes. Once approved, your PR can be merged.
 
+## Regenerating the Unicode tables
+
+`src/zbcasefold.inc` (full case folding) and `src/zbnormalize.inc` (canonical decompositions and combining classes, for NFD) are generated, not written by hand: secret redaction in `ZbUtility` uses them. Regenerate them only when the Unicode version changes on purpose (the committed tables are Unicode 16.0.0), both together. Use a Python whose `unicodedata.unidata_version` is `16.0.0`:
+
+```bash
+python3 tools/gen_casefold.py > src/zbcasefold.inc
+python3 tools/gen_normalize.py > src/zbnormalize.inc
+```
+
+Each script exits non-zero under any other Unicode version, so a different Python cannot silently change a table. To move to a newer Unicode, change `EXPECTED_UNICODE_VERSION` in both scripts, regenerate, review the diff and run the full suite. Never edit an `.inc` by hand.
+
 ## Questions
 
 * [Zero Bounce API docs](https://www.zerobounce.net/docs/)

@@ -1,3 +1,9 @@
+#### Security notes
+
+- A timeout of zero or less is refused before anything is sent: `ZbConnectTimeoutMs` and `ZbReadTimeoutMs` must be greater than 0, or the call raises `ZbException` (`ZbConnectTimeoutMs must be greater than 0`, `ZbReadTimeoutMs must be greater than 0`).
+- A URL the SDK sends to (every base URL, and so the whole request) is refused before sending when it holds a backslash, whitespace, a control or invisible character, bytes that are not valid UTF-8, or a non-ASCII character or a `%` in the host; when it has user information (`user@host`), a query string or a fragment (`?`, `#`) in a base URL; or when it is neither `https://` nor plain `http://` to exactly `127.0.0.1`, `localhost` or `[::1]`. The URL itself is never quoted in the message, since it may carry a credential.
+- A Warmup download target (the path given to `ZbWarmupDownloadSeeds` or `ZbWarmupDownloadStatistics`) is checked before the request is sent: a path whose last component is empty (it ends in a path separator), `.` or `..`, or that names an existing directory, raises `Could not write <path>`. The file is written to a temporary file beside the target and moved into place, so a failed write leaves a file already there as it was; a symbolic link at the path is written through to the file it points at (a cycle, or more than 40 links, raises and leaves the link alone); the permission bits of a file being replaced are kept, and the temporary file is created with those bits before any data is written. The target's directory is created only once there is something to write.
+
 #### Package's units
 
 The methods implemented in this library can raise `ZbException`.

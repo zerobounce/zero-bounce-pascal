@@ -14,6 +14,9 @@
 - Request URLs include `api_key` as a query parameter (ZeroBounce API contract). Do not log full request URLs or enable payload debug logging in production.
 - Redirects are never followed: a 3xx answer raises a `ZbException` carrying its status. Every request has a connect and a read timeout, `ZbConnectTimeoutMs` (default 30000) and `ZbReadTimeoutMs` (default 120000), in milliseconds.
 - Trailing slashes on any base URL variable (`ZbApiBaseURL`, `BULK_URI`, `ZbBulkRootURL`, `ZbListEvaluatorURL`, `ZbInboxPlacementURL`, `ZbWarmupBaseURL`) are dropped when a request is built, so no request path contains `//`.
+- A timeout of zero or less is refused before anything is sent: `ZbConnectTimeoutMs` and `ZbReadTimeoutMs` must be greater than 0, or the call raises `ZbException` (`ZbConnectTimeoutMs must be greater than 0`, `ZbReadTimeoutMs must be greater than 0`).
+- A URL the SDK sends to (every base URL, and so the whole request) is refused before sending when it holds a backslash, whitespace, a control or invisible character, bytes that are not valid UTF-8, or a non-ASCII character or a `%` in the host; when it has user information (`user@host`), a query string or a fragment (`?`, `#`) in a base URL; or when it is neither `https://` nor plain `http://` to exactly `127.0.0.1`, `localhost` or `[::1]`. The URL itself is never quoted in the message, since it may carry a credential.
+- A Warmup download target (the path given to `ZbWarmupDownloadSeeds` or `ZbWarmupDownloadStatistics`) is checked before the request is sent: a path whose last component is empty (it ends in a path separator), `.` or `..`, or that names an existing directory, raises `Could not write <path>`. The file is written to a temporary file beside the target and moved into place, so a failed write leaves a file already there as it was; a symbolic link at the path is written through to the file it points at (a cycle, or more than 40 links, raises and leaves the link alone); the permission bits of a file being replaced are kept, and the temporary file is created with those bits before any data is written. The target's directory is created only once there is something to write.
 
 This library is a wrapper for the ZeroBounce API v2.
 
@@ -174,7 +177,12 @@ The offline suite never reaches the live API. `live/live_api.lpr` is a separate,
 
 ## Publish
 
-1. Bump version in `packages/zerobounce.lpk`, commit, tag (`vX.Y.Z`), push tag.
+1. Bump the version in every file that carries it, commit, tag (`vX.Y.Z`), push tag (maintainers: `sdk-docs/scripts/check-untagged-bump-and-push.sh` in the SDKs workspace updates all three):
+   - `packages/zerobounce.lpk` (`<Version Major= Minor= Build=>`, the version of record);
+   - `packages/ZeroBounce.dpk` (`{$LIBVERSION 'X.Y.Z'}`);
+   - `packages/ZeroBounce.dproj` (every `<DllVersion>`, and `FileVersion` and `ProductVersion` as `X.Y.Z.0`).
+
+   `sh .github/scripts/check-package-versions.sh` fails when they disagree (CI and the Publish workflow run it). It also fails when a `src/*.pas` unit is missing from the `.dpk`, `.dproj`, `.lpk` or `packages/zerobounce.pas`, or a `src/*.inc` from the `.lpk`; a commented-out entry does not count.
 2. **Actions → Publish → Run workflow** with that tag.
 
 No package registry — GitHub release only. Pin the tag via clone or submodule.

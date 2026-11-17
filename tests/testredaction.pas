@@ -25,6 +25,13 @@ type
     procedure TestAnHtmlEntitySecretInTheMiddleOfALargeBodyIsCaught;
     procedure TestAThreeLayerSecretInTheMiddleOfALargeBodyIsCaught;
     procedure TestALargeBodyWithEveryDecoderTriggerIsMaskedQuickly;
+    procedure TestAMatchReachingIntoAProtectedLiteralIsMaskedWithIt;
+    procedure TestAPartlyEncodedSecretWithTheMaskTextInItIsStillFound;
+    procedure TestPrecomposedAndDecomposedFormsAreOneTextInAnyCase;
+    procedure TestMarksAreKeptSoALetterIsNotItsAccentedForm;
+    procedure TestMarksInAnotherOrderAreTheSameText;
+    procedure TestATurkishUpperCasedKeyIsMasked;
+    procedure TestALongRunOfMarksIsFoldedQuickly;
   end;
 
 implementation
@@ -83,13 +90,15 @@ begin
   AssertTrue('Kelvin', Masks('k', #$E2#$84#$AA));
   AssertTrue('Kelvin echo', Masks(#$E2#$84#$AA, 'K'));
   AssertTrue('dotted capital I', Masks('i', #$C4#$B0));
+  AssertTrue('dotted capital I as i and a dot', Masks('i' + #$CC#$87, #$C4#$B0));
   AssertTrue('dotless i', Masks('I', #$C4#$B1));
   AssertTrue('final sigma', Masks(#$CE#$A3, #$CF#$82));
   AssertTrue('final sigma echo', Masks(#$CF#$82, #$CE#$A3));
   AssertTrue('ffi ligature', Masks('FFI', #$EF#$AC#$83));
   AssertTrue('st ligature', Masks('ST', #$EF#$AC#$86));
   AssertTrue('Hangul', Masks(#$E1#$84#$80#$E1#$85#$A1, #$EA#$B0#$80));
-  AssertTrue('accent', Masks('e', #$C3#$89));
+  AssertFalse('a plain e is not an e acute', Masks('e', #$C3#$89));
+  AssertTrue('accent', Masks('e' + #$CC#$81, #$C3#$89));
   AssertTrue('U+0587', Masks(#$D4#$B5#$D5#$92, #$D6#$87));
   AssertTrue('U+1F80', Masks(#$E1#$BC#$88#$CE#$99, #$E1#$BE#$80));
   AssertTrue('ASCII', Masks('ABC', 'aBc'));
@@ -263,6 +272,106 @@ begin
     the decoded views changes the text and all four are tried. }
   Body := Repeated('a%20b+c &amp; d\u0041 caf' + #$C3#$A9 + ' &#233; ', 100000);
   AssertTrue('body is at least 2.5 MB', Length(Body) > 2500000);
+  Started := Now;
+  Masked := ZbMaskSecret(Body, 'key-abc-123-xyz');
+  AssertTrue('took ' + IntToStr(MilliSecondsBetween(Now, Started)) + ' ms', MilliSecondsBetween(Now, Started) < 3000);
+  AssertTrue('unchanged', Masked = Body);
+end;
+
+{ Security L: a match that overlaps "REDACTED" or the omitted-body text is
+  masked together with it, not lost on the rebuild. }
+procedure TTestRedaction.TestAMatchReachingIntoAProtectedLiteralIsMaskedWithIt;
+begin
+  { Starting inside the literal and ending after it. }
+  AssertEquals('REDACTED', ZbMaskSecret('REDACTEDxyz1', 'ACTEDxyz1'));
+  AssertEquals('x REDACTED y', ZbMaskSecret('x REDACTED12 y', 'DACTED12'));
+  { Ending inside it, starting before it. }
+  AssertEquals('x REDACTED y', ZbMaskSecret('x pre-REDACTED y', 'pre-REDA'));
+  { Around it, and in the omitted-body text. }
+  AssertEquals('REDACTED', ZbMaskSecret('aREDACTEDb', 'aREDACTEDb'));
+  AssertEquals('x REDACTED y', ZbMaskSecret('x ' + ZB_SECRET_OMITTED_MESSAGE + 'k123 y',
+    'credential.k123'));
+  AssertEquals('x REDACTED y', ZbMaskSecret('x ' + ZB_SECRET_OMITTED_MESSAGE + 'k123 y',
+    'was omitted because it contained a credential.k123'));
+  { Idempotent, and a match wholly inside the literal is still left alone. }
+  AssertEquals('REDACTED', ZbMaskSecret('REDACTED', 'REDACTED'));
+  AssertEquals('x REDACTED y', ZbMaskSecret('x REDACTED y', 'DACT'));
+  AssertEquals('REDACTED', ZbMaskSecret(ZbMaskSecret('REDACTEDxyz1', 'ACTEDxyz1'), 'ACTEDxyz1'));
+end;
+
+{ Security L: the views are looked at with the literal in them, so a secret
+  that has REDACTED in it and is partly encoded is found. }
+procedure TTestRedaction.TestAPartlyEncodedSecretWithTheMaskTextInItIsStillFound;
+begin
+  AssertEquals(ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo tokenREDACTED%39%39 end', 'tokenREDACTED99'));
+  AssertEquals(ZB_SECRET_OMITTED_MESSAGE, ZbMaskSecret('echo token%52EDACTED99 end', 'tokenREDACTED99'));
+  AssertEquals('plain REDACTED text', ZbMaskSecret('plain REDACTED text', 'tokenREDACTED99'));
+end;
+
+{ Security M: fold(x) = NFD(casefold(NFD(x))). U+1F84 is U+1F04 and an iota
+  subscript; U+1F80 with an acute after it reorders to the same marks. }
+procedure TTestRedaction.TestPrecomposedAndDecomposedFormsAreOneTextInAnyCase;
+begin
+  AssertTrue('U+1F84 against U+1F80 and U+0301', Masks(#$E1#$BE#$84, #$E1#$BE#$80 + #$CC#$81));
+  AssertTrue('U+1F80 and U+0301 against U+1F84', Masks(#$E1#$BE#$80 + #$CC#$81, #$E1#$BE#$84));
+  AssertTrue('U+1F84 upper-cased', Masks(#$E1#$BC#$8C#$CE#$99, #$E1#$BE#$84));
+  { U+037E (Greek question mark) is a semicolon. }
+  AssertTrue('U+037E as ;', Masks(';', #$CD#$BE));
+  AssertTrue('; as U+037E', Masks(#$CD#$BE, ';'));
+  { CJK compatibility ideograph U+F900 is U+8C48. }
+  AssertTrue('U+F900 as U+8C48', Masks(#$E8#$B1#$88, #$EF#$A4#$80));
+  { U+01E2 (AE with macron) and U+01E3, its lower case. }
+  AssertTrue('AE with macron, lower case', Masks(#$C7#$A3, #$C7#$A2));
+  AssertTrue('Hangul syllable as jamo', Masks(#$E1#$84#$80#$E1#$85#$A1, #$EA#$B0#$80));
+  AssertTrue('jamo as Hangul syllable', Masks(#$EA#$B0#$80, #$E1#$84#$80#$E1#$85#$A1));
+end;
+
+procedure TTestRedaction.TestMarksAreKeptSoALetterIsNotItsAccentedForm;
+begin
+  AssertFalse('e is not e acute', Masks('e', #$C3#$A9));
+  AssertFalse('e acute is not e', Masks(#$C3#$A9, 'e'));
+  AssertFalse('e is not e and an acute', Masks('e', 'e' + #$CC#$81));
+  AssertTrue('e acute is e and an acute', Masks('e' + #$CC#$81, #$C3#$A9));
+  AssertTrue('E acute is e and an acute', Masks('E' + #$CC#$81, #$C3#$A9));
+  { A secret that is followed by a mark in the text is another text. }
+  AssertEquals('xkey' + #$CC#$87 + 'y', ZbMaskSecret('xkey' + #$CC#$87 + 'y', 'key'));
+  AssertEquals('x REDACTED y', ZbMaskSecret('x key y', 'key'));
+end;
+
+procedure TTestRedaction.TestATurkishUpperCasedKeyIsMasked;
+begin
+  AssertEquals('body REDACTED end', ZbMaskSecret('body ZBKEY-' + #$C4#$B0 + '1 end', 'zbkey-i1'));
+  AssertEquals('body REDACTED end', ZbMaskSecret('body ZBKEY-I1 end', 'zbkey-i1'));
+  AssertEquals('body REDACTED end', ZbMaskSecret('body zbkey-i' + #$CC#$87 + '1 end', 'zbkey-i1'));
+  AssertEquals('body REDACTED end', ZbMaskSecret('body ZBKEY-' + #$C4#$B1 + '1 end', 'zbkey-i1'));
+end;
+
+procedure TTestRedaction.TestMarksInAnotherOrderAreTheSameText;
+var
+  Below, Above: String;
+begin
+  Below := #$CC#$A3;  { U+0323, class 220 }
+  Above := #$CC#$81;  { U+0301, class 230 }
+  AssertTrue('above then below against below then above',
+    Masks('a' + Above + Below + 'b', 'a' + Below + Above + 'b'));
+  AssertTrue('the other way',
+    Masks('a' + Below + Above + 'b', 'a' + Above + Below + 'b'));
+  { U+1E0D is d with a dot below; with an acute after it: another order again. }
+  AssertTrue('precomposed dot below, then an acute',
+    Masks('d' + Above + Below, #$E1#$B8#$8D + Above));
+  { Marks of one class keep their order. }
+  AssertFalse('same class, another order',
+    Masks('a' + #$CC#$81 + #$CC#$80 + 'b', 'a' + #$CC#$80 + #$CC#$81 + 'b'));
+end;
+
+procedure TTestRedaction.TestALongRunOfMarksIsFoldedQuickly;
+var
+  Body, Masked: String;
+  Started: TDateTime;
+begin
+  { 600,000 marks in decreasing class order, which the ordering has to
+    reverse, and many short runs out of order. }
+  Body := 'a' + Repeated(#$CC#$81#$CC#$A3, 300000) + ' ' + Repeated('x' + #$CC#$81#$CC#$A3, 100000);
   Started := Now;
   Masked := ZbMaskSecret(Body, 'key-abc-123-xyz');
   AssertTrue('took ' + IntToStr(MilliSecondsBetween(Now, Started)) + ' ms', MilliSecondsBetween(Now, Started) < 3000);

@@ -82,9 +82,15 @@ const
       team, so any value does. }
     ZB_WARMUP_ANY_TEAM_ID = 1;
 
+type
+    TZbWarmupTempHook = procedure(const TempPath: String);
+
 var
     { Tests may point this at a local stub. }
     ZbWarmupBaseURL: string = 'https://warmup-api.zerobounce.net';
+    { Test seam. Called when a download's temporary file exists with its final
+      permission bits and nothing has been written to it yet. nil in normal use. }
+    ZbWarmupTempCreatedHook: TZbWarmupTempHook = nil;
 
 { Per-thread, like the validation key. }
 threadvar
@@ -144,7 +150,7 @@ implementation
 
 uses
     Math, ZbStructures
-    {$IFDEF FPC}{$IFDEF UNIX}, BaseUnix, Unix{$ENDIF}{$ELSE}{$IFNDEF MSWINDOWS}, Posix.Unistd, Posix.SysStat{$ENDIF}{$ENDIF};
+    {$IFDEF FPC}{$IFDEF UNIX}, BaseUnix, Unix{$ENDIF}{$ELSE}{$IFNDEF MSWINDOWS}, Posix.Unistd, Posix.SysStat, Posix.Fcntl{$ENDIF}{$ENDIF};
 
 {$IFDEF MSWINDOWS}
 { Declared here so the unit needs no Windows unit in its uses clause. }
@@ -483,8 +489,10 @@ end;
   something to write, never before the request succeeded. }
 procedure WriteFileReplacing(const DownloadPath, Content: String);
 var
-    Handle: TFileStream;
+    Handle: TStream;
     Target, Directory, TempPath: String;
+    Fd: Integer;
+    Mode: Integer;
     {$IFNDEF FPC}
     Bytes: TBytes;
     {$ENDIF}
@@ -525,9 +533,50 @@ begin
     {$ENDIF}
     {$ENDIF}
     TempPath := Concat(Directory, '.', WarmupTempName, '.zbtmp');
+    Fd := -1;
+    Handle := nil;
     try
+        { The temporary file is created with the permission bits it will end
+          up with (those of the file it replaces; the default creation mode,
+          0666 less the umask, for a new file), before any data is written, so
+          there is no moment when it is more readable than the target. The
+          mode is passed to open (the umask can only narrow it) and set exactly
+          with chmod on the new file before the first write. O_EXCL: never reuse a name. }
+        {$IFDEF FPC}
+        {$IFDEF UNIX}
+        if Existing then
+            Mode := Info.st_mode and &7777
+        else
+            Mode := &666;
+        Fd := fpOpen(TempPath, O_WRONLY or O_CREAT or O_EXCL, Mode);
+        if Fd < 0 then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+        if Existing then
+            fpChmod(TempPath, Mode);
+        Handle := THandleStream.Create(Fd);
+        {$ELSE}
         Handle := TFileStream.Create(TempPath, fmCreate);
+        {$ENDIF}
+        {$ELSE}
+        {$IFNDEF MSWINDOWS}
+        if Existing then
+            Mode := Info.st_mode and $FFF
+        else
+            Mode := $1B6;
+        Raw := UTF8String(TempPath);
+        Fd := open(MarshaledAString(PAnsiChar(Raw)), O_WRONLY or O_CREAT or O_EXCL, Mode);
+        if Fd < 0 then
+            raise ZbException.Create(Format('Could not write %s', [DownloadPath]));
+        if Existing then
+            chmod(MarshaledAString(PAnsiChar(Raw)), Mode);
+        Handle := THandleStream.Create(Fd);
+        {$ELSE}
+        Handle := TFileStream.Create(TempPath, fmCreate);
+        {$ENDIF}
+        {$ENDIF}
         try
+            if Assigned(ZbWarmupTempCreatedHook) then
+                ZbWarmupTempCreatedHook(TempPath);
             if Length(Content) > 0 then
             begin
                 {$IFNDEF FPC}
@@ -541,19 +590,10 @@ begin
             end;
         finally
             Handle.Free;
-        end;
-        if Existing then
-        begin
-            {$IFDEF FPC}
-            {$IFDEF UNIX}
-            fpChmod(TempPath, Info.st_mode and &7777);
-            {$ENDIF}
-            {$ELSE}
-            {$IFNDEF MSWINDOWS}
-            Raw := UTF8String(TempPath);
-            chmod(MarshaledAString(PAnsiChar(Raw)), Info.st_mode and $FFF);
-            {$ENDIF}
-            {$ENDIF}
+            Handle := nil;
+            if Fd >= 0 then
+                FileClose(Fd);
+            Fd := -1;
         end;
         if not WarmupReplaceFile(TempPath, Target) then
             raise ZbException.Create(Format('Could not write %s', [DownloadPath]));

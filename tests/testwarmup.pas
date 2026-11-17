@@ -62,10 +62,36 @@ type
         procedure TestADownloadWritesThroughSymbolicLinks;
         procedure TestASymbolicLinkCycleRaisesAndLeavesTheLink;
         procedure TestADownloadKeepsThePermissionBitsOfTheFileItReplaces;
+        procedure TestTheTemporaryFileHasTheFinalModeBeforeAnyDataIsWritten;
+        procedure TestANewFileGetsTheDefaultCreationModeBeforeAnyDataIsWritten;
 {$ENDIF}
     end;
 
 implementation
+
+{$IFDEF UNIX}
+var
+    HookCalls: Integer;
+    HookMode: LongInt;
+    HookSize: Int64;
+
+procedure RecordTempState(const TempPath: String);
+var
+    Info: Stat;
+begin
+    Inc(HookCalls);
+    if fpStat(TempPath, Info) = 0 then
+    begin
+        HookMode := Info.st_mode and &7777;
+        HookSize := Info.st_size;
+    end
+    else
+    begin
+        HookMode := -1;
+        HookSize := -1;
+    end;
+end;
+{$ENDIF}
 
 const
     OK_JSON = '{"ok":true}';
@@ -84,6 +110,7 @@ end;
 procedure TTestWarmup.TearDown;
 begin
     ZbWarmupApiKey := '';
+    ZbWarmupTempCreatedHook := nil;
     inherited TearDown;
 end;
 
@@ -1508,6 +1535,69 @@ begin
     ZbWarmupDownloadSeeds(Path);
     AssertEquals(0, fpStat(Path, Info));
     AssertEquals(&600, Info.st_mode and &7777);
+    DeleteFile(Path);
+    RemoveDir(Dir);
+end;
+
+procedure TTestWarmup.TestTheTemporaryFileHasTheFinalModeBeforeAnyDataIsWritten;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Path: String;
+    S: TStringList;
+    OldMask: TMode;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-tmode-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Path := Dir + 'seeds.csv';
+    S := TStringList.Create;
+    try
+        S.Text := 'OLD';
+        S.SaveToFile(Path);
+    finally
+        S.Free;
+    end;
+    AssertEquals(0, fpChmod(Path, &600));
+    HookCalls := 0;
+    ZbWarmupTempCreatedHook := @RecordTempState;
+    OldMask := fpUmask(&022);
+    try
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        ZbWarmupDownloadSeeds(Path);
+    finally
+        fpUmask(OldMask);
+    end;
+    AssertEquals(1, HookCalls);
+    { Not the 0644 the umask would give a plain create. }
+    AssertEquals(&600, HookMode);
+    AssertEquals(0, HookSize);
+    DeleteFile(Path);
+    RemoveDir(Dir);
+end;
+
+procedure TTestWarmup.TestANewFileGetsTheDefaultCreationModeBeforeAnyDataIsWritten;
+const
+    CSV = 'seed,provider'#10'seed@example.com,gmail'#10;
+var
+    Dir, Path: String;
+    OldMask: TMode;
+begin
+    Dir := IncludeTrailingPathDelimiter(GetTempDir(False) + Format('zb-nmode-%d', [GetProcessID]));
+    ForceDirectories(Dir);
+    Path := Dir + 'seeds.csv';
+    DeleteFile(Path);
+    HookCalls := 0;
+    ZbWarmupTempCreatedHook := @RecordTempState;
+    OldMask := fpUmask(&077);
+    try
+        ZBMockResponse(200, CSV, CSV_TYPE);
+        ZbWarmupDownloadSeeds(Path);
+    finally
+        fpUmask(OldMask);
+    end;
+    AssertEquals(1, HookCalls);
+    AssertEquals(&600, HookMode);
+    AssertEquals(0, HookSize);
     DeleteFile(Path);
     RemoveDir(Dir);
 end;

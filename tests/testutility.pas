@@ -32,6 +32,7 @@ type
     procedure TestSuccessFalseAsAStringIsAFailure;
     procedure TestADirtyUrlIsRefusedBeforeSending;
     procedure TestADirtyBaseUrlIsRefusedEverywhere;
+    procedure TestABackslashInThePathAndAPercentInTheAuthorityAreRefused;
     procedure TestANonPositiveTimeoutIsRefusedBeforeSending;
     procedure TestReplacingTheApiKeyWipesTheOldBuffer;
   end;
@@ -552,6 +553,43 @@ begin
     AssertEquals('nothing sent ' + IntToStr(I), '', ZbResponseMock.UrlCalled);
   end;
   AssertFalse('a UTF-8 path is fine', UrlRejected('https://api.zerobounce.net/v2/caf'#$C3#$A9));
+end;
+
+procedure TTestUtility.TestABackslashInThePathAndAPercentInTheAuthorityAreRefused;
+const
+  BadAuthority: array[0..4] of String = (
+    'https://api.zerobounce.net%40evil.com/v2',
+    'https://api.zerobounce.net%40evil.com',
+    'https://api.zerobounce.net:443%40evil.com/v2',
+    'https://api.zerobounce.net%2f@evil.com/v2',
+    'http://localhost%00.evil.com/v2'
+  );
+var
+  I: Integer;
+begin
+  { The backslash is refused wherever it stands, in the path as well. }
+  AssertTrue('backslash in the path', UrlRejected('https://api.zerobounce.net/v2\evil'));
+  AssertTrue('backslash at the end of the path', UrlRejected('https://api.zerobounce.net/v2/\'));
+  ZbApiBaseURL := 'https://api.zerobounce.net/v2\evil';
+  try
+    ZBMockResponse(200, '{"Credits": "7"}');
+    ZbResponseMock.UrlCalled := '';
+    try
+      ZbGetCredits;
+      Fail('a backslash in the path of the base URL was accepted');
+    except
+      on E: ZbException do
+        AssertEquals('nothing sent', '', ZbResponseMock.UrlCalled);
+    end;
+  finally
+    ZbApiBaseURL := 'https://api.zerobounce.net/v2';
+  end;
+  { A percent sign in the host or port can hide the real host from a parser
+    that decodes the authority. }
+  for I := 0 to High(BadAuthority) do
+    AssertTrue('refused: ' + BadAuthority[I], UrlRejected(BadAuthority[I]));
+  { In the path it is ordinary percent-encoding. }
+  AssertFalse('a %XX in the path', UrlRejected('https://api.zerobounce.net/v2/a%20b%2Fc'));
 end;
 
 procedure TTestUtility.TestADirtyBaseUrlIsRefusedEverywhere;

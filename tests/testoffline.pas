@@ -60,6 +60,9 @@ type
     procedure TestMoreInvisibleCodePointsAreRefusedAndTheKeyKept;
     procedure TestARefusedUrlLeavesNoBodyOrHeaderOfAnEarlierMock;
     procedure TestAJsonErrorBodyGivesItsMessageAndACsvBodyNone;
+    procedure TestALongJsonListErrorBodyGetsTheFixedSentenceAndNoByteCut;
+    procedure TestAMultipartFormValueWithALineBreakOrNulIsRefused;
+    procedure TestTheMultipartBoundaryIsRandomAndTheFileArrivesIntact;
     procedure TestOnlyTheTopLevelSuccessFieldDecidesAFailure;
     procedure TestTheMultipartMockSetsUrlCalledOnTheResult;
     procedure TestTheFoldReadsEveryCaseOfALetterTheTablesMiss;
@@ -1641,8 +1644,13 @@ var
     AssertEquals(What, 'echo [REDACTED] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
   end;
 
+  procedure Kept(const What, Echo: String);
+  begin
+    AssertEquals(What, 'echo [' + Echo + '] end', ZbMaskSecret('echo [' + Echo + '] end', Secret));
+  end;
+
 begin
-  { U+0130: a plain i, and i plus U+0307. }
+  { U+0130: a plain i, and i plus U+0307 (both fold to i). }
   Secret := 'pass' + #$C4#$B0 + 'word-7';
   Masked('U+0130 as a plain i', 'passiword-7');
   Masked('U+0130 as i and a dot', 'passi' + DOT + 'word-7');
@@ -1656,7 +1664,7 @@ begin
   Secret := 'caf' + #$C3#$A9 + '-key-9';
   Masked('e acute as e and an acute', 'cafe' + ACUTE + '-key-9');
   Masked('e acute as E and an acute', 'CAFE' + ACUTE + '-KEY-9');
-  Masked('e acute as a plain e', 'cafe-key-9');
+  Kept('e acute against a plain e', 'cafe-key-9');
   Masked('e acute as itself', Secret);
   { The other way round: the secret is written with the mark. }
   Secret := 'cafe' + ACUTE + '-key-10';
@@ -1664,22 +1672,24 @@ begin
   Masked('e and an acute against e and an acute', 'cafe' + ACUTE + '-key-10');
   { A mark in the middle of the echo, and a letter of another block. }
   Secret := 'ab12-cd';
-  Masked('a mark inside the echo', 'a' + ACUTE + 'b12-cd');
+  Kept('a mark inside the echo is another text', 'a' + ACUTE + 'b12-cd');
   Secret := #$E1#$BA#$A1 + 'bc-5';
   Masked('a with a dot below, decomposed', 'a' + #$CC#$A3 + 'bc-5');
-  { A secret that starts with a combining mark: it is dropped, and the echo
-    that writes an i in front of the mark is masked as the rest of the secret
-    reads. }
+  { A secret that starts with a combining mark is kept as it is: the mark is
+    masked with the rest, and the text without it is another one. }
   Secret := DOT + 'secrettext-3';
-  AssertEquals('leading U+0307', 'echo [i' + DOT + 'REDACTED] end',
-    ZbMaskSecret('echo [i' + DOT + 'secrettext-3] end', Secret));
-  AssertEquals('leading U+0307, as it is', 'echo [' + DOT + 'REDACTED] end',
+  AssertEquals('leading U+0307', 'echo [xREDACTED] end',
+    ZbMaskSecret('echo [x' + DOT + 'secrettext-3] end', Secret));
+  AssertEquals('leading U+0307, as it is', 'echo [REDACTED] end',
     ZbMaskSecret('echo [' + DOT + 'secrettext-3] end', Secret));
-  AssertEquals('leading U+0307, without it', 'echo [REDACTED] end',
-    ZbMaskSecret('echo [secrettext-3] end', Secret));
-  { Marks the echo carries after a masked character are masked with it. }
-  AssertEquals('marks after the key', 'x REDACTED y',
+  Kept('leading U+0307, without it', 'secrettext-3');
+  { A key followed by marks is not the key: the match must end on a
+    character boundary, as 'e' is not in 'e' + U+0301. }
+  AssertEquals('marks after the key', 'x pass-11' + DOT + ACUTE + ' y',
     ZbMaskSecret('x pass-11' + DOT + ACUTE + ' y', 'pass-11'));
+  { The marks of one echo may come in another order: the canonical order. }
+  Secret := 'a' + #$CC#$A3 + ACUTE + '-key-13';
+  Masked('marks in canonical order', 'a' + ACUTE + #$CC#$A3 + '-key-13');
   { Text with marks and no echo of the key stays as it was. }
   AssertEquals('unrelated', 'e' + ACUTE + 'i' + DOT + ' stays',
     ZbMaskSecret('e' + ACUTE + 'i' + DOT + ' stays', 'unrelated-12'));
@@ -1884,6 +1894,132 @@ begin
       AssertEquals('call ' + IntToStr(Call) + ' header', '', ZbLastRequestHeader);
       AssertEquals('call ' + IntToStr(Call) + ' method', '', ZbLastRequestMethod);
     end;
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+{ A JSON list on an error status is the API's own text (["Invalid key"]), up
+  to 1000 characters; a longer one is the fixed sentence, never a cut at a byte
+  count (which could split a UTF-8 character). }
+procedure TTestOffline.TestALongJsonListErrorBodyGetsTheFixedSentenceAndNoByteCut;
+var
+  Body: String;
+begin
+  try
+    UseDefaultUrls;
+    Body := '["' + StringOfChar('x', 996) + '"]';
+    AssertEquals(1000, Length(Body));
+    ZBMockResponse(500, Body, 'application/json');
+    AssertEquals('1000 characters are quoted whole', 'Http Error: ' + Body, MockedGetMessage);
+    Body := '["' + StringOfChar('x', 997) + '"]';
+    ZBMockResponse(500, Body, 'application/json');
+    AssertEquals('1001 characters', 'Http Error: ZeroBounce returned an error response.', MockedGetMessage);
+    { A multi-byte character across the old cut at byte 1000. }
+    Body := '["' + StringOfChar('x', 995) + #$C3#$A9 + StringOfChar('y', 50) + '"]';
+    ZBMockResponse(500, Body, 'application/json');
+    AssertEquals('a long list with an accent', 'Http Error: ZeroBounce returned an error response.', MockedGetMessage);
+    Body := '["' + StringOfChar('x', 50000) + '"]';
+    ZBMockResponse(500, Body, 'application/json');
+    AssertEquals('a very long list', 'Http Error: ZeroBounce returned an error response.', MockedGetMessage);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+{ The multipart form is built by the SDK: a line break or NUL in a value would
+  start a form part of the caller's choosing. }
+procedure TTestOffline.TestAMultipartFormValueWithALineBreakOrNulIsRefused;
+const
+  BAD: array[0..3] of String = (
+    'https://cb.example/x'#13#10'--B'#13#10'Content-Disposition: form-data; name="remove_duplicate"'#13#10#13#10'true',
+    'https://cb.example/x'#10'y', 'https://cb.example/x'#13'y', 'https://cb.example/x'#0'y');
+var
+  Params: TZbBulkParams;
+  I: Integer;
+  Raised: Boolean;
+begin
+  try
+    UseDefaultUrls;
+    ZBInitialize('multipart-key-1');
+    for I := 0 to High(BAD) do
+    begin
+      FillChar(Params, SizeOf(Params), 0);
+      Params.EmailAddressColumn := 1;
+      Params.ReturnUrl := BAD[I];
+      ZBMockResponse(200, '{"success":true,"message":"File Accepted","file_id":"x","file_name":"f"}');
+      ZbResponseMock.UrlCalled := '';
+      ZbLastRequestBody := '';
+      Raised := False;
+      try
+        ZbBulkValidationFileSubmit('email'#10'a@example.com'#10, Params);
+      except
+        on E: ZbException do
+        begin
+          Raised := True;
+          AssertTrue(E.Message, Pos('return_url', E.Message) > 0);
+          AssertTrue(E.Message, Pos('line break', E.Message) > 0);
+          AssertEquals('the value is not quoted', 0, Pos('cb.example', E.Message));
+        end;
+      end;
+      AssertTrue('refused ' + IntToStr(I), Raised);
+      AssertEquals('nothing sent ' + IntToStr(I), '', ZbResponseMock.UrlCalled);
+      AssertEquals('no body ' + IntToStr(I), '', ZbLastRequestBody);
+    end;
+    { A return_url without them is sent. }
+    FillChar(Params, SizeOf(Params), 0);
+    Params.EmailAddressColumn := 1;
+    Params.ReturnUrl := 'https://cb.example/x?a=1&b=2';
+    ZBMockResponse(200, '{"success":true,"message":"File Accepted","file_id":"x","file_name":"f"}');
+    ZbBulkValidationFileSubmit('email'#10'a@example.com'#10, Params);
+    AssertTrue(ZbLastRequestBody, Pos('name="return_url"'#13#10#13#10'https://cb.example/x?a=1&b=2'#13#10, ZbLastRequestBody) > 0);
+  finally
+    UseDefaultUrls;
+  end;
+end;
+
+{ The boundary is new for every request and occurs nowhere in the file: a CSV
+  holding the old fixed boundary (or any other) goes out whole. }
+procedure TTestOffline.TestTheMultipartBoundaryIsRandomAndTheFileArrivesIntact;
+const
+  OLD_BOUNDARY = '008C7F0A_multipart_boundary';
+var
+  Params: TZbBulkParams;
+  Content, Header, Boundary, Body, First, Rest: String;
+  At, Parts: Integer;
+begin
+  try
+    UseDefaultUrls;
+    ZBInitialize('multipart-key-2');
+    FillChar(Params, SizeOf(Params), 0);
+    Params.EmailAddressColumn := 1;
+    Content := 'email'#13#10'--' + OLD_BOUNDARY + #13#10'--' + OLD_BOUNDARY + '--'#13#10'a@example.com'#13#10;
+    ZBMockResponse(200, '{"success":true,"message":"File Accepted","file_id":"x","file_name":"f"}');
+    ZbBulkValidationFileSubmit(Content, Params);
+    Header := ZbLastRequestHeader;
+    Body := ZbLastRequestBody;
+    First := Header;
+    AssertEquals('Content-Type: multipart/form-data; boundary=', Copy(Header, 1, 44));
+    Boundary := Copy(Header, 45, MaxInt);
+    AssertTrue(Boundary, Length(Boundary) >= 32);
+    AssertEquals('not the fixed one', 0, Pos(OLD_BOUNDARY, Boundary));
+    AssertEquals('not in the file', 0, Pos(Boundary, Content));
+    AssertTrue('the file, whole', Pos(#13#10#13#10 + Content + #13#10'--' + Boundary + '--'#13#10, Body) > 0);
+    { One part per form field plus the file, no more. }
+    Parts := 0;
+    Rest := Body;
+    At := Pos('--' + Boundary + #13#10, Rest);
+    while At > 0 do
+    begin
+      Inc(Parts);
+      Rest := Copy(Rest, At + 1, MaxInt);
+      At := Pos('--' + Boundary + #13#10, Rest);
+    end;
+    AssertEquals('parts', 5, Parts);
+    AssertEquals('ends with the closing boundary', '--' + Boundary + '--'#13#10, Copy(Body, Length(Body) - Length(Boundary) - 5, MaxInt));
+    { Another request, another boundary. }
+    ZbBulkValidationFileSubmit(Content, Params);
+    AssertTrue('a new boundary', ZbLastRequestHeader <> First);
   finally
     UseDefaultUrls;
   end;
@@ -4700,9 +4836,10 @@ begin
   Masked('U+0345 as itself', Secret);
   Secret := 'ab' + Utf8Of($3B9) + 'cd-3';
   Masked('an iota in the echo as U+0345', 'ab' + Utf8Of($345) + 'cd-3');
-  { The other combining marks are still dropped. }
+  { Combining marks are kept: a text without one is another text. }
   Secret := 'ab' + Utf8Of($301) + 'cd-3';
-  Masked('an acute is dropped', 'abcd-3');
+  Kept('an acute is kept', 'abcd-3');
+  Masked('an acute is matched', 'ab' + Utf8Of($301) + 'cd-3');
 
   { Hangul: the syllable and its jamo are one text. }
   Jamo := Utf8Of($1112) + Utf8Of($1161) + Utf8Of($11AB);
@@ -4760,6 +4897,8 @@ begin
         on E: ZbException do
           Message := E.Message;
       end;
+      { The fold keeps marks, so such a key has text to compare and is no
+        longer refused. }
       AssertEquals('key ' + IntToStr(I), REFUSED, Message);
       AssertEquals('the key already set stays', 'keep-this-key-4', ZbApiKey);
       Message := '(no exception)';
